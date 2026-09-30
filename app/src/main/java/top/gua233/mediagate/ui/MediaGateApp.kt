@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,6 +63,8 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.feature.settings.SettingsNote
 import io.github.gua123.mediagate.feature.settings.SettingsScreen
+import io.github.gua123.mediagate.feature.tasks.LocalTasksEnvironment
+import io.github.gua123.mediagate.feature.tasks.TasksScreen
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
@@ -190,6 +193,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             LocalVideoPlayerEnvironment provides container.videoPlayerEnvironment,
             // M4：连接管理（R6/R7/R8）的宿主能力（三张表 + Keystore 加密 + 当前连接 + 网络现场）
             LocalConnectionsEnvironment provides container.connectionsEnvironment,
+            // M7-B：批量字幕任务中心（R19）的宿主能力（队列 + 目录 + 模型 + 让路）
+            LocalTasksEnvironment provides container.tasksEnvironment,
         ) {
             NavHost(
                 navController = navController,
@@ -267,8 +272,14 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(TopLevelDestination.CONNECTIONS.navRoute) {
                     ConnectionsScreen()
                 }
+                // 批量字幕任务中心（M7-B，R19）：来源选择 → 多选/整文件夹 → 队列与进度。
+                // 首次进入时引导通知权限：后台生成的通知栏进度与「暂停/取消」按钮都要它（R18/R19）。
                 composable(TopLevelDestination.TASKS.navRoute) {
-                    PlaceholderScreen(title = stringResource(R.string.nav_tasks))
+                    LaunchedEffect(Unit) {
+                        ensureNotificationPermission()
+                        container.refreshAsrModels()
+                    }
+                    TasksScreen(onOpenSource = { navController.switchTopLevel(TopLevelDestination.BROWSER) })
                 }
                 // 设置（M4，R7/R8）：当前连接入口 + 网络切换策略说明（只读）
                 composable(TopLevelDestination.SETTINGS.navRoute) {
