@@ -22,7 +22,6 @@ import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
-import java.io.ByteArrayOutputStream
 
 /**
  * 交给 Coil 的缩略图请求（R5 缩略图，plan 4.4）。
@@ -59,11 +58,10 @@ data class ThumbnailRequest(
 /**
  * 缩略图 Fetcher（R5，plan 4.4）：把 [ThumbnailRequest] 变成 Coil 能解码的字节流。
  *
- * 分工：
- * - **视频**：走 [ThumbnailRepository.thumbnail]（两级缓存 + 并发上限 3 + 负缓存 + 离屏取消），
- *   绝不在组合函数里同步抽帧；
- * - **图片**：M1 直接把原图字节读进来交给 Coil 采样解码（图片查看器的随机访问源在 M1-F 落地）；
- * - **音频 / 其它**：返回 null（拿不到图就显示类型图标，不报错、不崩）。
+ * 分工：视频 / 图片 / 音频统一走 [ThumbnailRepository.thumbnail] 按 `MediaKind` 选流水线
+ * （视频抽帧 + FFmpeg 兜底；图片采样解码重编码；音频取 MMR 内嵌封面），
+ * 仓库内部自带两级缓存、并发上限、负缓存与离屏取消，**绝不在组合函数里同步抽帧**；
+ * 其余类型（字幕 / 未知）返回 null，由界面显示类型图标，不报错、不崩。
  *
  * 失败语义：抛异常 → Coil 进入 error 状态 → [androidx.compose.foundation.Image] 位置留给底下的类型图标。
  */
@@ -84,31 +82,12 @@ class ThumbnailFetcher private constructor(
 
     private suspend fun load(): ByteArray? = withContext(Dispatchers.IO) {
         when (request.kind) {
-            // 视频：抽帧流水线（主策略 MMR + FFmpeg 兜底），内部自带缓存与限流
-            MediaKind.VIDEO -> repository.thumbnail(request.entry, request.backend, request.positionRatio)
-            // 图片：直接读原图字节（读取过程中按体积挡掉超大图，避免一次读进来几十 MB）
-            MediaKind.IMAGE -> readFully()
-            // 音频封面（MMR 内嵌图）尚未接进 ThumbnailRepository，暂用类型图标占位
-            else -> null
-        }
-    }
-
-    private suspend fun readFully(): ByteArray? {
-        val stream = request.backend.openRead(request.entry.path)
-        return stream.use { source ->
-            // 已知大小且在限额内就按它预分配，否则用固定缓冲（未知大小 = -1 / 0，不能直接 toInt）
-            val initialCapacity = request.entry.size.takeIf { it in 1..MAX_IMAGE_BYTES }?.toInt() ?: READ_BUFFER_BYTES
-            val out = ByteArrayOutputStream(initialCapacity)
-            val buffer = ByteArray(READ_BUFFER_BYTES)
-            var total = 0
-            while (true) {
-                val read = source.read(buffer, 0, buffer.size)
-                if (read < 0) break
-                total += read
-                if (total > MAX_IMAGE_BYTES) return@use null
-                out.write(buffer, 0, read)
-            }
-            out.toByteArray().takeIf { it.isNotEmpty() }
+            // 视频（抽帧）/ 图片（预览重编码）/ 音频（内嵌封面）分别走各自流水线，
+            // 缓存、并发限流、负缓存、失败兜底都在仓库里，这里只负责调用
+            MediaKind.VIDEO, MediaKind.IMAGE, MediaKind.AUDIO ->
+                repository.thumbnail(request.entry, request.backend, request.positionRatio)
+            // 字幕 / 未知类型没有缩略图概念，交给界面显示类型图标
+            MediaKind.SUBTITLE, MediaKind.OTHER -> null
         }
     }
 
@@ -119,13 +98,6 @@ class ThumbnailFetcher private constructor(
             ThumbnailFetcher(data, repository, options)
     }
 
-    private companion object {
-        /** 单张图片缩略图允许读取的最大字节数（超过就放弃，交给类型图标）。 */
-        const val MAX_IMAGE_BYTES = 64L * 1024 * 1024
-
-        /** 读取缓冲区。 */
-        const val READ_BUFFER_BYTES = 64 * 1024
-    }
 }
 
 /** Coil 内存缓存 key：同一后端 + 同一路径 + 同一 size/mtime + 同一类型 = 同一张图。 */
