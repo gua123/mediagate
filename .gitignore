@@ -1,0 +1,16 @@
+.dsh-meow/
+.toolchain/
+local.properties
+keystore/
+keystore.properties
+*.jks
+*.keystore
+models/
+build/
+.gradle/
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+*.log
