@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 澎湃 OS 保活引导（R18）：申请「省电策略无限制」需要用系统弹窗（设置页里也提供跳转入口） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- 本地媒体（R1/R12）：媒体库入口可选，全盘访问在设置页引导 -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
@@ -20,6 +22,15 @@
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" xmlns:tools="http://schemas.android.com/tools" />
+
+    <!--
+      画中画（R13）：能力可选（没有该特性的设备照样能装能播，只是没有小窗）。
+      真机要求：Activity 必须 supportsPictureInPicture，且把 PIP 会触发的配置变化自己处理掉
+      （否则进出小窗会重建 Activity，播放页 ViewModel 一重建，画面与位置就都断了）。
+    -->
+    <uses-feature
+        android:name="android.software.picture_in_picture"
+        android:required="false" />
 
     <application
         android:name=".MediaGateApplication"
@@ -30,11 +41,17 @@
         android:supportsRtl="false"
         android:theme="@style/Theme.MediaGate">
 
+        <!--
+          画中画（R13）：supportsPictureInPicture + 自己处理 PIP 相关的配置变化
+          （screenSize/screenLayout/smallestScreenSize/orientation 是 PIP 进出时系统会发的），
+          其余键盘/导航/字体/语言等一并接管，避免播放中被重建。
+        -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density|fontScale|layoutDirection|locale|touchscreen"
             android:exported="true"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.MediaGate">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -55,6 +72,17 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!--
+          视频后台播放（M8-A / R18 视频侧）：MediaSessionService + 前台服务（mediaPlayback 类型）。
+          只提供"会话与通知"——播放本体仍是播放页的内核（见 :media:playback 的 VideoPlaybackService），
+          因此 exported=false：系统媒体控制走 MediaSession，不需要系统来 bind 这个服务。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.media.playback.VideoPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false" />
 
         <!--
           批量字幕任务中心（M7-B / R19）：前台服务 + 通知进度（可暂停/取消）。

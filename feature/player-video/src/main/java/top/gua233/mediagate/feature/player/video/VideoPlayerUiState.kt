@@ -326,6 +326,13 @@ sealed interface VideoPlayerEvent {
     /** 松手：把拖到的位置提交给内核。 */
     data object SeekFinished : VideoPlayerEvent
 
+    /**
+     * 直接跳到某个位置（**R13** PIP 内的快退/快进 10 秒；通知栏/锁屏 seek 也走它）。
+     *
+     * 与 [SeekChanged] 的区别：那个是"拖拽中的预览比例"，这个是"已经落在内核上的绝对位置"。
+     */
+    data class SeekedTo(val positionMs: Long) : VideoPlayerEvent
+
     // ---------------------------------------------------------------- 字幕（R14）
 
     /** 开始匹配同目录候选（远端列目录也要显示加载中，R14）。 */
@@ -513,6 +520,14 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
     VideoPlayerEvent.SeekFinished -> copy(
         dragging = false,
         positionMs = dragPositionMs,
+        ended = false,
+    )
+
+    is VideoPlayerEvent.SeekedTo -> copy(
+        // R13：跳到目标位置后进度条立刻跟上，不用等 500 ms 后的下一次采样
+        positionMs = event.positionMs.coerceAtLeast(0L),
+        dragPositionMs = event.positionMs.coerceAtLeast(0L),
+        dragging = false,
         ended = false,
     )
 

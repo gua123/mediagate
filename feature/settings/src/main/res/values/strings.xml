@@ -14,4 +14,25 @@
     <string name="settings_open_connections">去连接管理页</string>
 
     <string name="settings_network_policy">网络切换策略</string>
+
+    <!-- 后台与保活（M8-A / R18：澎湃 OS 首次运行引导） -->
+    <string name="settings_keep_alive">后台与保活</string>
+    <string name="settings_keep_alive_summary">已就绪 %1$d / %2$d 项</string>
+    <string name="settings_keep_alive_hint">澎湃 OS 会限制后台应用。下面几项就绪后，切后台 / 息屏播放与批量字幕生成才不会被系统掐断；每项状态能查的自动查，查不到的请你手动确认。</string>
+    <string name="settings_keep_alive_all_ready">四项都已就绪，可以放心后台播放。</string>
+    <string name="keep_alive_status_ready">已就绪</string>
+    <string name="keep_alive_status_action">待开启</string>
+    <string name="keep_alive_status_manual">需手动确认</string>
+    <string name="keep_alive_confirm">我已开启</string>
+    <string name="keep_alive_open_details">打开应用详情页</string>
+    <string name="keep_alive_notification_title">通知权限</string>
+    <string name="keep_alive_notification_detail">后台播放与字幕生成的通知栏、锁屏控制都要它。未授权时前台服务通知不会显示，但播放仍会继续。</string>
+    <string name="keep_alive_notification_action">去授权</string>
+    <string name="keep_alive_battery_title">省电策略：无限制</string>
+    <string name="keep_alive_battery_detail">澎湃 OS 默认在息屏后限制后台应用。把本应用的省电策略改为「无限制」，后台播放与字幕生成才不会被掐断（系统会弹一个确认框）。</string>
+    <string name="keep_alive_battery_action">去设置</string>
+    <string name="keep_alive_autostart_title">自启动</string>
+    <string name="keep_alive_autostart_detail">厂商设置里「自启动」没有开放查询接口，无法自动检测。请在 安全中心 → 应用管理 → 权限 → 自启动 里允许本应用，然后勾选下面的「我已开启」。</string>
+    <string name="keep_alive_background_popup_title">后台弹出界面</string>
+    <string name="keep_alive_background_popup_detail">同样查不到状态。请在 安全中心 → 应用管理 → 权限 → 后台弹出界面 里允许本应用，否则从通知栏点回播放页可能被系统拦下。</string>
 </resources>

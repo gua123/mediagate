@@ -12,6 +12,8 @@ import io.github.gua123.mediagate.media.asr.PlaybackYieldGate
 import io.github.gua123.mediagate.media.asr.WhisperModel
 import io.github.gua123.mediagate.media.playback.PlaybackHost
 import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
+import io.github.gua123.mediagate.media.playback.VideoSessionHost
+import io.github.gua123.mediagate.media.playback.VideoSessionSource
 import java.io.File
 
 /**
@@ -20,11 +22,12 @@ import java.io.File
  * M1 起在这里建立**唯一的**手写 DI 容器 [AppContainer]（不引 Hilt）：它持有根目录设置
  * （DataStore）、当前本地根目录的存储后端、缩略图仓库与音频播放环境，供各页面共用。
  *
- * 同时实现两个「服务反查宿主」的接口（服务由系统创建、拿不到构造注入）：
+ * 同时实现三个「服务反查宿主」的接口（服务由系统创建、拿不到构造注入）：
  * - [PlaybackHost]（M1-G，R18）：后台播放服务要的当前后端与断点续播存储；
+ * - [VideoSessionHost]（M8-A，R18 视频侧）：视频会话服务要的"当前在播的是哪个视频、用哪个内核"；
  * - [AsrRuntimeHost]（M7-B，R14/R19）：字幕前台服务要的队列、识别引擎、让路闸门与模型路径。
  */
-class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost {
+class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoSessionHost {
 
     /** 应用级依赖容器；[onCreate] 里创建，进程存活期间唯一。 */
     lateinit var container: AppContainer
@@ -37,6 +40,14 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost {
     /** 断点续播存储（R18）。 */
     override val playbackProgress: PlaybackProgressStore
         get() = container.playbackProgress
+
+    /**
+     * 视频会话源（R18 视频侧）：播放页把当前内核借给会话，没有会话时为 null。
+     *
+     * 服务只在播放页活着时才有对象可会话——这正是"只做会话与通知、播放仍在页面"的口径。
+     */
+    override val videoSessionSource: VideoSessionSource?
+        get() = container.videoSession.videoSessionSource
 
     // ------------------------------------------------------------ 音转字幕（M7-B，R14/R19）
 

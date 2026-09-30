@@ -97,6 +97,20 @@ interface VideoPlayerEnvironment {
     val preferences: VideoPlayerPreferences
 
     /**
+     * 画中画宿主能力（**R13**）：进/出 PIP、PIP 内动作、按 Home 自动进入、是否在 PIP 中。
+     *
+     * 默认 [NoopVideoPipHost]（没有 Activity 的场景，例如 JVM 单测）：页面行为不变，只是没有小窗。
+     */
+    val pip: VideoPipHost get() = NoopVideoPipHost
+
+    /**
+     * 视频后台播放与让路宿主（**R18 视频侧 / R19 让路**）：会话绑定 + "正在播放"上报。
+     *
+     * 默认 [NoopVideoPlaybackHost]（JVM 单测）：不建 MediaSession、不参与让路。
+     */
+    val playback: VideoPlaybackHost get() = NoopVideoPlaybackHost
+
+    /**
      * 字幕能力（R14）：:app 用 :media:subtitle 装配（定位器 / 解析器 / 写回 + 本地兜底）。
      *
      * 本模块只发命令：列同目录、读解析、写回；远端与本地由同一个 StorageBackend 承担。

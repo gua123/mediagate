@@ -162,6 +162,82 @@ internal class FakePlayerEngine(
     }
 }
 
+/**
+ * 假画中画宿主（R13）：记录"页面告诉宿主什么"，并允许测试模拟"用户在 PIP 里点了按钮"。
+ *
+ * 真宿主是 :app 的 Activity（`enterPictureInPictureMode` + RemoteAction），
+ * JVM 单测里只关心**页面这一侧的行为**：注册落点、更新动作、开关自动进入。
+ */
+internal class FakeVideoPipHost : VideoPipHost {
+
+    private val _isInPip = MutableStateFlow(false)
+
+    override val isInPip: StateFlow<Boolean> = _isInPip
+
+    /** 注册进来的动作落点（页面在 init 里注册，onCleared 注销）。 */
+    var sink: VideoPipActionSink? = null
+
+    /** enterPip 的调用记录（宽高比）。 */
+    val enterCalls = mutableListOf<Float>()
+
+    /** updateActions 的调用记录（是否在播）。 */
+    val actionUpdates = mutableListOf<Boolean>()
+
+    /** setAutoEnterEnabled 的调用记录（R13 自动进 PIP）。 */
+    val autoEnterUpdates = mutableListOf<Boolean>()
+
+    /** enterPip 的返回值（模拟系统允许/拒绝）。 */
+    var enterResult: Boolean = true
+
+    override fun enterPip(aspectRatio: Float): Boolean {
+        enterCalls += aspectRatio
+        return enterResult
+    }
+
+    override fun updateActions(isPlaying: Boolean) {
+        actionUpdates += isPlaying
+    }
+
+    override fun setAutoEnterEnabled(enabled: Boolean) {
+        autoEnterUpdates += enabled
+    }
+
+    override fun setActionSink(sink: VideoPipActionSink?) {
+        this.sink = sink
+    }
+
+    /** 模拟"系统进了 PIP"。 */
+    fun enterPipForTest() {
+        _isInPip.value = true
+    }
+
+    /** 模拟"用户在 PIP 里点了某个动作按钮"。 */
+    fun press(action: VideoPipAction) {
+        sink?.onAction(action)
+    }
+}
+
+/** 假视频后台播放宿主（R18/R19）：记录会话绑定与"正在播放"上报。 */
+internal class FakeVideoPlaybackHost : VideoPlaybackHost {
+
+    /** 会话绑定/解绑流水（null = 收掉会话）。 */
+    val sessions = mutableListOf<VideoSession?>()
+
+    /** setActive 的调用记录（R19 让路）。 */
+    val activeUpdates = mutableListOf<Boolean>()
+
+    /** 最后一次绑定的会话。 */
+    val last: VideoSession? get() = sessions.lastOrNull()
+
+    override fun setActive(active: Boolean) {
+        activeUpdates += active
+    }
+
+    override fun bindSession(session: VideoSession?) {
+        sessions += session
+    }
+}
+
 /** 假偏好：把每次写方法记下来，验证 R9/R10/R14 的持久化。 */
 internal class FakeVideoPreferences(
     engine: EngineKind = EngineKind.MEDIA3,
@@ -294,6 +370,8 @@ internal class FakeVideoPlayerEnvironment(
     override val preferences: FakeVideoPreferences = FakeVideoPreferences(),
     override val progress: FakeProgressStore = FakeProgressStore(),
     override val subtitles: FakeSubtitleHost = FakeSubtitleHost(),
+    override val pip: FakeVideoPipHost = FakeVideoPipHost(),
+    override val playback: FakeVideoPlaybackHost = FakeVideoPlaybackHost(),
     private val videoViewFor: (EngineKind) -> View? = { null },
 ) : VideoPlayerEnvironment {
 

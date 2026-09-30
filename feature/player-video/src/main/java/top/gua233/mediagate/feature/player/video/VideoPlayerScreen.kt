@@ -110,7 +110,9 @@ private val CONTROL_SCRIM = Color.Black.copy(alpha = 0.45f)
  * 偏好都在 AppContainer 里）；本页**不碰 Media3 / LibVLC**，也不做任何 IO——位置、时长、缓冲、
  * 内核状态全部来自 ViewModel 的 StateFlow。
  *
- * 本页不做画中画（R13 属 M8），也不做字幕设置面板（R14 属 M7）。
+ * 画中画（**R13**）：进/出 PIP、PIP 内的播放/暂停与 ±10 秒动作、按 Home 自动进入，
+ * 都是 **Activity 级 API**，由 :app 通过 [VideoPipHost] 提供（本页只读 [VideoPipHost.isInPip] 决定
+ * 要不要收起控制层、显示"画中画中"角标）。本模块不拿 Activity，也不认识 RemoteAction。
  *
  * @param path 要播放的视频路径（相对根目录，来自路由参数）。
  * @param onBack 返回上一页（系统返回键也走它）。
@@ -128,6 +130,9 @@ fun VideoPlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val output by viewModel.videoOutput.collectAsStateWithLifecycle()
     val subtitleCue by viewModel.subtitleCue.collectAsStateWithLifecycle()
+
+    // R13：是否在画中画里（由 :app 的宿主能力给出，页面只读）
+    val inPip by environment.pip.isInPip.collectAsStateWithLifecycle()
     var controlsVisible by remember { mutableStateOf(true) }
 
     /** 字幕面板是否展开（界面本地状态：不进 ViewModel 状态机，R14 面板纯展示）。 */
@@ -135,10 +140,18 @@ fun VideoPlayerScreen(
 
     BackHandler(enabled = true) { onBack() }
 
+    // 进 PIP 就把控制层与字幕面板收掉：小窗里放不下，留着只会挡住画面（R13）
+    LaunchedEffect(inPip) {
+        if (inPip) {
+            controlsVisible = false
+            subtitlePanelVisible = false
+        }
+    }
+
     // 播放中 3.5 秒无操作自动隐藏控制层；拖拽中、暂停时、字幕面板展开时不隐藏
     // （否则用户还在面板里挑字幕，控制层就没了）
-    LaunchedEffect(controlsVisible, state.playing, state.dragging, subtitlePanelVisible) {
-        if (controlsVisible && state.playing && !state.dragging && !subtitlePanelVisible) {
+    LaunchedEffect(controlsVisible, state.playing, state.dragging, subtitlePanelVisible, inPip) {
+        if (controlsVisible && state.playing && !state.dragging && !subtitlePanelVisible && !inPip) {
             delay(CONTROLS_AUTO_HIDE_MS)
             controlsVisible = false
         }
@@ -190,34 +203,57 @@ fun VideoPlayerScreen(
             modifier = Modifier.matchParentSize(),
         )
 
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.matchParentSize(),
-        ) {
-            Controls(
-                state = state,
-                viewModel = viewModel,
-                onBack = onBack,
-                onToggleSubtitlePanel = {
-                    subtitlePanelVisible = !subtitlePanelVisible
-                    // 打开面板时按需匹配同目录候选（含远端；R14）
-                    if (subtitlePanelVisible) viewModel.openSubtitlePanel()
-                },
-            )
-        }
+        // R13：PIP 里不显示控制层（系统只给一个"展开"按钮，控制交给 PIP 动作按钮）
+        if (!inPip) {
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.matchParentSize(),
+            ) {
+                Controls(
+                    state = state,
+                    viewModel = viewModel,
+                    onBack = onBack,
+                    onToggleSubtitlePanel = {
+                        subtitlePanelVisible = !subtitlePanelVisible
+                        // 打开面板时按需匹配同目录候选（含远端；R14）
+                        if (subtitlePanelVisible) viewModel.openSubtitlePanel()
+                    },
+                )
+            }
 
-        // 4) 字幕面板（R14：轨道列表 + 样式 + 时间轴微调 + 写回）
-        if (subtitlePanelVisible) {
-            SubtitlePanel(
-                state = state,
-                viewModel = viewModel,
-                onDismiss = { subtitlePanelVisible = false },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            // 4) 字幕面板（R14：轨道列表 + 样式 + 时间轴微调 + 写回）
+            if (subtitlePanelVisible) {
+                SubtitlePanel(
+                    state = state,
+                    viewModel = viewModel,
+                    onDismiss = { subtitlePanelVisible = false },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+        } else {
+            PipBadge(modifier = Modifier.align(Alignment.TopStart))
         }
     }
+}
+
+/**
+ * 画中画角标（R13）：明确告诉用户"现在是小窗模式，全屏控制在展开后回来"。
+ *
+ * 只有一行文字，不拦截点击（PIP 里的手势由系统处理）。
+ */
+@Composable
+private fun PipBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = stringResource(R.string.video_pip_active),
+        color = Color.White,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = modifier
+            .padding(6.dp)
+            .background(CONTROL_SCRIM, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 /** 控制层：顶栏（返回 / 标题 / 内核）＋ 底栏（进度、播放暂停、上下集、倍速、解码、缩放、字幕）。 */
