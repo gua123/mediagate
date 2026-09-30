@@ -50,6 +50,9 @@ import io.github.gua123.mediagate.feature.viewer.image.ImageTooLargeException
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
 import io.github.gua123.mediagate.feature.player.video.SubtitleHost
+import io.github.gua123.mediagate.feature.player.video.VideoPipActionSink
+import io.github.gua123.mediagate.feature.player.video.VideoPipHost
+import io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerMath
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
@@ -373,8 +376,20 @@ class AppContainer(context: Context) :
      */
     val videoPlayerEnvironment: VideoPlayerEnvironment = VideoPlayerHost()
 
+    /**
+     * 视频会话控制器（R18 视频侧 / R19 让路）：把播放页借出的内核包成 MediaSession 的会话源，
+     * 并在起播时连上 :media:playback 的 `VideoPlaybackService`（通知栏 / 锁屏可控）。
+     */
+    val videoSession: VideoSessionController = VideoSessionController(appContext)
+
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {
+
+        /** 画中画宿主（R13）：由当前 Activity 的桥实现，页面只认接口。 */
+        override val pip: VideoPipHost get() = pipHost
+
+        /** 视频后台播放宿主（R18/R19）：会话 + 让路。 */
+        override val playback: VideoPlaybackHost get() = videoSession
 
         override val backend: StateFlow<StorageBackend?> get() = audioBackend
 
@@ -427,6 +442,93 @@ class AppContainer(context: Context) :
         override suspend fun siblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
             VideoPlayerMath.playableEntries(currentBackend().list(parentOf(path), null))
         }
+    }
+
+    // ------------------------------------------------------------ 后台与保活（M8-A，R18）
+
+    /**
+     * 后台与保活引导（R18，澎湃 OS）：设置页读它显示四项状态、点它跳系统页/记手动确认。
+     *
+     * 与 [videoPreferences] 同一考虑：**容器构造时就开始查**（权限查询很便宜），
+     * 用户进设置页时看到的不是占位状态。
+     */
+    val keepAlive: KeepAliveController = KeepAliveController(appContext)
+
+    // ------------------------------------------------------------ 画中画（M8-A，R13）
+
+    /**
+     * 是否处于画中画（R13）。
+     *
+     * 状态放在容器而不是 Activity：Activity 会因 PIP 的配置变化重建，而"现在是不是小窗"是
+     * 页面与容器都要读的事实（页面据此收控制层、提示"画中画中"）。
+     */
+    private val _pipVisible = MutableStateFlow(false)
+
+    /** 画中画状态（R13）。 */
+    val pipVisible: StateFlow<Boolean> = _pipVisible.asStateFlow()
+
+    /** 当前 Activity 的 PIP 桥（R13）；没有 Activity 时为 null（PIP 调用全部变成空操作）。 */
+    private var pipBridge: VideoPipBridge? = null
+
+    /** 页面注册的 PIP 动作落点：Activity 重建后要重新补给它（否则小窗里的按钮会失灵）。 */
+    private var pipSink: VideoPipActionSink? = null
+
+    /** 页面最后一次说的"是否在播"与"是否允许自动进 PIP"：Activity 重建后要重新补给它。 */
+    private var pipPlaying: Boolean = false
+    private var pipAutoEnter: Boolean = false
+
+    /**
+     * 画中画宿主能力（R13）——交给 :feature:player-video 的稳定对象。
+     *
+     * 为什么是代理而不是直接把 Activity 的桥给页面：页面（ViewModel）活在导航栈里，
+     * 比 Activity 长寿；用代理可以让"Activity 重建"对页面完全透明。
+     */
+    val pipHost: VideoPipHost = PipHost()
+
+    private inner class PipHost : VideoPipHost {
+
+        override val isInPip: StateFlow<Boolean> get() = _pipVisible
+
+        override fun enterPip(aspectRatio: Float): Boolean = pipBridge?.enterPip(aspectRatio) ?: false
+
+        override fun updateActions(isPlaying: Boolean) {
+            pipPlaying = isPlaying
+            pipBridge?.updateActions(isPlaying)
+        }
+
+        override fun setAutoEnterEnabled(enabled: Boolean) {
+            pipAutoEnter = enabled
+            pipBridge?.setAutoEnterEnabled(enabled)
+        }
+
+        override fun setActionSink(sink: VideoPipActionSink?) {
+            pipSink = sink
+            pipBridge?.setActionSink(sink)
+        }
+    }
+
+    /**
+     * MainActivity 附着 PIP 桥（R13）：把页面已经说过的三件事补给它。
+     *
+     * 为什么必须补：页面（ViewModel）比 Activity 长寿，Activity 重建后新的桥对这些一无所知——
+     * 不补的话"按 Home 自动进 PIP"会失效、小窗里的动作按钮会点不动。
+     */
+    fun attachPipBridge(bridge: VideoPipBridge) {
+        pipBridge = bridge
+        bridge.setActionSink(pipSink)
+        bridge.updateActions(pipPlaying)
+        bridge.setAutoEnterEnabled(pipAutoEnter)
+    }
+
+    /** MainActivity 销毁时摘下 PIP 桥（R13）；幂等。 */
+    fun detachPipBridge(bridge: VideoPipBridge) {
+        if (pipBridge === bridge) pipBridge = null
+        _pipVisible.value = false
+    }
+
+    /** MainActivity 回调：PIP 状态变化（R13）。 */
+    fun setPipVisible(visible: Boolean) {
+        _pipVisible.value = visible
     }
 
     /**
@@ -519,26 +621,24 @@ class AppContainer(context: Context) :
     }
 
     /**
-     * 视频是否正在播放。
+     * 视频播放页（或其它模块）告知「我正在前台播放」，用于 R19 的播放让路。
      *
-     * **不改** :feature:player-video 与 :media:playback 的签名（本轮边界要求）：
-     * 音频侧直接订阅 MediaController 状态；视频侧先留一个显式入口
-     * （[setVideoPlaybackActive]），将来由播放页在 onStart/onStop 时喂进来。
+     * 这是容器对外的显式入口（R19 的让路闸门吃它）；播放页走的是
+     * [io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost.setActive]，两者落在同一处状态上。
      */
-    private val videoPlaybackActive = MutableStateFlow(false)
-
-    /** 视频播放页（或其它模块）告知「我正在前台播放」，用于 R19 的播放让路。 */
     fun setVideoPlaybackActive(active: Boolean) {
-        videoPlaybackActive.value = active
+        videoSession.setActive(active)
     }
 
     /**
      * 前台是否正在播放（音频 ∨ 视频）。
      *
      * 懒加载：音频那条要 bind MediaController，只有真的用到让路（进任务中心/跑字幕）才建。
+     * 视频侧不再需要页面额外交互：M8-A 起播放页在每个状态变化时把"是否真的在播"喂进来
+     * （READY + 在播 + 没播完），所以让路判定与用户看到的状态一致。
      */
     private val playbackActive: StateFlow<Boolean> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        combine(audioSession.state.map { it.playing }, videoPlaybackActive) { audio, video -> audio || video }
+        combine(audioSession.state.map { it.playing }, videoSession.active) { audio, video -> audio || video }
             .stateIn(ioScope, SharingStarted.Eagerly, false)
     }
 

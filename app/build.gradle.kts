@@ -114,6 +114,8 @@ dependencies {
     // M1-G（R18）：:app 是组合根，直接持有 MediaController / SessionToken 连后台播放服务
     // （:media:playback 把 media3 声明为 implementation，不向上传递）
     implementation(libs.media3.session)
+    // M8-A（R13）：画中画比例要读 PlayerView.videoSize（:media:engine 把 media3-ui 声明为 implementation，不向上传递）
+    implementation(libs.media3.ui)
     implementation(project(":media:thumbnail"))
     implementation(project(":media:tsext"))
     implementation(project(":media:ffmpeg"))

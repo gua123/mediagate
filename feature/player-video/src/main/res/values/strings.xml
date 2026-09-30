@@ -33,6 +33,9 @@
     <string name="video_error_unknown">播放失败，请重试</string>
     <string name="video_error_detail">错误详情：%1$s</string>
 
+    <!-- 画中画（R13：播放中按 Home 自动进 PIP，PIP 内可播放/暂停、快退快进 10 秒） -->
+    <string name="video_pip_active">画中画中</string>
+
     <!-- 字幕（R14：外挂字幕 + 样式 + 时间轴微调 + 写回；单轨，不做双字幕） -->
     <string name="video_subtitle">字幕：%1$s</string>
     <string name="video_subtitle_open">打开字幕面板</string>

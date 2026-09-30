@@ -102,6 +102,7 @@ class VideoPlayerViewModel(
     private var discoverJob: Job? = null
     private var subtitleTickJob: Job? = null
     private var writeBackJob: Job? = null
+    private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
     private var endedSaved: Boolean = false
@@ -122,7 +123,76 @@ class VideoPlayerViewModel(
 
     init {
         applyStoredSubtitleSettings()
+        attachHosts()
         load(initialPath)
+    }
+
+    // ------------------------------------------------------------------ 宿主能力（R13 画中画 / R18 会话 / R19 让路）
+
+    /**
+     * 接上宿主能力（**R13** 画中画 + **R18** 视频会话 + **R19** 播放让路）。
+     *
+     * 只做三件事，全部是"把页面的状态翻译成宿主要的形式"：
+     * 1. 注册 PIP 动作落点（PIP 里的播放/暂停、±10 秒点击会回调 [onPipAction]）；
+     * 2. 状态一变就更新 PIP 动作按钮与"按 Home 自动进 PIP"开关（[VideoPipMath] 的纯判定）；
+     * 3. 把"正在前台播放"上报给宿主——R19 的 ASR 让路闸门就吃这个信号，
+     *    口径是 **READY + 在播 + 没播完**（暂停/加载中/播完/失败都不算，识别任务该跑就跑）。
+     */
+    private fun attachHosts() {
+        environment.pip.setActionSink(VideoPipActionSink(::onPipAction))
+        hostJob = viewModelScope.launch {
+            state.collect { snapshot ->
+                environment.pip.updateActions(VideoPipMath.showsPauseAction(snapshot))
+                environment.pip.setAutoEnterEnabled(VideoPipMath.autoEnterEnabled(snapshot))
+                environment.playback.setActive(isPlaybackActive(snapshot))
+            }
+        }
+    }
+
+    /** R19 让路口径：真的在播才算"占用前台播放"（暂停/失败/播完都让开）。 */
+    private fun isPlaybackActive(snapshot: VideoPlayerUiState): Boolean =
+        snapshot.playing && snapshot.status == VideoPlayerStatus.READY && !snapshot.ended
+
+    /**
+     * PIP 内的动作（**R13**）：播放/暂停 + 快退/快进 10 秒。
+     *
+     * 由宿主的 PIP 动作按钮（Android 13+ 的 RemoteAction）回调进来，最终驱动**当前内核**。
+     */
+    fun onPipAction(action: VideoPipAction) {
+        when (action) {
+            VideoPipAction.TOGGLE_PLAY_PAUSE -> togglePlayPause()
+            VideoPipAction.REWIND_10S -> seekBy(-VideoPipMath.SEEK_STEP_MS)
+            VideoPipAction.FORWARD_10S -> seekBy(VideoPipMath.SEEK_STEP_MS)
+        }
+    }
+
+    /**
+     * 相对跳转（**R13** PIP 内的 ±10 秒）。
+     *
+     * 位置以**内核现场**为准（UI 采样值最多滞后 500 ms，快退 10 秒这种小步长会明显不准），
+     * 越界由 [VideoPipMath.seekTarget] 钳在 0..时长。
+     */
+    fun seekBy(deltaMs: Long) {
+        val target = engine ?: return
+        val next = VideoPipMath.seekTarget(target.positionMs(), deltaMs, target.durationMs())
+        target.seekTo(next)
+        // 跳到哪儿就从哪儿重新计 5 秒落盘（R18）
+        msSinceSave = 0L
+        _state.update { it.reduce(VideoPlayerEvent.SeekedTo(next)) }
+    }
+
+    /** 把当前视频会话交给宿主（**R18**：通知栏 / 锁屏 / 蓝牙要看它）。 */
+    private fun bindSession(engine: PlayerEngine, ref: MediaSourceRef, view: View?) {
+        environment.playback.bindSession(
+            VideoSession(
+                engine = engine,
+                // 展示名与播放页标题同口径（title 为空时回落到路径末段）
+                title = ref.title?.takeIf { it.isNotBlank() } ?: VideoPlayerMath.fileNameOf(ref.path),
+                backendId = ref.backendId,
+                path = ref.path,
+                videoView = view,
+            ),
+        )
     }
 
     // ------------------------------------------------------------------ 页面动作
@@ -558,6 +628,13 @@ class VideoPlayerViewModel(
         val ref = source
         val position = _state.value.positionMs
         val duration = _state.value.durationMs
+        // R13/R18/R19：退出播放页要把宿主那一侧也收干净（不自动进 PIP、不发会话、放开让路）
+        hostJob?.cancel()
+        environment.pip.setActionSink(null)
+        environment.pip.setAutoEnterEnabled(false)
+        environment.pip.updateActions(false)
+        environment.playback.setActive(false)
+        environment.playback.bindSession(null)
         loadJob?.cancel()
         engineJob?.cancel()
         tickJob?.cancel()
@@ -636,12 +713,15 @@ class VideoPlayerViewModel(
         }
         engine = created
         observe(created)
-        _videoOutput.value = created.videoView()
+        val view = created.videoView()
+        _videoOutput.value = view
         created.setDecoderMode(mode)
         created.setMedia(ref)
         created.prepare()
         created.play()
         _state.update { it.reduce(VideoPlayerEvent.EngineAttached(created.kind, mode)) }
+        // R18：会话（通知栏/锁屏）跟着当前这条视频走
+        bindSession(created, ref, view)
         msSinceSave = 0L
         wasPlaying = true
         endedSaved = false
@@ -697,6 +777,8 @@ class VideoPlayerViewModel(
             running.prepare()
             running.play()
             _state.update { it.reduce(VideoPlayerEvent.EngineAttached(running.kind, running.decoderMode)) }
+            // R18：换集后通知栏/锁屏要跟着换（标题与断点 key 都变了）
+            bindSession(running, ref, _videoOutput.value)
             msSinceSave = 0L
             wasPlaying = true
             endedSaved = false
@@ -759,8 +841,11 @@ class VideoPlayerViewModel(
         }
         engine = created
         observe(created)
-        _videoOutput.value = created.videoView()
+        val view = created.videoView()
+        _videoOutput.value = view
         VideoEngineSwitch.applyRestore(created, plan.restore)
+        // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）
+        source?.let { ref -> bindSession(created, ref, view) }
         if (reason == SwitchReason.USER_REQUEST) {
             withContext(io) { runCatching { environment.preferences.setEngine(target) } }
         }
@@ -880,6 +965,9 @@ class VideoPlayerViewModel(
         val current = engine
         engine = null
         _videoOutput.value = null
+        // R18：内核没了就没有可会话的对象——通知栏收掉、让路闸门放开（不留悬念）
+        environment.playback.bindSession(null)
+        environment.playback.setActive(false)
         if (current == null) return
         runCatching { current.release() }.onFailure { AppLog.w(TAG, "释放内核失败", it) }
     }

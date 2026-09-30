@@ -5,4 +5,6 @@
 -->
 <resources>
     <string name="playback_notification_channel_name">媒体播放</string>
+    <!-- R18 视频侧：视频切后台/息屏后的通知栏控制（与音频侧分开一个渠道，用户可单独静音） -->
+    <string name="video_playback_channel_name">视频播放</string>
 </resources>

@@ -20,6 +20,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -61,6 +62,8 @@ import io.github.gua123.mediagate.feature.player.audio.LocalAudioPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
+import io.github.gua123.mediagate.feature.settings.KeepAliveAction
+import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
 import io.github.gua123.mediagate.feature.settings.SettingsNote
 import io.github.gua123.mediagate.feature.settings.SettingsScreen
 import io.github.gua123.mediagate.feature.tasks.LocalTasksEnvironment
@@ -135,10 +138,20 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     // R18：后台播放的通知栏/锁屏控制需要通知权限；拒绝也照常播放，只提示一句中文
     val context = LocalContext.current
     val notificationDeniedHint = stringResource(R.string.audio_notification_denied)
+    val notificationDeniedAction = stringResource(R.string.audio_notification_denied_action)
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted: Boolean ->
-        if (!granted) scope.launch { snackbarHostState.showSnackbar(notificationDeniedHint) }
+        if (!granted) {
+            // 被拒（含"不再询问"）时给一个直达系统通知设置页的出口，而不是只提示一句（R18）
+            scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = notificationDeniedHint,
+                    actionLabel = notificationDeniedAction,
+                )
+                if (result == SnackbarResult.ActionPerformed) container.keepAlive.openNotificationSettings()
+            }
+        }
     }
 
     /** 首次点音频时申请一次通知权限（已授权则什么都不做）。 */
@@ -157,7 +170,11 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) container.refreshAllFilesAccess()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                container.refreshAllFilesAccess()
+                // R18：用户可能刚从系统设置页（省电策略 / 通知）回来，回前台就重查一次保活状态
+                container.keepAlive.refresh()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -286,6 +303,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     SettingsRoute(
                         container = container,
                         onOpenConnections = { navController.switchTopLevel(TopLevelDestination.CONNECTIONS) },
+                        onRequestNotification = ::ensureNotificationPermission,
                     )
                 }
             }
@@ -317,13 +335,22 @@ private fun HomeRoute(
 }
 
 /**
- * 设置页（M4，R7/R8）：把容器里的「当前连接」与网络策略文案映射成页面模型。
+ * 设置页（M4，R7/R8；M8-A 增加 **R18** 后台与保活）：把容器里的「当前连接」、
+ * 网络策略文案与保活引导映射成页面模型。
  *
- * 页面本身只读，不查库、不建后端；跳转由这里给（导航控制器在 :app 手里）。
+ * 页面本身只读，不查库、不建后端、不碰权限查询；跳转与状态查询都由这里转给容器
+ * （导航控制器与 ActivityResult 启动器在 :app 手里）。
+ *
+ * @param onRequestNotification 申请通知权限（要 ActivityResult 启动器，只能在 :app 侧发起）。
  */
 @Composable
-private fun SettingsRoute(container: AppContainer, onOpenConnections: () -> Unit) {
+private fun SettingsRoute(
+    container: AppContainer,
+    onOpenConnections: () -> Unit,
+    onRequestNotification: () -> Unit,
+) {
     val connection by container.settingsConnection.collectAsStateWithLifecycle()
+    val keepAlive by container.keepAlive.guide.collectAsStateWithLifecycle()
     val notes = listOf(
         SettingsNote(
             title = stringResource(R.string.settings_note_order_title),
@@ -346,6 +373,17 @@ private fun SettingsRoute(container: AppContainer, onOpenConnections: () -> Unit
         connection = connection,
         notes = notes,
         onOpenConnections = onOpenConnections,
+        keepAlive = keepAlive,
+        onKeepAliveAction = { action: KeepAliveAction ->
+            when (action) {
+                KeepAliveAction.REQUEST_NOTIFICATION -> onRequestNotification()
+                KeepAliveAction.REQUEST_BATTERY_UNRESTRICTED -> container.keepAlive.requestBatteryUnrestricted()
+                KeepAliveAction.OPEN_APP_DETAILS -> container.keepAlive.openAppDetails()
+            }
+        },
+        onKeepAliveConfirm = { kind: KeepAliveItemKind, confirmed: Boolean ->
+            container.keepAlive.setConfirmed(kind, confirmed)
+        },
     )
 }
 

@@ -19,6 +19,7 @@
 
     <!-- M1-G（R18）：音频后台播放 -->
     <string name="audio_notification_denied">未授予通知权限：后台播放仍可继续，但通知栏与锁屏看不到播放控制</string>
+    <string name="audio_notification_denied_action">去设置</string>
 
     <!-- M4（R7/R8）：设置页的网络切换策略说明（只读） -->
     <string name="settings_note_order_title">选择顺序</string>
@@ -33,6 +34,12 @@
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>
+
+    <!-- 画中画（M8-A / R13）：PIP 窗口内的三个动作按钮文案（图标用系统媒体图标） -->
+    <string name="video_pip_play">播放</string>
+    <string name="video_pip_pause">暂停</string>
+    <string name="video_pip_rewind">快退 10 秒</string>
+    <string name="video_pip_forward">快进 10 秒</string>
 
     <!-- 批量字幕任务中心的通知（M7-B / R19：前台服务 + 通知进度，可暂停/取消） -->
     <string name="asr_notification_channel_name">字幕生成</string>
