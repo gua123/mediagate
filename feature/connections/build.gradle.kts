@@ -41,8 +41,10 @@ dependencies {
     api(project(":core:crypto"))
     // ProtocolKind / SelectableAddress / ConnectionTester 出现在页面与 ViewModel 的公开签名（R7/R8）
     api(project(":core:network"))
-    // WebDAV 的第三段协议握手（PROPFIND）直接用现成后端，不重写一份（R8）
+    // 协议握手（第三段）直接用现成后端，不重写一份（R8）：WebDAV / SFTP / FTP
     implementation(project(":data:storage-webdav"))
+    implementation(project(":data:storage-sftp"))
+    implementation(project(":data:storage-ftp"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

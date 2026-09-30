@@ -37,6 +37,9 @@ serializationJson = "1.11.0"
 junit = "4.13.2"
 androidxTestJunit = "1.3.0"
 espresso = "3.7.0"
+# 仅测试源集使用：嵌入式 SFTP 服务器（storage-sftp 单测）与嵌入式 FTP 服务器（storage-ftp 单测）
+sshd = "2.20.0"
+ftpserver = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -96,6 +99,10 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidxTestJunit" }
 androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+# 嵌入式协议服务器：只进 testImplementation（Android 侧不引用，不打进 APK）
+sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+sshd-sftp = { module = "org.apache.sshd:sshd-sftp", version.ref = "sshd" }
+ftpserver-core = { module = "org.apache.ftpserver:ftpserver-core", version.ref = "ftpserver" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
