@@ -66,6 +66,11 @@
 
 账号 `demo`。**密码不写入本文件**（方案要随项目进 git）；密码只存本机记忆库与实施时的 App 连接记录（Keystore 加密）。WebDAV 的 8080/8443 是 http 还是 https、认证方式，实施时先探测。
 
+> **2026-10-01 实测结论（M3 落地后直连验证）**
+> - 局域网 WebDAV `http://192.168.1.10:8080` **可用**：Apache，**明文 http + Basic 认证**（https 同端口不通）；PROPFIND Depth:0/1 回 207；文件带 `Accept-Ranges: bytes`，Range 请求回 206 且**与全量下载对应偏移逐字节一致**（已实测 bytes=0-99 / 200-299）。
+> - 该服务器的 XML 用 `D:`/`lp1:` 前缀绑定 DAV: 命名空间、根列表里集合 href **可能不带尾斜杠**（`/downloads`）、目录不返回 `getcontentlength` —— 正好验证了 WebDAV 后端「按 local name 解析 / 靠 resourcetype 判目录 / 缺属性容忍为 -1」的设计。
+> - 局域网 SFTP 2222 端口可连（后端 M5 才做）。**公网侧：dav.example.com 解析到 203.0.113.10，SFTP 2222 可连，但 WebDAV 8443 连接被拒**（http/https 均不通）—— R7/R8 的公网 WebDAV 验收暂时做不了，需检查端口映射。
+
 ---
 
 ## 1. 需求清单（验收基线）
