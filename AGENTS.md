@@ -46,4 +46,10 @@
 - **M1 已完成（2026-10-01）**：数据层（File/SAF 双模式）+ 缩略图流水线（Key v2：视频抽帧 / 图片预览重编码 / 音频内嵌封面）
   + 应用接线（手写 AppContainer + 导航 + 首页 + 浏览器 + 双模式引导）+ 图片查看器 + 音频播放与后台播放（MediaSessionService）。
   验收记录见 docs/验收记录-M1.md；本阶段新增 198 个 JVM 用例（每片均以 --rerun-tasks --no-build-cache 复核）。
-- **M2 进行中**：播放内核（PlayerEngine 抽象 + Media3 实现 + 回环 HTTP 代理 + LibVLC 实现 + 硬/软解切换）。
+- **M2–M8 已完成（2026-10-01）**：播放内核与视频播放页、WebDAV/SFTP/FTP 三协议后端（含真网 opt-in 验收）、
+  连接管理与多地址选路、TS 索引与 FFmpeg 简版、外挂字幕与 whisper 音转字幕（JNI 桥 + 批量任务中心）、
+  画中画与视频后台播放、澎湃保活引导。
+- **当前基线**：全项目 **1264 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`）；
+  release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
+- **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
+  验收记录共三份：M0 / M1 / M2-M8。
