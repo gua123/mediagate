@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:home 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$s / %2$s。
+-->
+<resources>
+    <string name="home_title">媒体库</string>
+    <string name="home_subtitle">从本地目录开始浏览与播放</string>
+
+    <string name="home_section_media">媒体入口</string>
+    <string name="home_entry_video">视频</string>
+    <string name="home_entry_video_desc">浏览并播放视频</string>
+    <string name="home_entry_audio">音乐</string>
+    <string name="home_entry_audio_desc">浏览并播放音频</string>
+    <string name="home_entry_image">图片</string>
+    <string name="home_entry_image_desc">浏览图片</string>
+
+    <string name="home_root_title">当前根目录</string>
+    <string name="home_root_guide_title">还没有选择媒体根目录</string>
+    <string name="home_root_guide_message">两种方式任选其一：① 用系统目录选择器授权一个目录；② 开启「所有文件访问」后浏览整个内部存储。</string>
+    <string name="home_root_mode_label">访问方式：%1$s</string>
+    <string name="home_root_path_label">位置：%1$s</string>
+    <string name="home_root_mode_saf">目录授权</string>
+    <string name="home_root_mode_all_files">所有文件访问</string>
+    <string name="home_root_mode_none">未选择</string>
+
+    <string name="home_action_pick_saf">选择目录</string>
+    <string name="home_action_use_all_files">使用全盘访问</string>
+    <string name="home_action_grant_all_files">开启「所有文件访问」</string>
+    <string name="home_action_clear_root">清除当前根目录</string>
+    <string name="home_all_files_granted">已获得「所有文件访问」权限</string>
+    <string name="home_all_files_not_granted">尚未获得「所有文件访问」权限</string>
+</resources>

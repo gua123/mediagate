@@ -1,4 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  :app 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文。
+-->
 <resources>
     <string name="app_name">MediaGate</string>
+
+    <string name="nav_home">首页</string>
+    <string name="nav_browser">浏览</string>
+    <string name="nav_connections">连接</string>
+    <string name="nav_tasks">任务</string>
+    <string name="nav_settings">设置</string>
+
+    <string name="placeholder_message">功能开发中，将在后续里程碑提供。</string>
+
+    <string name="root_label_saf">已授权目录</string>
+    <string name="root_label_all_files">内部存储</string>
+    <string name="root_label_internal_storage">内部存储</string>
 </resources>

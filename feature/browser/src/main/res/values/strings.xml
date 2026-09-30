@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:browser 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$s / %2$s。
+-->
+<resources>
+    <string name="browser_title">文件浏览</string>
+    <string name="browser_action_up">返回上级</string>
+    <string name="browser_action_refresh">刷新</string>
+    <string name="browser_action_retry">重试</string>
+    <string name="browser_action_request_access">去授权</string>
+    <string name="browser_action_pick_root">去选择根目录</string>
+
+    <string name="browser_loading">正在加载…</string>
+    <string name="browser_empty_dir">此目录为空</string>
+    <string name="browser_empty_filtered">当前筛选条件下没有可显示的项</string>
+
+    <string name="browser_error_access_denied">没有访问权限</string>
+    <string name="browser_error_not_found">目录不存在</string>
+    <string name="browser_error_not_supported">该目录暂不支持浏览</string>
+    <string name="browser_error_unknown">加载失败，请重试</string>
+    <string name="browser_error_detail">错误详情：%1$s</string>
+
+    <string name="browser_no_root_title">尚未选择媒体根目录</string>
+    <string name="browser_no_root_message">请先在首页选择一个目录，或开启「所有文件访问」后再回来浏览。</string>
+
+    <string name="browser_kind_folder">文件夹</string>
+    <string name="browser_kind_video">视频</string>
+    <string name="browser_kind_audio">音频</string>
+    <string name="browser_kind_image">图片</string>
+    <string name="browser_kind_subtitle">字幕</string>
+    <string name="browser_kind_other">文件</string>
+
+    <string name="browser_meta">%1$s · %2$s</string>
+    <string name="browser_crumb_separator">›</string>
+    <string name="browser_filter_active">筛选：%1$s</string>
+    <string name="browser_filter_clear">清除筛选</string>
+
+    <string name="browser_open_todo_image">图片查看器尚未提供，将在后续版本加入</string>
+    <string name="browser_open_todo_video">视频播放尚未提供，将在后续版本加入</string>
+    <string name="browser_open_todo_audio">音频播放尚未提供，将在后续版本加入</string>
+    <string name="browser_open_todo_subtitle">字幕文件暂不支持直接打开</string>
+    <string name="browser_open_todo_other">暂不支持打开该文件类型</string>
+</resources>
