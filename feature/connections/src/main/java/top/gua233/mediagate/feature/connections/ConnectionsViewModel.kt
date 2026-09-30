@@ -278,7 +278,8 @@ class ConnectionsViewModel(
         val secret = withContext(io) { repository.revealSecret(record.id) }
         val protocol = record.protocol ?: ProtocolKind.LOCAL
         val tester = ConnectionTester(
-            handshakes = ConnectionHandshakes.forConnection(record, secret),
+            // M5 纯加法：SFTP / FTP 也走真握手（见 StorageConnectionHandshakes）；LOCAL/WEBDAV 语义不变
+            handshakes = StorageConnectionHandshakes.forConnection(record, secret),
             io = io,
         )
         val addresses = record.selectableAddresses()
