@@ -102,6 +102,9 @@ dependencies {
     implementation(project(":media:engine"))
     implementation(project(":media:proxy"))
     implementation(project(":media:playback"))
+    // M2-B：:app 是组合根，直接用 ExoPlayerEngine 的构造签名（DataSource.Factory 来自 media3-datasource，
+    // :media:engine 把它声明为 implementation，不向上传递）
+    implementation(libs.media3.exoplayer)
     // M1-G（R18）：:app 是组合根，直接持有 MediaController / SessionToken 连后台播放服务
     // （:media:playback 把 media3 声明为 implementation，不向上传递）
     implementation(libs.media3.session)

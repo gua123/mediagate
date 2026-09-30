@@ -55,6 +55,9 @@ import io.github.gua123.mediagate.feature.home.HomeScreen
 import io.github.gua123.mediagate.feature.player.audio.AudioPlayerRoutes
 import io.github.gua123.mediagate.feature.player.audio.AudioPlayerScreen
 import io.github.gua123.mediagate.feature.player.audio.LocalAudioPlayerEnvironment
+import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironment
+import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
+import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
@@ -100,6 +103,10 @@ private enum class TopLevelDestination(
  * 再导航到 [AudioPlayerRoutes]；播放本身交给 :media:playback 的 MediaSessionService，
  * 界面拿到的只有 [io.github.gua123.mediagate.feature.player.audio.AudioPlaybackSnapshot]。
  *
+ * 视频播放（**M2-B**，R1/R4/R9/R10/R18）：浏览页点视频 → 导航到 [VideoPlayerRoutes]；
+ * 内核实例（Media3 / LibVLC）、回环代理与断点存储都由容器经
+ * [LocalVideoPlayerEnvironment] 注入，页面只发命令、收状态。
+ *
  * @param container 应用级依赖容器（由 [io.github.gua123.mediagate.MediaGateApplication] 持有）。
  */
 @Composable
@@ -113,9 +120,10 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val unsupportedHint = stringResource(R.string.open_unsupported)
 
-    // 全屏页（R1）：图片查看器占满整屏；音频播放页是播放场景，同样不给底部导航让位
+    // 全屏页（R1）：图片查看器占满整屏；音频/视频播放页是播放场景，同样不给底部导航让位
     val fullScreenDestination = currentDestination?.route == ViewerRoutes.ROUTE ||
-        currentDestination?.route == AudioPlayerRoutes.ROUTE
+        currentDestination?.route == AudioPlayerRoutes.ROUTE ||
+        currentDestination?.route == VideoPlayerRoutes.ROUTE
 
     // R18：后台播放的通知栏/锁屏控制需要通知权限；拒绝也照常播放，只提示一句中文
     val context = LocalContext.current
@@ -174,6 +182,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             LocalImageViewerEnvironment provides container,
             // M1-G：音频后台播放（R1/R18）的宿主能力（MediaController + 进度存储）
             LocalAudioPlayerEnvironment provides container,
+            // M2-B：视频播放（R1/R4/R9/R10/R18）的宿主能力（双内核 + 回环代理 + 断点存储 + 偏好）
+            LocalVideoPlayerEnvironment provides container.videoPlayerEnvironment,
         ) {
             NavHost(
                 navController = navController,
@@ -202,8 +212,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                         initialPath = BrowserRoutes.pathOf(entry.arguments?.getString(BrowserRoutes.ARG_PATH)),
                         initialKind = BrowserRoutes.kindOf(entry.arguments?.getString(BrowserRoutes.ARG_KIND)),
                         onOpenEntry = { clicked ->
-                            // R1：图片进查看器（M1-F）、音频进音频播放页（M1-G）；
-                            // 其余类型播放器尚未接入，给一句中文提示
+                            // R1：图片进查看器（M1-F）、音频进音频播放页（M1-G）、
+                            // 视频进视频播放页（M2-B）；其余类型给一句中文提示
                             when (MediaKindGuesser.guess(clicked.name)) {
                                 MediaKind.IMAGE -> navController.navigate(ViewerRoutes.route(clicked.path))
 
@@ -211,6 +221,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                                     ensureNotificationPermission()
                                     navController.navigate(AudioPlayerRoutes.route(clicked.path))
                                 }
+
+                                MediaKind.VIDEO -> navController.navigate(VideoPlayerRoutes.route(clicked.path))
 
                                 else -> scope.launch { snackbarHostState.showSnackbar(unsupportedHint) }
                             }
@@ -232,6 +244,15 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(route = AudioPlayerRoutes.ROUTE, arguments = AudioPlayerRoutes.arguments) { entry ->
                     AudioPlayerScreen(
                         path = AudioPlayerRoutes.pathOf(entry.arguments?.getString(AudioPlayerRoutes.ARG_PATH)),
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+
+                // 视频播放页（M2-B，R1/R4/R9/R10/R18）：队列由播放页按「同目录视频/音频」自己解析，
+                // 路由只带路径；内核实例、回环代理与断点存储都在 AppContainer 里。
+                composable(route = VideoPlayerRoutes.ROUTE, arguments = VideoPlayerRoutes.arguments) { entry ->
+                    VideoPlayerScreen(
+                        path = VideoPlayerRoutes.pathOf(entry.arguments?.getString(VideoPlayerRoutes.ARG_PATH)),
                         onBack = { navController.popBackStack() },
                     )
                 }

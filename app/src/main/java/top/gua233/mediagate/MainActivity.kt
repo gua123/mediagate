@@ -19,6 +19,13 @@ import io.github.gua123.mediagate.ui.theme.MediaGateTheme
  */
 class MainActivity : ComponentActivity() {
 
+    override fun onDestroy() {
+        super.onDestroy()
+        // 用户真的离开应用（不是转屏/配置变更）时关掉回环代理的监听线程；
+        // 若进程之后被系统拉回前台，AppContainer 会按需重建代理（见 requireVideoProxy）
+        if (isFinishing) (application as MediaGateApplication).container.close()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

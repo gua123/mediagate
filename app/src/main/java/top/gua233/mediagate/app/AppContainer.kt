@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
+import android.view.SurfaceView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,7 +34,16 @@ import io.github.gua123.mediagate.feature.player.audio.AudioRepeatMode
 import io.github.gua123.mediagate.feature.viewer.image.ImageTooLargeException
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
+import io.github.gua123.mediagate.feature.player.video.VideoPlayerEnvironment
+import io.github.gua123.mediagate.feature.player.video.VideoPlayerMath
+import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
+import io.github.gua123.mediagate.media.engine.EngineKind
+import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
+import io.github.gua123.mediagate.media.engine.PlayerEngine
+import io.github.gua123.mediagate.media.engine.VlcEngine
+import io.github.gua123.mediagate.media.playback.BackendDataSourceFactory
+import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.thumbnail.EmbeddedArtworkExtractor
 import io.github.gua123.mediagate.media.thumbnail.FfmpegFrameExtractor
 import io.github.gua123.mediagate.media.thumbnail.ImagePreviewPipeline
@@ -136,8 +146,13 @@ class AppContainer(context: Context) :
     /** 播放状态（来自 MediaController，见 [AudioSessionController]）。 */
     override val state: StateFlow<AudioPlaybackSnapshot> get() = audioSession.state
 
-    /** 当前根目录的后端；尚未选择时为 null。 */
-    override val backend: StateFlow<StorageBackend?> get() = audioSession.backend
+    /**
+     * 当前根目录的后端；尚未选择时为 null。
+     *
+     * 直接给 [audioBackend] 这条流（与 AudioSessionController 内部那份是同一个实例），
+     * 而不是走 audioSession：视频播放页也要这个后端，但不该顺手把音频后台服务绑起来。
+     */
+    override val backend: StateFlow<StorageBackend?> get() = audioBackend
 
     /**
      * 列出 [path] 所在目录里的音频（同目录队列，R1）。
@@ -173,6 +188,110 @@ class AppContainer(context: Context) :
 
     override fun setRepeatMode(mode: AudioRepeatMode) {
         audioSession.setRepeatMode(mode)
+    }
+
+    // ------------------------------------------------------------ 视频播放（M2-B，R4/R9/R10/R18）
+
+    /**
+     * 视频播放页偏好（上次用的内核 + 解码档位，R9/R10）。
+     *
+     * **在容器构造时就建**（不是懒加载）：DataStore 的第一次读是异步的，早一点开始读，
+     * 用户点开视频时拿到的才是上次的选择，而不是"还没读完"的默认值。
+     */
+    private val videoPreferences: VideoPlayerPreferences =
+        VideoPlayerPreferencesSettings(appContext, ioScope)
+
+    /** 回环代理（plan 4.6）；懒建 + 关闭后可按需重建，见 [requireVideoProxy]。 */
+    @Volatile
+    private var videoProxy: LoopbackHttpProxy? = null
+
+    /**
+     * 视频播放页的宿主能力（M2-B）：由 MediaGateApp 注入 LocalVideoPlayerEnvironment。
+     *
+     * **为什么不让 AppContainer 直接实现它**：:feature:viewer-image 的 ImageViewerEnvironment
+     * 已经有一个同名同签名的 siblings(path)（列同目录图片），而视频侧要列的是同目录视频/音频。
+     * JVM 上一个类只能有一份同签名实现，两个接口的语义又不同（viewer-image 属别的模块，不能改），
+     * 所以视频这几个能力收进一个内部实现类——:app 依旧是唯一实现方，页面只认接口。
+     */
+    val videoPlayerEnvironment: VideoPlayerEnvironment = VideoPlayerHost()
+
+    /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
+    private inner class VideoPlayerHost : VideoPlayerEnvironment {
+
+        override val backend: StateFlow<StorageBackend?> get() = audioBackend
+
+        override val preferences: VideoPlayerPreferences get() = videoPreferences
+
+        /** 断点续播存储（R18）：与音频后台播放共用同一份 DataStore 实现。 */
+        override val progress: PlaybackProgressStore get() = playbackProgress
+
+        /**
+         * 回环代理基址（给 LibVLC 与将来的"分享播放地址"复用）；起不来时返回 null。
+         *
+         * 播放页据此判断能不能给出"一键切 LibVLC 续播"（LibVLC 只会吃 URL）。
+         */
+        override val proxyBaseUrl: String?
+            get() = runCatching { requireVideoProxy().baseUrl }.getOrNull()
+
+        /**
+         * 按内核种类造内核（R9）：Media3 注入 [BackendDataSourceFactory]（本地/远端同一套数据源，
+         * R4 拖拽 seek 靠它做 Range 重开）；LibVLC 注入回环代理与视频输出视图（VLC 只认 URL，
+         * 画面挂在外部传进去的 SurfaceView 上，见 VlcEngine.attachVideoOutput）。
+         *
+         * 调用方（播放页 ViewModel）在主线程上调用，所以这里是真的在主线程构造播放器——两个内核都要求如此。
+         */
+        override suspend fun createEngine(kind: EngineKind): PlayerEngine = when (kind) {
+            EngineKind.MEDIA3 -> ExoPlayerEngine(appContext, BackendDataSourceFactory { _root.value?.backend })
+
+            EngineKind.VLC -> {
+                // 起代理要绑监听端口（阻塞）；先在 IO 上起好，再回主线程构造播放器
+                val proxy = withContext(Dispatchers.IO) { requireVideoProxy() }
+                VlcEngine(
+                    context = appContext,
+                    proxy = proxy,
+                    // 解码档位是 LibVLC 的实例级选项（改档位要重建实例），建实例时就带上持久化的那一档
+                    initialDecoderMode = preferences.decoderMode.value,
+                    videoView = SurfaceView(appContext),
+                )
+            }
+        }
+
+        /**
+         * 列出 [path] 所在目录里的视频与音频（R1 上下集队列）。
+         *
+         * 过滤与排序交给 [VideoPlayerMath.playableEntries]，与浏览页/音频页同一口径。
+         *
+         * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），播放页按分类给中文提示。
+         */
+        override suspend fun siblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
+            VideoPlayerMath.playableEntries(currentBackend().list(parentOf(path), null))
+        }
+    }
+
+    /**
+     * 取回环代理（懒建）。
+     *
+     * 代理已经在 [close] 里关掉、进程又被系统拉回前台时重建一个：
+     * 否则手里会拿着一个已经死掉的端口，LibVLC 会一直打不开。
+     */
+    private fun requireVideoProxy(): LoopbackHttpProxy {
+        val existing = videoProxy
+        if (existing != null && existing.isRunning) return existing
+        return synchronized(this) {
+            val current = videoProxy
+            if (current != null && current.isRunning) {
+                current
+            } else {
+                LoopbackHttpProxy { _root.value?.backend }.also { videoProxy = it }
+            }
+        }
+    }
+
+    /** 关闭回环代理（应用退出时由 MainActivity 调用）；幂等。 */
+    fun close() {
+        val proxy = videoProxy ?: return
+        videoProxy = null
+        runCatching { proxy.close() }
     }
 
     // ------------------------------------------------------------ 图片查看器（M1-F，R1）

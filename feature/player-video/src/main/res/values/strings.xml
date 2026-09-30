@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:player-video 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$d / %2$s。
+-->
+<resources>
+    <string name="video_title">视频播放</string>
+    <string name="video_back">返回</string>
+    <string name="video_play">播放</string>
+    <string name="video_pause">暂停</string>
+    <string name="video_previous">上一集</string>
+    <string name="video_next">下一集</string>
+    <string name="video_loading">正在打开…</string>
+    <string name="video_buffering">正在缓冲…</string>
+    <string name="video_queue_position">第 %1$d / %2$d 集</string>
+    <string name="video_speed">倍速 %1$s</string>
+    <string name="video_engine">内核：%1$s</string>
+    <string name="video_engine_switch_to">切换到 %1$s 内核</string>
+    <string name="video_decoder">解码：%1$s</string>
+    <string name="video_resize">缩放：%1$s</string>
+    <string name="video_switching">正在切换解码器…</string>
+    <string name="video_blackout_hint">切换解码模式时画面会短暂黑屏，请稍候</string>
+    <string name="video_resume_hint">已从 %1$s 继续播放</string>
+    <string name="video_ended">已播放完毕</string>
+    <string name="video_retry">重试</string>
+    <string name="video_fallback">一键切 LibVLC 续播</string>
+    <string name="video_error_playback">播放失败</string>
+    <string name="video_error_access_denied">没有访问权限</string>
+    <string name="video_error_not_found">文件不存在</string>
+    <string name="video_error_not_supported">该存储后端不支持播放此文件</string>
+    <string name="video_error_network">网络不可用</string>
+    <string name="video_error_auth">认证失败</string>
+    <string name="video_error_unknown">播放失败，请重试</string>
+    <string name="video_error_detail">错误详情：%1$s</string>
+</resources>
