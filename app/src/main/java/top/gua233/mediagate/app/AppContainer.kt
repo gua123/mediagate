@@ -55,6 +55,21 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerMath
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
+import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
+import io.github.gua123.mediagate.feature.tasks.TasksRoot
+import io.github.gua123.mediagate.media.asr.AsrEngine
+import io.github.gua123.mediagate.media.asr.AsrItem
+import io.github.gua123.mediagate.media.asr.AsrYieldSettings
+import io.github.gua123.mediagate.media.asr.FileModelStore
+import io.github.gua123.mediagate.media.asr.FfmpegPcmProvider
+import io.github.gua123.mediagate.media.asr.HttpUrlConnectionTransport
+import io.github.gua123.mediagate.media.asr.ModelDownloader
+import io.github.gua123.mediagate.media.asr.ModelManager
+import io.github.gua123.mediagate.media.asr.ModelStore
+import io.github.gua123.mediagate.media.asr.PlaybackYieldGate
+import io.github.gua123.mediagate.media.asr.WhisperAsrEngine
+import io.github.gua123.mediagate.media.asr.WhisperModel
+import io.github.gua123.mediagate.media.ffmpeg.FfmpegKitRunner
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
 import io.github.gua123.mediagate.media.engine.PlayerEngine
@@ -96,7 +111,8 @@ import java.io.File
 class AppContainer(context: Context) :
     BrowserEnvironment,
     ImageViewerEnvironment,
-    AudioPlayerEnvironment {
+    AudioPlayerEnvironment,
+    AsrRuntimeHost {
 
     private val appContext: Context = context.applicationContext
 
@@ -447,6 +463,184 @@ class AppContainer(context: Context) :
         if (networkMonitorLazy.isInitialized()) runCatching { networkMonitor.stop() }
     }
 
+
+    // ------------------------------------------------------------ 音转字幕（M7-B，R14/R19）
+
+    /**
+     * 音转字幕的用户设置（模型档位 / 线程数 / 并发 / 播放让路开关）。
+     *
+     * 与 [videoPreferences] 同一考虑：**在容器构造时就开始读**（不是懒加载），
+     * 用户点开任务中心时拿到的才是上次的选择而不是默认值。
+     */
+    private val asrSettings = AsrSettings(appContext)
+
+    /** 设置的快照（DataStore 的冷流转热流，默认值先顶上）。 */
+    private val asrPreferences: StateFlow<AsrPreferences> =
+        asrSettings.preferences.stateIn(ioScope, SharingStarted.Eagerly, AsrPreferences())
+
+    /** 当前选中的模型档位 id（任务中心与模型管理都读它）。 */
+    val selectedAsrModelId: StateFlow<String> = asrPreferences
+        .map { it.modelId }
+        .stateIn(ioScope, SharingStarted.Eagerly, WhisperModel.DEFAULT.id)
+
+    /** 播放让路设置（喂给 [asrYieldGate]）。 */
+    private val asrYieldSettings: StateFlow<AsrYieldSettings> = asrPreferences
+        .map { it.yieldSettings }
+        .stateIn(ioScope, SharingStarted.Eagerly, AsrYieldSettings())
+
+    /**
+     * 模型目录（plan 4.7 B：filesDir/models，不内置进 APK）。
+     *
+     * 懒加载：只有真的下载/查询模型时才建目录。
+     */
+    private val modelStore: ModelStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        FileModelStore(File(appContext.filesDir, WhisperModel.DIRECTORY_NAME))
+    }
+
+    /**
+     * 模型管理（R14 的默认获取方式：App 内下载 + 断点续传 + 校验；备用：从本地文件导入）。
+     *
+     * 下载用 java.net.HttpURLConnection（[HttpUrlConnectionTransport]），不引 OkHttp：
+     * 这里只需要「带 Range 的顺序 GET」，而且关在一个单方法接口后面，JVM 单测灌假实现即可。
+     */
+    val modelManager: ModelManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        ModelManager(modelStore, ModelDownloader(modelStore, HttpUrlConnectionTransport()))
+    }
+
+    /** 已安装的模型档位 id（任务中心据此提示「还没下载模型」）。 */
+    private val _installedAsrModels = MutableStateFlow<List<String>>(emptyList())
+
+    /** 已安装模型档位流。 */
+    val installedAsrModels: StateFlow<List<String>> = _installedAsrModels.asStateFlow()
+
+    /** 重新扫一遍模型目录（进任务中心 / 下载完成后调用）。 */
+    fun refreshAsrModels() {
+        ioScope.launch { _installedAsrModels.value = modelManager.installedIds() }
+    }
+
+    /**
+     * 视频是否正在播放。
+     *
+     * **不改** :feature:player-video 与 :media:playback 的签名（本轮边界要求）：
+     * 音频侧直接订阅 MediaController 状态；视频侧先留一个显式入口
+     * （[setVideoPlaybackActive]），将来由播放页在 onStart/onStop 时喂进来。
+     */
+    private val videoPlaybackActive = MutableStateFlow(false)
+
+    /** 视频播放页（或其它模块）告知「我正在前台播放」，用于 R19 的播放让路。 */
+    fun setVideoPlaybackActive(active: Boolean) {
+        videoPlaybackActive.value = active
+    }
+
+    /**
+     * 前台是否正在播放（音频 ∨ 视频）。
+     *
+     * 懒加载：音频那条要 bind MediaController，只有真的用到让路（进任务中心/跑字幕）才建。
+     */
+    private val playbackActive: StateFlow<Boolean> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        combine(audioSession.state.map { it.playing }, videoPlaybackActive) { audio, video -> audio || video }
+            .stateIn(ioScope, SharingStarted.Eagerly, false)
+    }
+
+    /** 播放让路闸门（R19：播放中降 1 线程，勾了开关就暂停等结束）。 */
+    override val asrYieldGate: PlaybackYieldGate by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        PlaybackYieldGate(playbackActive, asrYieldSettings)
+    }
+
+    /** 队列持有者（唯一真相；界面读它、前台服务跑它、状态落 asr_task 表）。 */
+    override val asrController: AsrQueueController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AsrQueueController(database.asrDao(), ioScope)
+    }
+
+    /**
+     * 识别执行器：FFmpeg 解 16 kHz 单声道 PCM → 30 s 窗口（5 s 重叠）→ whisper.cpp JNI → 合并。
+     *
+     * 线程数取用户设置；实际每窗的线程数由 [asrYieldGate] 决定（播放中降到 1）。
+     */
+    override val asrEngine: AsrEngine by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        WhisperAsrEngine(
+            pcmProvider = FfmpegPcmProvider(FfmpegKitRunner()),
+            workDir = File(appContext.cacheDir, ASR_WORK_DIR),
+            yieldGate = asrYieldGate,
+            requestedThreads = asrPreferences.value.threads,
+        )
+    }
+
+    /** 任务中心的宿主能力（:feature:tasks 只认接口）。 */
+    val tasksEnvironment: TasksEnvironment by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        refreshAsrModels()
+        asrController.currentModelId = selectedAsrModelId.value
+        // 进程被杀后第一次进任务中心：把库里「上次跑着」的任务读成「已中断，可续跑」（R19）
+        ioScope.launch { asrController.restore() }
+        AsrTasksHost(
+            appContext = appContext,
+            backendProvider = { _root.value?.backend },
+            controller = asrController,
+            browseRoot = tasksBrowseRoot,
+            installedModelIds = installedAsrModels,
+            selectedModelId = selectedAsrModelId,
+            yielding = asrYieldGate.yielding.stateIn(ioScope, SharingStarted.Eagerly, false),
+            onEnqueue = { candidates, batchName ->
+                asrController.enqueue(candidates, batchName, selectedAsrModelId.value)
+            },
+        )
+    }
+
+    /**
+     * 任务中心的「选择来源」起点（R19）：当前连接优先，其次首页选的本地根目录。
+     *
+     * 懒加载：它要读 connection 表，冷启动不碰。
+     */
+    private val tasksBrowseRoot: StateFlow<TasksRoot?> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        combine(rootConfig, currentConnectionId, connectionRepository.connections) { config, id, records ->
+            val record = records.firstOrNull { it.id == id }
+            when {
+                record != null -> TasksRoot(label = record.name, path = record.basePath.ifEmpty { "/" })
+                config != null -> TasksRoot(label = config.display, path = "")
+                else -> null
+            }
+        }.stateIn(ioScope, SharingStarted.Eagerly, null)
+    }
+
+    // ---- AsrRuntimeHost：前台服务与队列要的东西 ----
+
+    override val asrFallbackDir: File get() = File(appContext.filesDir, SUBTITLE_FALLBACK_DIR)
+
+    override val asrBackend: StorageBackend? get() = _root.value?.backend
+
+    override fun asrModel(): WhisperModel = WhisperModel.of(selectedAsrModelId.value)
+
+    override fun asrModelPath(model: WhisperModel): String? = modelManager.fileOf(model)?.absolutePath
+
+    /**
+     * 任务音源（plan 4.12：远端取音复用同一 StorageBackend 的低优先级连接）。
+     *
+     * 本地文件直接给绝对路径；远端走 [LoopbackHttpProxy]（与播放共用同一条数据层，
+     * 不额外开一套连接，也就不会和播放抢带宽）。
+     */
+    override fun asrSource(item: AsrItem): String? {
+        val local = File(item.path)
+        if (local.isFile) return local.absolutePath
+        val backend = _root.value?.backend ?: return null
+        return runCatching { requireVideoProxy().playUrl(backend.id, item.path) }.getOrNull()
+    }
+
+    /** 音轨时长（毫秒）：本地与回环 URL 都用 MediaMetadataRetriever 探一次；读不到给 0。 */
+    override suspend fun asrDurationMs(item: AsrItem): Long = withContext(Dispatchers.IO) {
+        val source = asrSource(item) ?: return@withContext 0L
+        val retriever = android.media.MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(source)
+            retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        } catch (e: RuntimeException) {
+            AppLog.w(TAG, "探测音轨时长失败：" + source, e)
+            0L
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
     // ------------------------------------------------------------ 图片查看器（M1-F，R1）
 
     /** 当前根目录的展示名（查看器顶栏用）；尚未选择根目录时是空串。 */
@@ -770,5 +964,8 @@ class AppContainer(context: Context) :
 
         /** 无写权限时字幕的落地目录（R14：App 私有目录，可分享/稍后重试）。 */
         const val SUBTITLE_FALLBACK_DIR = "subtitles"
+
+        /** ASR 中间件（16 kHz 单声道 PCM 临时文件）目录；跑完即删。 */
+        const val ASR_WORK_DIR = "asr"
     }
 }

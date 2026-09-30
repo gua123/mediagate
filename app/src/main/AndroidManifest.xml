@@ -55,5 +55,16 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!--
+          批量字幕任务中心（M7-B / R19）：前台服务 + 通知进度（可暂停/取消）。
+          foregroundServiceType=mediaProcessing 对应 manifest 顶部的
+          FOREGROUND_SERVICE_MEDIA_PROCESSING 权限；只由本应用自己启动，故 exported=false。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.app.AsrForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProcessing"
+            android:stopWithTask="false" />
     </application>
 </manifest>

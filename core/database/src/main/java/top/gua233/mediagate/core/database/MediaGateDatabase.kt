@@ -144,13 +144,170 @@ interface ConnectionDao {
     suspend fun deleteRulesOf(connectionId: Long)
 }
 
+/**
+ * 批量字幕批次（**M7-B / R19**，plan 第 7 章 asr_batch 表）。
+ *
+ * 一次「选一批文件 / 选一个文件夹」的入队就是一个批次；批次本身只记录来源与选项，
+ * 具体任务在 [AsrTaskEntity] 里。纯加法：v2 的 connection / address / network_rule 一字未动。
+ */
+@Entity(
+    tableName = "asr_batch",
+    indices = [Index("state")],
+)
+data class AsrBatchEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 批次名（界面上那一行标题，一般取目录名）。 */
+    val name: String,
+    /** 来源方式：FILES（多选文件）/ FOLDER（整个文件夹）。 */
+    val sourceKind: String,
+    /** 批次根路径（后端内路径）。 */
+    val rootPath: String,
+    /** 是否递归子目录。 */
+    val recursive: Boolean = false,
+    /** 是否跳过已有字幕的文件。 */
+    val skipExisting: Boolean = true,
+    /** 批次状态：IDLE / RUNNING / PAUSED / STOPPED（:media:asr 的 AsrQueueState）。 */
+    val state: String = "IDLE",
+    val createdAt: Long = 0L,
+)
+
+/**
+ * 单文件音转字幕任务（**M7-B / R19**，plan 第 7 章 asr_task 表）。
+ *
+ * 落库的唯一目的是「**进程被杀后可续跑**」：重启时把 RUNNING/WRITING 的读成 INTERRUPTED
+ * （见 [AsrDao.markInterrupted]），带着已识别的进度回到队列里，用户点「继续」就接着跑。
+ *
+ * 比 plan 表格多出的几列都是「恢复时必须知道」的信息：文件名（展示）、失败分类（R19 要求给原因）、
+ * 跳过原因、已识别毫秒与总毫秒（进度）、排序号（队列顺序）。
+ */
+@Entity(
+    tableName = "asr_task",
+    indices = [Index("batchId"), Index("state"), Index("queueOrder")],
+)
+data class AsrTaskEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 所属批次；null = 散装任务。 */
+    val batchId: Long? = null,
+    /** 所属连接（远端任务用）；null = 本地/当前连接。 */
+    val connectionId: Long? = null,
+    /** 视频在后端内的路径。 */
+    val path: String,
+    /** 文件名（界面展示）。 */
+    val name: String,
+    /** 模型档位 id（tiny/base/small）。 */
+    val model: String,
+    /** 任务状态：QUEUED / RUNNING / WRITING / SUCCEEDED / FAILED / SKIPPED / INTERRUPTED / CANCELLED。 */
+    val state: String = "QUEUED",
+    /** 已识别毫秒（进度）。 */
+    val progressMs: Long = 0L,
+    /** 音轨总毫秒；0 = 未知。 */
+    val durationMs: Long = 0L,
+    /** 产出的字幕落点（写回路径或 App 私有目录的绝对路径）。 */
+    val outputPath: String? = null,
+    /** 原始错误文本（诊断用）。 */
+    val error: String? = null,
+    /** 失败分类（R19「失败项给原因」，:media:asr 的 AsrFailureKind.name）。 */
+    val failure: String? = null,
+    /** 跳过原因（已有字幕等）。 */
+    val skipReason: String? = null,
+    /** 重试次数。 */
+    val retryCount: Int = 0,
+    /** 队列顺序。 */
+    val queueOrder: Int = 0,
+    val createdAt: Long = 0L,
+)
+
+@Dao
+interface AsrDao {
+
+    /** 队列快照（按队列顺序）。 */
+    @Query("SELECT * FROM asr_task ORDER BY queueOrder, id")
+    fun observeTasks(): Flow<List<AsrTaskEntity>>
+
+    @Query("SELECT * FROM asr_task ORDER BY queueOrder, id")
+    suspend fun tasks(): List<AsrTaskEntity>
+
+    @Query("SELECT * FROM asr_task WHERE id = :id")
+    suspend fun task(id: Long): AsrTaskEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTask(task: AsrTaskEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertTasks(tasks: List<AsrTaskEntity>): List<Long>
+
+    @Update
+    suspend fun updateTask(task: AsrTaskEntity)
+
+    /** 只更新会变的那几列（状态 / 进度 / 结果 / 顺序）。 */
+    @Query(
+        "UPDATE asr_task SET state = :state, progressMs = :progressMs, durationMs = :durationMs, " +
+            "outputPath = :outputPath, error = :error, failure = :failure, skipReason = :skipReason, " +
+            "retryCount = :retryCount, queueOrder = :queueOrder WHERE id = :id",
+    )
+    suspend fun updateTaskState(
+        id: Long,
+        state: String,
+        progressMs: Long,
+        durationMs: Long,
+        outputPath: String?,
+        error: String?,
+        failure: String?,
+        skipReason: String?,
+        retryCount: Int,
+        queueOrder: Int,
+    )
+
+    @Query("DELETE FROM asr_task WHERE id = :id")
+    suspend fun deleteTask(id: Long)
+
+    @Query("DELETE FROM asr_task")
+    suspend fun clearTasks()
+
+    /** 清空已经落定的任务（界面「清空已结束」）。 */
+    @Query("DELETE FROM asr_task WHERE state IN ('SUCCEEDED', 'FAILED', 'SKIPPED', 'CANCELLED')")
+    suspend fun deleteFinishedTasks()
+
+    /**
+     * 进程被杀后重启时的恢复（**R19：未完成任务标为「已中断、可续跑」**）。
+     *
+     * @return 改动行数（0 说明上次是干净退出）。
+     */
+    @Query("UPDATE asr_task SET state = 'INTERRUPTED' WHERE state IN ('RUNNING', 'WRITING')")
+    suspend fun markInterrupted(): Int
+
+    @Insert
+    suspend fun insertBatch(batch: AsrBatchEntity): Long
+
+    @Query("SELECT * FROM asr_batch ORDER BY createdAt DESC, id DESC")
+    fun observeBatches(): Flow<List<AsrBatchEntity>>
+
+    @Query("SELECT * FROM asr_batch ORDER BY createdAt DESC, id DESC")
+    suspend fun batches(): List<AsrBatchEntity>
+
+    @Query("UPDATE asr_batch SET state = :state WHERE id = :id")
+    suspend fun updateBatchState(id: Long, state: String)
+
+    @Query("DELETE FROM asr_batch WHERE id = :id")
+    suspend fun deleteBatch(id: Long)
+}
+
 @Database(
-    entities = [ConnectionEntity::class, AddressEntity::class, NetworkRuleEntity::class],
-    version = 2,
+    entities = [
+        ConnectionEntity::class,
+        AddressEntity::class,
+        NetworkRuleEntity::class,
+        AsrBatchEntity::class,
+        AsrTaskEntity::class,
+    ],
+    version = 3,
     exportSchema = true,
 )
 abstract class MediaGateDatabase : RoomDatabase() {
     abstract fun connectionDao(): ConnectionDao
+
+    /** 批量字幕任务中心（M7-B / R19）。 */
+    abstract fun asrDao(): AsrDao
 
     companion object {
         const val NAME = "mediagate.db"
@@ -178,7 +335,56 @@ abstract class MediaGateDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 → v3：新增 `asr_batch` 与 `asr_task` 两张表（**M7-B / R19** 批量字幕任务中心）。
+         *
+         * 纯新增：既有三张表与列语义一字未动，旧数据原样保留。
+         *
+         * [MIGRATION_2_3_SQL] 把同样的 DDL 以字符串形式暴露出来，供离线校验单测
+         * （core/database 的 MigrationSqlTest）与 Room 生成的最新 schema 逐条比对：
+         * 手写的迁移 SQL 一旦与实体定义漂移，单测立刻红，不用等到真机升级时才炸。
+         */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_3_SQL.forEach { db.execSQL(it) }
+            }
+        }
+
+        /** v2 → v3 的全部 DDL（顺序即执行顺序；与 Room 导出的 3.json 必须一字不差）。 */
+        val MIGRATION_2_3_SQL: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `asr_batch` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`sourceKind` TEXT NOT NULL, " +
+                "`rootPath` TEXT NOT NULL, " +
+                "`recursive` INTEGER NOT NULL, " +
+                "`skipExisting` INTEGER NOT NULL, " +
+                "`state` TEXT NOT NULL, " +
+                "`createdAt` INTEGER NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS `index_asr_batch_state` ON `asr_batch` (`state`)",
+            "CREATE TABLE IF NOT EXISTS `asr_task` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`batchId` INTEGER, " +
+                "`connectionId` INTEGER, " +
+                "`path` TEXT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`model` TEXT NOT NULL, " +
+                "`state` TEXT NOT NULL, " +
+                "`progressMs` INTEGER NOT NULL, " +
+                "`durationMs` INTEGER NOT NULL, " +
+                "`outputPath` TEXT, " +
+                "`error` TEXT, " +
+                "`failure` TEXT, " +
+                "`skipReason` TEXT, " +
+                "`retryCount` INTEGER NOT NULL, " +
+                "`queueOrder` INTEGER NOT NULL, " +
+                "`createdAt` INTEGER NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS `index_asr_task_batchId` ON `asr_task` (`batchId`)",
+            "CREATE INDEX IF NOT EXISTS `index_asr_task_state` ON `asr_task` (`state`)",
+            "CREATE INDEX IF NOT EXISTS `index_asr_task_queueOrder` ON `asr_task` (`queueOrder`)",
+        )
+
         /** 全部迁移（:app 建库时统一 addMigrations）。 */
-        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2)
+        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
     }
 }

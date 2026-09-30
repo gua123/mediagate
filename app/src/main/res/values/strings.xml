@@ -33,4 +33,14 @@
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>
+
+    <!-- 批量字幕任务中心的通知（M7-B / R19：前台服务 + 通知进度，可暂停/取消） -->
+    <string name="asr_notification_channel_name">字幕生成</string>
+    <string name="asr_notification_channel_description">批量音转字幕的后台进度（可暂停、可取消）</string>
+    <string name="asr_notification_title">正在生成字幕</string>
+    <string name="asr_notification_idle">准备中…</string>
+    <string name="asr_notification_current">当前：%1$s</string>
+    <string name="asr_notification_pause">暂停</string>
+    <string name="asr_notification_resume">继续</string>
+    <string name="asr_notification_cancel">取消全部</string>
 </resources>

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# 用项目私有 NDK 编译 whisper.cpp（Android arm64-v8a），产出给 media/asr 用的 native 库。
+# 用项目私有 NDK 编译 whisper.cpp（Android arm64-v8a）+ mediagate 自己的 JNI 桥，
+# 产出给 media/asr 用的 native 库。
 # 用法： bash scripts/build-whisper-android.sh [版本tag，默认 v1.9.4]
-# 产物： media/asr/src/main/jniLibs/arm64-v8a/*.so（不进 git，用本脚本重建）
+# 产物： media/asr/src/main/jniLibs/arm64-v8a/
+#         libggml-base.so / libggml.so / libggml-cpu.so / libwhisper.so   ← whisper.cpp
+#         libmediagate_whisper_jni.so                                     ← media/asr/src/main/cpp（M7-B）
+#       全部 16 KB 页对齐（脚本结尾自动跑 scripts/check-page-align.sh）。这些 .so 不进 git，用本脚本重建。
 # 环境： 源码放 .toolchain/third_party/（随 .toolchain/ 忽略）；NDK/CMake 用项目私有
 #        .toolchain/android-sdk（不碰 /opt/android-sdk，也不装系统环境）。
 # 网络： GitHub 直连在国内很慢，默认走镜像（GH_MIRROR= 可覆盖，设为空串走直连）。
@@ -60,9 +64,27 @@ ARGS=(
 "$CMAKE_BIN" -S "$SRC" -B "$BUILD" "${ARGS[@]}"
 "$CMAKE_BIN" --build "$BUILD" -j"$(nproc)" --target whisper
 
+# ---------------------------------------------------------------- JNI 桥（M7-B：R14 / R19）
+# 用同一个 NDK / 同一套 CMake 参数编 libmediagate_whisper_jni.so，并链接上面刚编出的 libwhisper.so。
+# 单独一个 build 目录，不重编 whisper.cpp，也不污染它的构建树。
+JNI_SRC="$PROJ/media/asr/src/main/cpp"
+JNI_BUILD="$PROJ/.toolchain/third_party/build-mediagate-whisper-jni"
+rm -rf "$JNI_BUILD"
+JNI_ARGS=(
+  -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake"
+  -DANDROID_ABI=arm64-v8a
+  -DANDROID_PLATFORM=android-33
+  -DCMAKE_BUILD_TYPE=Release
+  -DWHISPER_ROOT="$SRC"
+  -DWHISPER_LIB_DIR="$BUILD/bin"
+)
+"$CMAKE_BIN" -S "$JNI_SRC" -B "$JNI_BUILD" "${JNI_ARGS[@]}"
+"$CMAKE_BIN" --build "$JNI_BUILD" -j"$(nproc)"
+
 OUT="$PROJ/media/asr/src/main/jniLibs/arm64-v8a"
 mkdir -p "$OUT"
 find "$BUILD" -name "*.so" -exec cp -v {} "$OUT/" \;
+cp -v "$JNI_BUILD/libmediagate_whisper_jni.so" "$OUT/"
 echo
 echo "产物："
 ls -la "$OUT"
