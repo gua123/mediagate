@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:connections 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$s / %2$d。
+-->
+<resources>
+    <string name="connections_title">连接</string>
+    <string name="connections_action_new">新建连接</string>
+    <string name="connections_action_test_all">测试全部</string>
+    <string name="connections_action_test">测试连通性</string>
+    <string name="connections_action_retest">重新测试</string>
+    <string name="connections_action_edit">编辑</string>
+    <string name="connections_action_delete">删除</string>
+    <string name="connections_action_set_current">设为当前连接</string>
+    <string name="connections_current">当前</string>
+    <string name="connections_cancel">取消</string>
+    <string name="connections_save">保存</string>
+
+    <string name="connections_empty">还没有连接：点右下角「+」新建一个，支持本地目录 / WebDAV / SFTP / FTP。</string>
+    <string name="connections_no_address">还没有配置地址</string>
+    <string name="connections_card_meta">%1$s · %2$d 个地址 · %3$s</string>
+    <string name="connections_not_browsable">%1$s 后端将在 M5 接入：现在只能测试连通性，暂时不能浏览与播放。</string>
+    <string name="connections_result_cached">结果来自 60 秒缓存（点「重新测试」可强制重测）</string>
+
+    <string name="connections_delete_title">删除连接</string>
+    <string name="connections_delete_message">确定删除「%1$s」？该连接的地址与选路规则会一起删除。</string>
+    <string name="connections_delete_confirm">删除</string>
+
+    <string name="connections_network_title">当前网络</string>
+    <string name="connections_network_offline">当前没有可用网络</string>
+    <string name="connections_network_policy">选路顺序：网络能力 → 规则（传输类型 / SSID / 本机网段）→ 无规则时并行竞速（TCP 1.5 s）→ 协议握手；结果缓存 60 秒，网络变化即失效。</string>
+
+    <string name="connections_summary_title">测试全部结果</string>
+    <string name="connections_summary_failed_first">失败的连接排在最前面，方便直接排查。</string>
+
+    <string name="connections_editor_new">新建连接</string>
+    <string name="connections_editor_edit">编辑连接</string>
+    <string name="connections_field_name">名称</string>
+    <string name="connections_field_protocol">协议</string>
+    <string name="connections_protocol_pending">（M5 接入）</string>
+    <string name="connections_field_base_path">WebDAV 根路径（例如 /media）</string>
+    <string name="connections_field_local_path">本地目录（绝对路径）</string>
+    <string name="connections_section_addresses">地址（局域网 + 公网可各配一个）</string>
+    <string name="connections_action_add_address">添加地址</string>
+    <string name="connections_action_remove_address">删除该地址</string>
+    <string name="connections_field_host">主机名或 IP</string>
+    <string name="connections_field_scheme">传输方案</string>
+    <string name="connections_field_port">端口</string>
+    <string name="connections_field_address_path">目录绝对路径</string>
+    <string name="connections_field_priority">优先级</string>
+    <string name="connections_field_priority_hint">越大越优先（无规则竞速前的人工顺序）</string>
+    <string name="connections_address_index">地址 %1$d</string>
+
+    <string name="connections_section_credentials">账号与密码</string>
+    <string name="connections_field_username">用户名（可留空）</string>
+    <string name="connections_field_password">密码</string>
+    <string name="connections_password_stored">已保存（留空表示不修改）</string>
+    <string name="connections_password_empty">可留空（匿名访问）</string>
+    <string name="connections_password_hint">密码保存时立即用系统密钥库加密，界面不再回显明文</string>
+    <string name="connections_field_allow_http">允许明文 http</string>
+    <string name="connections_field_allow_http_hint">局域网自用可打开；只走公网域名时建议关掉，避免凭据走明文</string>
+
+    <string name="connections_section_rules">选路规则</string>
+    <string name="connections_rules_hint">命中规则就不竞速，直接按偏好连（例如：家里 Wi-Fi → 局域网地址）。</string>
+    <string name="connections_action_add_rule">添加规则</string>
+    <string name="connections_action_remove_rule">删除该规则</string>
+    <string name="connections_rule_dialog_title">新增选路规则</string>
+    <string name="connections_rule_prefer_lan">命中后优先局域网地址</string>
+    <string name="connections_rule_prefer_wan">命中后优先公网地址</string>
+    <string name="connections_rule_any_transport">任意传输类型</string>
+    <string name="connections_rule_ssid">Wi-Fi 名称（SSID）</string>
+    <string name="connections_rule_ssid_hint">支持 * 通配，例如 Home*（没有定位权限时拿不到 SSID）</string>
+    <string name="connections_rule_subnet">本机网段</string>
+    <string name="connections_rule_subnet_hint">例如 192.168.1.0/24 或 192.168.1.</string>
+    <string name="connections_rule_add">添加</string>
+</resources>

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
 import android.view.SurfaceView
+import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,19 +15,33 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.crypto.CredentialCipher
+import io.github.gua123.mediagate.core.crypto.KeystoreCredentialCipher
+import io.github.gua123.mediagate.core.database.MediaGateDatabase
 import io.github.gua123.mediagate.core.model.RemoteEntry
+import io.github.gua123.mediagate.core.network.AddressSelector
+import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
+import io.github.gua123.mediagate.core.network.NetworkContext
+import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
+import io.github.gua123.mediagate.data.storage.webdav.WebDavConfig
+import io.github.gua123.mediagate.data.storage.webdav.WebDavStorageBackend
 import io.github.gua123.mediagate.feature.browser.BrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.BrowserRootState
 import io.github.gua123.mediagate.feature.browser.RootModeKind
+import io.github.gua123.mediagate.feature.connections.ConnectionEndpoints
+import io.github.gua123.mediagate.feature.connections.ConnectionRecord
+import io.github.gua123.mediagate.feature.connections.ConnectionRepository
+import io.github.gua123.mediagate.feature.connections.ConnectionsEnvironment
 import io.github.gua123.mediagate.feature.player.audio.AudioPlaybackSnapshot
 import io.github.gua123.mediagate.feature.player.audio.AudioPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.audio.AudioPlayerMath
@@ -37,6 +52,7 @@ import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerMath
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
+import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
@@ -88,14 +104,125 @@ class AppContainer(context: Context) :
 
     private val settings = RootSettings(appContext)
 
-    /** 当前根目录配置（首页展示模式 + 路径；null = 未选择）。 */
+    /** 「当前连接」（R8）的持久化：只存一个 id，连接本体在三张表里。 */
+    private val connectionSettings = ConnectionSettings(appContext)
+
+    // ------------------------------------------------------------ 连接管理（M4，R6/R7/R8）
+
+    /**
+     * 连接/地址/规则三张表的数据库（plan 第 7 章）。
+     *
+     * 懒加载：冷启动不做任何数据库 IO，只有进连接页（或选中了某个连接）才建库。
+     * 建库时带上 [MediaGateDatabase.MIGRATIONS]，v1 → v2 只是新增 `network_rule` 表，旧数据原样保留。
+     */
+    private val database: MediaGateDatabase by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        Room.databaseBuilder(appContext, MediaGateDatabase::class.java, MediaGateDatabase.NAME)
+            .addMigrations(*MediaGateDatabase.MIGRATIONS)
+            .build()
+    }
+
+    /** 凭据加解密（R6）：Android Keystore + AES-GCM，密码只以密文进 `secretRef`。 */
+    private val credentialCipher: CredentialCipher by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        KeystoreCredentialCipher(appContext)
+    }
+
+    /** 连接仓储（R8）：三张表的读写 + 密码加解密。 */
+    private val connectionRepository: ConnectionRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        ConnectionRepository(database, credentialCipher)
+    }
+
+    /**
+     * 网络现场监听（R7，plan 4.5 的 `NetworkCallback`）。
+     *
+     * 懒加载 + [AndroidNetworkMonitor.start]：只有真的要看连接/选路时才注册回调，
+     * 冷启动不占用系统回调名额。
+     */
+    private val networkMonitorLazy: Lazy<AndroidNetworkMonitor> =
+        lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+            AndroidNetworkMonitor(appContext).also { it.start() }
+        }
+
+    private val networkMonitor: AndroidNetworkMonitor by networkMonitorLazy
+
+    /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
+    val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
+
+    /** 当前连接 id（R8）；null = 用首页选择的本地根目录。 */
+    private val currentConnectionId: StateFlow<Long?> =
+        connectionSettings.currentId.stateIn(ioScope, SharingStarted.Eagerly, null)
+
+    /**
+     * 设置页展示用的「当前连接」（R7/R8）：连接名 + 协议 + 当前网络下的首选地址与判定依据。
+     *
+     * 与浏览器真正用的后端同源（同一份记录、同一个 [AddressSelector]），所以设置页写的就是
+     * 播放器实际会连的地址。
+     */
+    val settingsConnection: StateFlow<SettingsConnectionUi> =
+        combine(
+            currentConnectionId,
+            connectionRepository.connections,
+            networkMonitor.context,
+        ) { id, records, network ->
+            val record = records.firstOrNull { it.id == id }
+            if (record == null) {
+                SettingsConnectionUi()
+            } else {
+                val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
+                SettingsConnectionUi(
+                    name = record.name,
+                    protocolText = record.protocolText,
+                    primaryAddress = selection.primary?.display,
+                    selectionReason = selection.explanation,
+                    browsable = record.browsable,
+                )
+            }
+        }.stateIn(ioScope, SharingStarted.Eagerly, SettingsConnectionUi())
+
+    /**
+     * 连接管理页的宿主能力（R6/R7/R8）——由 :app 实现，页面只认接口。
+     *
+     * 用内部类而不是让 [AppContainer] 直接实现：容器里已经有同名的私有属性
+     * （database / currentConnectionId / networkContext），直接实现会让"对外能力"和"内部字段"搅在一起。
+     */
+    val connectionsEnvironment: ConnectionsEnvironment = ConnectionsHost()
+
+    private inner class ConnectionsHost : ConnectionsEnvironment {
+
+        override val database: MediaGateDatabase get() = this@AppContainer.database
+
+        override val cipher: CredentialCipher get() = this@AppContainer.credentialCipher
+
+        override val currentConnectionId: StateFlow<Long?> get() = this@AppContainer.currentConnectionId
+
+        override suspend fun setCurrentConnection(id: Long?) {
+            connectionSettings.setCurrent(id)
+        }
+
+        override val networkContext: StateFlow<NetworkContext> get() = this@AppContainer.networkContext
+    }
+
+    /**
+     * 当前根目录配置（首页展示模式 + 路径；null = 未选择）。
+     *
+     * 选中本地连接（LOCAL）时会把连接里的目录写回 [RootSettings]（见
+     * [applyLocalConnectionRoot]），所以这里始终是最新的本地根目录，首页不会显示过期信息。
+     */
     val rootConfig: StateFlow<RootConfig?> =
         settings.config.stateIn(ioScope, SharingStarted.Eagerly, null)
 
     private val _root = MutableStateFlow<BrowserRootState?>(null)
 
-    /** 浏览器看到的当前根目录（R12）；配置变化后自动换成新的后端实例。 */
+    /** 浏览器看到的当前根目录（R12 本地双模式 + R8 远端连接）；配置或连接变化后自动换成新的后端实例。 */
     override val root: StateFlow<BrowserRootState?> = _root.asStateFlow()
+
+    /** 本地根目录后端（R12，来自 [RootSettings]）；远端连接生效时它作为备胎保留。 */
+    private var localRoot: BrowserRootState? = null
+
+    /** 当前远端连接的后端（M4 只有 WEBDAV）。 */
+    private var remoteRoot: BrowserRootState? = null
+
+    /** 远端后端的构造指纹：选路结果、根路径、账号、密码有无变化时才重建。 */
+    private var remoteSignature: String? = null
 
     private val _allFilesGranted = MutableStateFlow(hasAllFilesAccess())
 
@@ -287,11 +414,19 @@ class AppContainer(context: Context) :
         }
     }
 
-    /** 关闭回环代理（应用退出时由 MainActivity 调用）；幂等。 */
+    /** 关闭回环代理、远端后端与网络监听（应用退出时由 MainActivity 调用）；幂等。 */
     fun close() {
-        val proxy = videoProxy ?: return
-        videoProxy = null
-        runCatching { proxy.close() }
+        videoProxy?.let { proxy ->
+            videoProxy = null
+            runCatching { proxy.close() }
+        }
+        remoteRoot?.let { state ->
+            remoteRoot = null
+            remoteSignature = null
+            runCatching { state.backend.close() }
+        }
+        // 没初始化过就别为了 stop 去初始化（lazy 的 isInitialized）
+        if (networkMonitorLazy.isInitialized()) runCatching { networkMonitor.stop() }
     }
 
     // ------------------------------------------------------------ 图片查看器（M1-F，R1）
@@ -354,6 +489,17 @@ class AppContainer(context: Context) :
     init {
         ioScope.launch {
             rootConfig.collect { config -> applyConfig(config) }
+        }
+        // R7/R8：当前连接 + 连接记录 + 网络现场，任一变化就重算"用哪个后端"
+        ioScope.launch {
+            combine(
+                currentConnectionId,
+                connectionRepository.connections,
+                networkMonitor.context,
+            ) { id, records, network -> Triple(id, records, network) }
+                .collect { (id, records, network) ->
+                    applyCurrentConnection(records.firstOrNull { it.id == id }, network)
+                }
         }
     }
 
@@ -426,17 +572,123 @@ class AppContainer(context: Context) :
 
     // ------------------------------------------------------------ 内部实现
 
-    /** 配置 → 后端；换根时关闭旧后端，避免 File 句柄 / SAF fd 泄漏。 */
+    /**
+     * 本地根目录配置变化（R12）。
+     *
+     * 换根时关闭旧后端，避免 File 句柄 / SAF fd 泄漏；若当前有远端连接（WEBDAV），
+     * 它优先于本地根目录（[publishRoot] 里决定谁生效），本地后端只做"备胎"保留。
+     */
     private fun applyConfig(config: RootConfig?) {
-        val previous = _root.value
+        val previous = localRoot
         val next = config?.let { buildRoot(it) }
-        _root.value = next
+        localRoot = next
         if (previous?.backend !== next?.backend) {
             runCatching { previous?.backend?.close() }
         }
+        publishRoot()
         if (next != null) {
             ioScope.launch { logProbe(next) }
         }
+    }
+
+    /**
+     * 把「当前连接」落成实际后端（**R8** + **R7**）。
+     *
+     * - **WEBDAV**：用 [AddressSelector] 在当前网络下选地址（命中规则就用规则偏好的，
+     *   否则按优先级取首选），解密密码后构造 [WebDavStorageBackend]；
+     * - **LOCAL**：不建远端后端，改为把连接里的目录写回 [RootSettings]（SAF 树 URI 或绝对路径），
+     *   于是浏览器拿到的仍是 [LocalBackends] 的双模式后端（R12）；
+     * - **SFTP / FTP**：M5 才有后端，本轮保持本地根目录，界面已明确提示"只能测连通性"；
+     * - 连接被删除 / 未选中：关掉远端后端，回落到本地根目录。
+     */
+    private suspend fun applyCurrentConnection(record: ConnectionRecord?, network: NetworkContext) {
+        if (record == null) {
+            closeRemoteRoot()
+            return
+        }
+        when (record.protocol) {
+            ProtocolKind.WEBDAV -> applyWebDavConnection(record, network)
+
+            ProtocolKind.LOCAL -> {
+                closeRemoteRoot()
+                applyLocalConnectionRoot(record)
+            }
+
+            else -> {
+                closeRemoteRoot()
+                AppLog.i(TAG, "连接 " + record.name + " 的协议 " + record.protocolId + " 尚未接入（M5），继续使用本地根目录")
+            }
+        }
+    }
+
+    /** 本地连接 → 写回根目录配置（R12：content:// 走 SAF，绝对路径走全盘模式）。 */
+    private suspend fun applyLocalConnectionRoot(record: ConnectionRecord) {
+        val path = record.addresses.firstOrNull()?.host?.trim().orEmpty()
+        if (path.isEmpty()) {
+            AppLog.w(TAG, "本地连接 " + record.name + " 没有地址，忽略")
+            return
+        }
+        if (path.startsWith("content://")) {
+            settings.setSaf(path, record.name)
+        } else {
+            settings.setAllFiles(path)
+        }
+    }
+
+    /** WebDAV 连接 → 选路 + 解密密码 + 建后端（R7/R6）。 */
+    private suspend fun applyWebDavConnection(record: ConnectionRecord, network: NetworkContext) {
+        val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
+        val address = selection.primary
+        if (address == null) {
+            AppLog.w(TAG, "连接 " + record.name + " 当前没有可用地址（" + selection.explanation + "）")
+            closeRemoteRoot()
+            return
+        }
+        val signature = record.id.toString() + "|" + address.id + "|" + record.basePath + "|" +
+            record.username.orEmpty() + "|" + record.hasSecret + "|" + address.scheme + address.host + address.port
+        if (remoteSignature == signature && remoteRoot != null) return
+
+        val previous = remoteRoot
+        val password = runCatching { connectionRepository.revealSecret(record.id) }.getOrNull()
+        val next = runCatching {
+            val config = WebDavConfig(
+                baseUrl = ConnectionEndpoints.baseUrl(address.scheme, address.host, address.port),
+                username = record.username,
+                password = password,
+                rootPath = record.basePath,
+                allowInsecureHttp = record.options.allowInsecureHttp,
+                connectTimeoutMs = record.options.connectTimeoutMs ?: WebDavConfig.DEFAULT_CONNECT_TIMEOUT_MS,
+            )
+            BrowserRootState(
+                // 远端连接不是"本地根目录模式"：NONE 只影响首页那个本地卡片，浏览器只读 label/displayPath/backend
+                mode = RootModeKind.NONE,
+                label = record.name + " · " + address.label.zhText,
+                displayPath = config.requestBaseUrl,
+                backend = WebDavStorageBackend(config),
+            )
+        }.onFailure { t ->
+            AppLog.w(TAG, "构造 WebDAV 后端失败：" + record.name + " → " + address.display, t)
+        }.getOrNull()
+
+        remoteRoot = next
+        remoteSignature = if (next == null) null else signature
+        if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
+        publishRoot()
+        next?.let { ioScope.launch { logProbe(it) } }
+    }
+
+    /** 关掉远端后端（清除当前连接 / 连接被删 / 换协议时调用）。 */
+    private fun closeRemoteRoot() {
+        val previous = remoteRoot ?: return
+        remoteRoot = null
+        remoteSignature = null
+        runCatching { previous.backend.close() }
+        publishRoot()
+    }
+
+    /** 生效的后端：远端连接优先，其次本地根目录（R12 与 R8 的汇合点）。 */
+    private fun publishRoot() {
+        _root.value = remoteRoot ?: localRoot
     }
 
     private fun buildRoot(config: RootConfig): BrowserRootState? = when (config.mode) {
