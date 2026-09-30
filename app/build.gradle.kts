@@ -64,6 +64,12 @@ android {
 
     buildFeatures { compose = true }
 
+    testOptions {
+        // JVM 单测（字幕宿主 R14：写回 / 无权限落本地 / 读取解析）：
+        // 碰到未 mock 的 android.* 桩方法（AppLog 底层的 android.util.Log）返回默认值而不是抛 "not mocked"
+        unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
         jniLibs {
             // LibVLC 与 ffmpeg-kit 各自都带 libc++_shared.so，同路径冲突，取其一即可
@@ -144,6 +150,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

@@ -6,6 +6,12 @@ import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.EngineSwitchPlanner
 import io.github.gua123.mediagate.media.engine.ResizeMode
 import io.github.gua123.mediagate.media.engine.SwitchPlan
+import io.github.gua123.mediagate.media.subtitle.SubtitleCandidate
+import io.github.gua123.mediagate.media.subtitle.SubtitleCue
+import io.github.gua123.mediagate.media.subtitle.SubtitleFormat
+import io.github.gua123.mediagate.media.subtitle.SubtitleSource
+import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
+import io.github.gua123.mediagate.media.subtitle.SubtitleTimeline
 
 /** 播放页状态机（R9/R10/R18）。 */
 enum class VideoPlayerStatus {
@@ -34,8 +40,57 @@ enum class VideoErrorKind {
     UNKNOWN,
 }
 
+/** 字幕状态（R14 单轨）：界面按钮与面板按它决定显示什么。 */
+enum class SubtitleStatus {
+
+    /** 关（用户关掉了，或还没有任何轨道）。 */
+    OFF,
+
+    /** 正在加载（远端字幕要显示加载中，R14）。 */
+    LOADING,
+
+    /** 已加载并在显示。 */
+    READY,
+
+    /** 开着但没内容（同目录没有字幕 / 加载失败被清掉）。 */
+    EMPTY,
+}
+
+/** 字幕提示分类（R16：界面按分类取中文文案，动态部分放 [SubtitleNotice.detail]）。 */
+enum class SubtitleNoticeKind {
+
+    /** 列目录或读取解析失败。 */
+    LOAD_FAILED,
+
+    /** 同目录没找到任何字幕文件。 */
+    NO_CANDIDATE,
+
+    /** 解析时跳过了坏数据（R14：不静默丢弃，要告诉用户）。 */
+    PARSE_DAMAGED,
+
+    /** 已写回原目录。 */
+    WRITE_OK,
+
+    /** 无写权限，已落到 App 私有目录（可分享 / 稍后重试）。 */
+    WRITE_LOCAL,
+
+    /** 写回失败（网络中断等）。 */
+    WRITE_FAILED,
+}
+
 /**
- * 视频播放页状态（R4 拖拽 / R9 内核 / R10 解码 / R18 断点续播）。
+ * 字幕提示（R14/R16）。
+ *
+ * @property kind 分类：界面据此取 strings.xml 里的中文文案。
+ * @property detail 动态部分（文件路径 / 跳过条数 / 失败原因），没有则 null。
+ */
+data class SubtitleNotice(
+    val kind: SubtitleNoticeKind,
+    val detail: String? = null,
+)
+
+/**
+ * 视频播放页状态（R4 拖拽 / R9 内核 / R10 解码 / R14 字幕 / R18 断点续播）。
  *
  * 不可变 + 纯数据：所有变更都走 [reduce]，因此「状态迁移」可以在纯 JVM 单测里逐条覆盖。
  * **注意**：视频输出视图（PlayerView / SurfaceView）不在这里，它由 ViewModel 的另一条流
@@ -88,6 +143,27 @@ data class VideoPlayerUiState(
     val siblingPaths: List<String> = emptyList(),
     /** 当前是第几集（0 基）。 */
     val siblingIndex: Int = 0,
+
+    // ---------------------------------------------------------------- 字幕（R14，单轨）
+
+    /** 字幕总开关。 */
+    val subtitleEnabled: Boolean = false,
+    /** 当前加载的外挂字幕路径；null = 没有轨道。 */
+    val subtitlePath: String? = null,
+    /** 当前字幕展示名（文件名或「语言 · 格式」）。 */
+    val subtitleLabel: String? = null,
+    /** 同目录候选：自动匹配在前、手动可选在后（R14 支持多候选，播放只加载一条）。 */
+    val subtitleCandidates: List<SubtitleCandidate> = emptyList(),
+    /** 当前轨道的 cue（**原始时间轴**；渲染时按 [subtitleOffsetMs] 平移）。 */
+    val subtitleCues: List<SubtitleCue> = emptyList(),
+    /** 是否正在加载字幕（远端要显示加载中）。 */
+    val subtitleLoading: Boolean = false,
+    /** 字幕提示（加载失败 / 坏数据 / 写回结果）；用户确认后清掉。 */
+    val subtitleNotice: SubtitleNotice? = null,
+    /** 时间轴微调（毫秒，正数 = 字幕延后；R14 ±0.5 s 步进）。 */
+    val subtitleOffsetMs: Long = 0L,
+    /** 字幕显示样式（R14：字号 / 颜色 / 描边 / 底部边距 / 加粗斜体）。 */
+    val subtitleStyle: SubtitleStyle = SubtitleStyle(),
 ) {
 
     /** 队列里有多少集。 */
@@ -136,6 +212,50 @@ data class VideoPlayerUiState(
 
     /** 缩放档位展示名。 */
     val resizeLabel: String get() = resizeMode.label
+
+    // ---------------------------------------------------------------- 字幕（R14）
+
+    /** 字幕状态（按钮与面板据此显示）。 */
+    val subtitleStatus: SubtitleStatus
+        get() = when {
+            subtitleLoading -> SubtitleStatus.LOADING
+            !subtitleEnabled -> SubtitleStatus.OFF
+            subtitleCues.isNotEmpty() -> SubtitleStatus.READY
+            else -> SubtitleStatus.EMPTY
+        }
+
+    /** 当前是否有可显示的字幕轨（开着且有内容）。 */
+    val hasSubtitleTrack: Boolean get() = subtitleEnabled && subtitleCues.isNotEmpty()
+
+    /** 当前字幕格式（按路径扩展名判定）；没有轨道时 null。 */
+    val subtitleFormat: SubtitleFormat?
+        get() = subtitlePath?.let { SubtitleFormat.fromFileName(it) }
+
+    /**
+     * 能否写回 / 另存（R14）：有轨道 + 有内容即可。
+     *
+     * ASS/SSA 轨道也能点——写回时会「另存为 SRT」（R14 只要求 SRT/VTT 可写出）。
+     */
+    val canWriteBackSubtitle: Boolean get() = subtitlePath != null && subtitleCues.isNotEmpty()
+
+    /** 写回目标格式：SRT/VTT 原样写回；ASS/SSA 另存为 SRT（R14 的写出口径）。 */
+    val subtitleWriteFormat: SubtitleFormat
+        get() = subtitleFormat?.takeIf { it.writable } ?: SubtitleFormat.SRT
+
+    /** 有语言标签的候选（自动匹配到的），供面板分组展示。 */
+    val autoSubtitleCandidates: List<SubtitleCandidate>
+        get() = subtitleCandidates.filter { it.source == SubtitleSource.AUTO }
+
+    /** 手动候选（同目录其余字幕文件）。 */
+    val manualSubtitleCandidates: List<SubtitleCandidate>
+        get() = subtitleCandidates.filter { it.source == SubtitleSource.MANUAL }
+
+    /** 时间轴微调的秒数文案（如 +0.5 / -1.5；单位由界面拼，R16）。 */
+    val subtitleOffsetText: String get() = SubtitleTimeline.formatOffsetSeconds(subtitleOffsetMs)
+
+    /** 平移后的 cue（渲染与写回都用它；纯函数，可在单测里核对）。 */
+    val shiftedSubtitleCues: List<SubtitleCue>
+        get() = SubtitleTimeline.shift(subtitleCues, subtitleOffsetMs)
 }
 
 /** 状态事件：ViewModel 只把外部结果翻译成事件，状态迁移全在 [reduce] 里。 */
@@ -205,6 +325,50 @@ sealed interface VideoPlayerEvent {
 
     /** 松手：把拖到的位置提交给内核。 */
     data object SeekFinished : VideoPlayerEvent
+
+    // ---------------------------------------------------------------- 字幕（R14）
+
+    /** 开始匹配同目录候选（远端列目录也要显示加载中，R14）。 */
+    data object SubtitleDiscoverStarted : VideoPlayerEvent
+
+    /** 同目录候选列表就绪（自动匹配在前、手动可选在后）。 */
+    data class SubtitleDiscovered(val candidates: List<SubtitleCandidate>) : VideoPlayerEvent
+
+    /** 开始加载某条字幕（远端加载要显示加载中）。 */
+    data class SubtitleLoadStarted(val path: String, val label: String) : VideoPlayerEvent
+
+    /** 字幕加载成功（[dropped] / [truncatedLines] 是容错统计，界面据此给「有坏数据」提示）。 */
+    data class SubtitleLoaded(
+        val path: String,
+        val label: String,
+        val cues: List<SubtitleCue>,
+        val dropped: Int = 0,
+        val truncatedLines: Int = 0,
+    ) : VideoPlayerEvent
+
+    /** 字幕加载失败（列目录失败 / 读取失败 / 解析不出内容）。 */
+    data class SubtitleLoadFailed(val detail: String?) : VideoPlayerEvent
+
+    /** 字幕开关变化（R14 开关；关掉只是不渲染，轨道仍留着便于再打开）。 */
+    data class SubtitleEnabledChanged(val enabled: Boolean) : VideoPlayerEvent
+
+    /** 时间轴微调变化（毫秒，正数 = 字幕延后）。 */
+    data class SubtitleOffsetChanged(val offsetMs: Long) : VideoPlayerEvent
+
+    /** 字幕样式变化（R14：字号/颜色/描边/边距/字形）。 */
+    data class SubtitleStyleChanged(val style: SubtitleStyle) : VideoPlayerEvent
+
+    /** 字幕提示（写回结果 / 坏数据统计 / 没有候选）。 */
+    data class SubtitleNoticeRaised(
+        val kind: SubtitleNoticeKind,
+        val detail: String? = null,
+    ) : VideoPlayerEvent
+
+    /** 清掉字幕提示（用户确认后）。 */
+    data object SubtitleNoticeCleared : VideoPlayerEvent
+
+    /** 卸载当前字幕轨（回到「无字幕」，候选列表保留）。 */
+    data object SubtitleCleared : VideoPlayerEvent
 }
 
 /**
@@ -236,7 +400,7 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         errorDetail = null,
         canFallback = false,
         resumeHint = false,
-    )
+    ).clearedSubtitleTrack()
 
     is VideoPlayerEvent.SiblingsLoaded -> withQueue(event.paths, event.index)
 
@@ -253,7 +417,7 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         errorDetail = null,
         canFallback = false,
         resumeHint = false,
-    )
+    ).clearedSubtitleTrack()
 
     // 装载内核后紧接着就起播（见 ViewModel.open），这里直接给界面一个"在播"的即时反馈，
     // 不用等 500 ms 后的第一次采样；真实状态随后由 Tick 覆盖
@@ -351,7 +515,83 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         positionMs = dragPositionMs,
         ended = false,
     )
+
+    // ---------------------------------------------------------------- 字幕（R14）
+
+    VideoPlayerEvent.SubtitleDiscoverStarted -> copy(subtitleLoading = true)
+
+    is VideoPlayerEvent.SubtitleDiscovered -> copy(
+        subtitleCandidates = event.candidates,
+        subtitleLoading = false,
+    )
+
+    is VideoPlayerEvent.SubtitleLoadStarted -> copy(
+        subtitleLoading = true,
+        subtitlePath = event.path,
+        subtitleLabel = event.label,
+        subtitleCues = emptyList(),
+        subtitleEnabled = true,
+        subtitleNotice = null,
+    )
+
+    is VideoPlayerEvent.SubtitleLoaded -> copy(
+        subtitleLoading = false,
+        subtitleEnabled = true,
+        subtitlePath = event.path,
+        subtitleLabel = event.label,
+        subtitleCues = event.cues,
+        subtitleNotice = if (event.dropped > 0 || event.truncatedLines > 0) {
+            SubtitleNotice(SubtitleNoticeKind.PARSE_DAMAGED, (event.dropped + event.truncatedLines).toString())
+        } else {
+            null
+        },
+    )
+
+    is VideoPlayerEvent.SubtitleLoadFailed -> copy(
+        subtitleLoading = false,
+        subtitlePath = null,
+        subtitleLabel = null,
+        subtitleCues = emptyList(),
+        subtitleNotice = SubtitleNotice(SubtitleNoticeKind.LOAD_FAILED, event.detail),
+    )
+
+    is VideoPlayerEvent.SubtitleEnabledChanged -> copy(subtitleEnabled = event.enabled)
+
+    is VideoPlayerEvent.SubtitleOffsetChanged -> copy(
+        subtitleOffsetMs = SubtitleTimeline.clampOffset(event.offsetMs),
+    )
+
+    is VideoPlayerEvent.SubtitleStyleChanged -> copy(subtitleStyle = event.style.clamped())
+
+    is VideoPlayerEvent.SubtitleNoticeRaised -> copy(
+        subtitleNotice = SubtitleNotice(event.kind, event.detail),
+        // 有提示就说明这一次操作已经结束，加载中状态收掉
+        subtitleLoading = false,
+    )
+
+    VideoPlayerEvent.SubtitleNoticeCleared -> copy(subtitleNotice = null)
+
+    // 卸载轨道但保留候选列表：用户还能在面板里再选一条
+    VideoPlayerEvent.SubtitleCleared -> withoutSubtitleTrack()
 }
+
+/**
+ * 换媒体时清掉当前字幕轨（R14）。
+ *
+ * 开关、样式与时间轴微调是**用户设置**，换集不清；具体轨道（路径/标签/cue/候选/提示）要清，
+ * 否则换集后会出现「上一集的字幕配这一集的画面」。候选列表也必须清——那是上一集同目录的候选。
+ */
+private fun VideoPlayerUiState.clearedSubtitleTrack(): VideoPlayerUiState =
+    withoutSubtitleTrack().copy(subtitleCandidates = emptyList())
+
+/** 只清轨道、保留候选（用户主动卸载字幕时用）。 */
+private fun VideoPlayerUiState.withoutSubtitleTrack(): VideoPlayerUiState = copy(
+    subtitlePath = null,
+    subtitleLabel = null,
+    subtitleCues = emptyList(),
+    subtitleLoading = false,
+    subtitleNotice = null,
+)
 
 /** 换队列/换集：路径与集号一起更新，集号越界会被钳进合法范围。 */
 private fun VideoPlayerUiState.withQueue(paths: List<String>, index: Int): VideoPlayerUiState {

@@ -23,6 +23,16 @@ import io.github.gua123.mediagate.media.engine.ResizeMode
 import io.github.gua123.mediagate.media.engine.SubtitleTrackController
 import io.github.gua123.mediagate.media.playback.PlaybackProgress
 import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
+import io.github.gua123.mediagate.media.subtitle.SubtitleCandidate
+import io.github.gua123.mediagate.media.subtitle.SubtitleCue
+import io.github.gua123.mediagate.media.subtitle.SubtitleFormat
+import io.github.gua123.mediagate.media.subtitle.SubtitleLocator
+import io.github.gua123.mediagate.media.subtitle.SubtitleMatchKind
+import io.github.gua123.mediagate.media.subtitle.SubtitleParseResult
+import io.github.gua123.mediagate.media.subtitle.SubtitleParser
+import io.github.gua123.mediagate.media.subtitle.SubtitleSource
+import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
+import io.github.gua123.mediagate.media.subtitle.SubtitleWriter
 import java.io.InputStream
 
 /** 进度采样的默认间隔（与 ViewModel 的默认值一致）。 */
@@ -152,23 +162,44 @@ internal class FakePlayerEngine(
     }
 }
 
-/** 假偏好：把两次写方法记下来，验证 R9/R10 的持久化。 */
+/** 假偏好：把每次写方法记下来，验证 R9/R10/R14 的持久化。 */
 internal class FakeVideoPreferences(
     engine: EngineKind = EngineKind.MEDIA3,
     decoderMode: DecoderMode = DecoderMode.AUTO_HW,
+    subtitleEnabled: Boolean = false,
+    subtitleStyle: SubtitleStyle = SubtitleStyle(),
+    subtitleOffsetMs: Long = 0L,
 ) : VideoPlayerPreferences {
 
     private val _engine = MutableStateFlow(engine)
 
     private val _decoderMode = MutableStateFlow(decoderMode)
 
+    private val _subtitleEnabled = MutableStateFlow(subtitleEnabled)
+
+    private val _subtitleStyle = MutableStateFlow(subtitleStyle)
+
+    private val _subtitleOffsetMs = MutableStateFlow(subtitleOffsetMs)
+
     override val engine: StateFlow<EngineKind> = _engine
 
     override val decoderMode: StateFlow<DecoderMode> = _decoderMode
 
+    override val subtitleEnabled: StateFlow<Boolean> = _subtitleEnabled
+
+    override val subtitleStyle: StateFlow<SubtitleStyle> = _subtitleStyle
+
+    override val subtitleOffsetMs: StateFlow<Long> = _subtitleOffsetMs
+
     val engineWrites = mutableListOf<EngineKind>()
 
     val decoderWrites = mutableListOf<DecoderMode>()
+
+    val subtitleEnabledWrites = mutableListOf<Boolean>()
+
+    val subtitleStyleWrites = mutableListOf<SubtitleStyle>()
+
+    val subtitleOffsetWrites = mutableListOf<Long>()
 
     override suspend fun setEngine(kind: EngineKind) {
         engineWrites += kind
@@ -178,6 +209,21 @@ internal class FakeVideoPreferences(
     override suspend fun setDecoderMode(mode: DecoderMode) {
         decoderWrites += mode
         _decoderMode.value = mode
+    }
+
+    override suspend fun setSubtitleEnabled(enabled: Boolean) {
+        subtitleEnabledWrites += enabled
+        _subtitleEnabled.value = enabled
+    }
+
+    override suspend fun setSubtitleStyle(style: SubtitleStyle) {
+        subtitleStyleWrites += style
+        _subtitleStyle.value = style
+    }
+
+    override suspend fun setSubtitleOffsetMs(offsetMs: Long) {
+        subtitleOffsetWrites += offsetMs
+        _subtitleOffsetMs.value = offsetMs
     }
 }
 
@@ -247,6 +293,7 @@ internal class FakeVideoPlayerEnvironment(
     override val proxyBaseUrl: String? = "http://127.0.0.1:1",
     override val preferences: FakeVideoPreferences = FakeVideoPreferences(),
     override val progress: FakeProgressStore = FakeProgressStore(),
+    override val subtitles: FakeSubtitleHost = FakeSubtitleHost(),
     private val videoViewFor: (EngineKind) -> View? = { null },
 ) : VideoPlayerEnvironment {
 
@@ -283,6 +330,98 @@ internal class FakeVideoPlayerEnvironment(
         return VideoPlayerMath.playableEntries(entries[dir].orEmpty())
     }
 }
+
+/**
+ * 假字幕宿主（R14）：候选 / 内容 / 写回结果全部由测试摆布，并记录调用顺序。
+ *
+ * 相当于把 :app 里那份「SubtitleLocator + SubtitleReader + SubtitleWriter（含本地兜底）」
+ * 换成内存实现，ViewModel 的字幕流程因此可以纯 JVM 覆盖。
+ */
+internal class FakeSubtitleHost(
+    var candidates: List<SubtitleCandidate> = emptyList(),
+) : SubtitleHost {
+
+    /** 路径 → 字幕原文（load 用真实解析器解析，保持与线上一致的语义）。 */
+    private val contents = mutableMapOf<String, String>()
+
+    /** discover 的调用记录（目录路径）。 */
+    val discovered = mutableListOf<String>()
+
+    /** load 的调用记录（字幕路径）。 */
+    val loaded = mutableListOf<String>()
+
+    /** writeBack 的调用记录（视频路径, 目标格式, 写回的 cue）。 */
+    val writes = mutableListOf<Triple<String, SubtitleFormat, List<SubtitleCue>>>()
+
+    /** discover 失败注入。 */
+    var discoverFailure: Throwable? = null
+
+    /** load 失败注入。 */
+    var loadFailure: Throwable? = null
+
+    /** 写回结果注入；null = 按「已写回原目录」返回。 */
+    var writeResult: SubtitleWriteResult? = null
+
+    /** 按视频路径动态给候选（换集测试用）；null = 固定返回 [candidates]。 */
+    var candidatesFor: ((String) -> List<SubtitleCandidate>)? = null
+
+    /** 放一份字幕内容。 */
+    fun put(path: String, text: String) {
+        contents[path] = text
+    }
+
+    override suspend fun list(dir: String): List<RemoteEntry> = emptyList()
+
+    override suspend fun discover(videoPath: String): List<SubtitleCandidate> {
+        discoverFailure?.let { throw it }
+        discovered += SubtitleLocator.directoryOf(videoPath)
+        return candidatesFor?.invoke(videoPath) ?: candidates
+    }
+
+    override suspend fun load(path: String): SubtitleParseResult {
+        loadFailure?.let { throw it }
+        loaded += path
+        val format = SubtitleFormat.fromFileName(path) ?: SubtitleFormat.SRT
+        val text = contents[path] ?: return SubtitleParseResult(emptyList(), format)
+        return SubtitleParser.parse(text, format)
+    }
+
+    override suspend fun writeBack(
+        videoPath: String,
+        format: SubtitleFormat,
+        cues: List<SubtitleCue>,
+    ): SubtitleWriteResult {
+        writes += Triple(videoPath, format, cues)
+        return writeResult ?: SubtitleWriteResult.Written(SubtitleWriter.siblingPathOf(videoPath, format))
+    }
+}
+
+/** 造一条自动匹配候选。 */
+internal fun autoCandidate(
+    path: String,
+    language: String? = "zh",
+    languageLabel: String? = "中文（简体）",
+): SubtitleCandidate = SubtitleCandidate(
+    path = path,
+    name = path.substringAfterLast('/'),
+    format = SubtitleFormat.fromFileName(path) ?: SubtitleFormat.SRT,
+    source = SubtitleSource.AUTO,
+    matchKind = SubtitleMatchKind.LANGUAGE_SUFFIX,
+    language = language,
+    languageLabel = languageLabel,
+)
+
+/** 造一条手动候选。 */
+internal fun manualCandidate(path: String): SubtitleCandidate = SubtitleCandidate(
+    path = path,
+    name = path.substringAfterLast('/'),
+    format = SubtitleFormat.fromFileName(path) ?: SubtitleFormat.SRT,
+    source = SubtitleSource.MANUAL,
+    matchKind = SubtitleMatchKind.MODIFIER,
+)
+
+/** 标准三条字幕的 SRT 文本。 */
+internal const val SAMPLE_SRT: String = "1\n00:00:01,000 --> 00:00:03,000\n第一条\n\n2\n00:00:05,000 --> 00:00:07,000\n第二条\n\n3\n00:00:09,000 --> 00:00:10,000\n第三条\n"
 
 /** 造一个视频目录项。 */
 internal fun videoEntry(path: String): RemoteEntry = RemoteEntry(
