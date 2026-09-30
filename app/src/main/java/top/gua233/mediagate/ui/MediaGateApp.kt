@@ -50,6 +50,8 @@ import io.github.gua123.mediagate.feature.browser.BrowserRoutes
 import io.github.gua123.mediagate.feature.browser.BrowserScreen
 import io.github.gua123.mediagate.feature.browser.LocalBrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.RootModeKind
+import io.github.gua123.mediagate.feature.connections.ConnectionsScreen
+import io.github.gua123.mediagate.feature.connections.LocalConnectionsEnvironment
 import io.github.gua123.mediagate.feature.home.HomeRootUi
 import io.github.gua123.mediagate.feature.home.HomeScreen
 import io.github.gua123.mediagate.feature.player.audio.AudioPlayerRoutes
@@ -58,6 +60,8 @@ import io.github.gua123.mediagate.feature.player.audio.LocalAudioPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
+import io.github.gua123.mediagate.feature.settings.SettingsNote
+import io.github.gua123.mediagate.feature.settings.SettingsScreen
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
@@ -184,6 +188,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             LocalAudioPlayerEnvironment provides container,
             // M2-B：视频播放（R1/R4/R9/R10/R18）的宿主能力（双内核 + 回环代理 + 断点存储 + 偏好）
             LocalVideoPlayerEnvironment provides container.videoPlayerEnvironment,
+            // M4：连接管理（R6/R7/R8）的宿主能力（三张表 + Keystore 加密 + 当前连接 + 网络现场）
+            LocalConnectionsEnvironment provides container.connectionsEnvironment,
         ) {
             NavHost(
                 navController = navController,
@@ -257,14 +263,19 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     )
                 }
 
+                // 连接管理（M4，R6/R7/R8）：列表 + 新建/编辑/删除 + 测试连通性/测试全部 + 设为当前连接
                 composable(TopLevelDestination.CONNECTIONS.navRoute) {
-                    PlaceholderScreen(title = stringResource(R.string.nav_connections))
+                    ConnectionsScreen()
                 }
                 composable(TopLevelDestination.TASKS.navRoute) {
                     PlaceholderScreen(title = stringResource(R.string.nav_tasks))
                 }
+                // 设置（M4，R7/R8）：当前连接入口 + 网络切换策略说明（只读）
                 composable(TopLevelDestination.SETTINGS.navRoute) {
-                    PlaceholderScreen(title = stringResource(R.string.nav_settings))
+                    SettingsRoute(
+                        container = container,
+                        onOpenConnections = { navController.switchTopLevel(TopLevelDestination.CONNECTIONS) },
+                    )
                 }
             }
         }
@@ -291,6 +302,39 @@ private fun HomeRoute(
         onUseAllFilesRoot = container::useAllFilesRoot,
         onRequestAllFilesAccess = container::requestAllFilesAccess,
         onClearRoot = container::clearRoot,
+    )
+}
+
+/**
+ * 设置页（M4，R7/R8）：把容器里的「当前连接」与网络策略文案映射成页面模型。
+ *
+ * 页面本身只读，不查库、不建后端；跳转由这里给（导航控制器在 :app 手里）。
+ */
+@Composable
+private fun SettingsRoute(container: AppContainer, onOpenConnections: () -> Unit) {
+    val connection by container.settingsConnection.collectAsStateWithLifecycle()
+    val notes = listOf(
+        SettingsNote(
+            title = stringResource(R.string.settings_note_order_title),
+            detail = stringResource(R.string.settings_note_order_detail),
+        ),
+        SettingsNote(
+            title = stringResource(R.string.settings_note_cache_title),
+            detail = stringResource(R.string.settings_note_cache_detail),
+        ),
+        SettingsNote(
+            title = stringResource(R.string.settings_note_credential_title),
+            detail = stringResource(R.string.settings_note_credential_detail),
+        ),
+        SettingsNote(
+            title = stringResource(R.string.settings_note_protocol_title),
+            detail = stringResource(R.string.settings_note_protocol_detail),
+        ),
+    )
+    SettingsScreen(
+        connection = connection,
+        notes = notes,
+        onOpenConnections = onOpenConnections,
     )
 }
 

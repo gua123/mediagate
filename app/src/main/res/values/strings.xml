@@ -20,6 +20,16 @@
     <!-- M1-G（R18）：音频后台播放 -->
     <string name="audio_notification_denied">未授予通知权限：后台播放仍可继续，但通知栏与锁屏看不到播放控制</string>
 
+    <!-- M4（R7/R8）：设置页的网络切换策略说明（只读） -->
+    <string name="settings_note_order_title">选择顺序</string>
+    <string name="settings_note_order_detail">网络能力 → 选路规则（传输类型 / Wi-Fi 名称 / 本机网段）→ 没有规则命中时对多个地址并行竞速（TCP 1.5 秒）→ 协议握手才算真正确定。</string>
+    <string name="settings_note_cache_title">结果缓存</string>
+    <string name="settings_note_cache_detail">连通性结果与竞速结果都缓存 60 秒；系统网络回调（切 Wi-Fi / 切蜂窝 / 换网段）一来立刻失效并重测。</string>
+    <string name="settings_note_credential_title">凭据</string>
+    <string name="settings_note_credential_detail">协议密码在保存时立即用 Android Keystore（AES-GCM）加密，库里只存密文，界面不回显明文。</string>
+    <string name="settings_note_protocol_title">协议现状</string>
+    <string name="settings_note_protocol_detail">本地目录与 WebDAV 已可浏览播放；SFTP / FTP 计划在 M5 接入，现在建了记录只能测试连通性（DNS / TCP 两段，协议握手未做）。</string>
+
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>
