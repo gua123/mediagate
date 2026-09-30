@@ -25,6 +25,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core:common"))
-    implementation(project(":core:model"))
+    // RemoteEntry / Caps / ProbeReport 出现在 StorageBackend 的公开签名里，需传递给上层
+    api(project(":core:model"))
     api(libs.kotlinx.coroutines.android)
 }

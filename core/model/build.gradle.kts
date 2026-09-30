@@ -26,4 +26,6 @@ kotlin {
 dependencies {
     implementation(project(":core:common"))
     api(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.junit)
 }
