@@ -160,8 +160,11 @@ class MediaMetadataRetrieverFrameExtractor(
  *
  * 生命周期：本类**不**关闭上游 [RandomAccessSource]——它由 [ThumbnailRepository] 持有并在
  * 抽帧结束后统一关闭，[close] 只把自己标记为停用，避免 MMR 提前掐断后续重试要用的数据源。
+ *
+ * 可见性为 internal（M1-F）：[EmbeddedArtworkExtractor] 读音频内嵌封面时同样需要把数据层
+ * 桥接给 MMR，复用同一份实现，避免两处各写一遍「挂起读 → 阻塞读」的桥接代码。
  */
-private class SourceMediaDataSource(private val source: RandomAccessSource) : MediaDataSource() {
+internal class SourceMediaDataSource(private val source: RandomAccessSource) : MediaDataSource() {
 
     private val readErrorLogged = AtomicBoolean(false)
 

@@ -105,4 +105,52 @@ class ThumbnailKeyTest {
         assertEquals(File(root, key.relativePath), cache.fileFor(key))
         assertTrue(cache.fileFor(key).path.startsWith(root.path))
     }
+
+    @Test
+    fun `默认用途与扩展名保持 webp 口径`() {
+        val key = ThumbnailKey.of("local-file:/sdcard", entry(), targetWidth = 256)
+        assertEquals(ThumbnailVariant.FRAME, key.variant)
+        assertEquals(ThumbnailKey.EXTENSION, key.extension)
+        assertTrue(key.relativePath.endsWith("." + ThumbnailKey.EXTENSION))
+    }
+
+    @Test
+    fun `用途变体进 key 避免不同用途互相覆盖`() {
+        val frame = ThumbnailKey.of("local-file:/sdcard", entry(), targetWidth = 256)
+        val preview = ThumbnailKey.of(
+            "local-file:/sdcard",
+            entry(),
+            targetWidth = 256,
+            variant = ThumbnailVariant.IMAGE_PREVIEW,
+        )
+        assertEquals(ThumbnailVariant.IMAGE_PREVIEW, preview.variant)
+        assertNotEquals(frame, preview)
+        assertNotEquals(frame.hash, preview.hash)
+        assertNotEquals(frame.relativePath, preview.relativePath)
+    }
+
+    @Test
+    fun `图片缩略图按实际编码格式决定扩展名`() {
+        val photo = entry(name = "photo.jpg", path = "/pics/photo.jpg")
+        fun keyOf(format: ThumbnailImageFormat) = ThumbnailKey.of(
+            "local-file:/sdcard",
+            photo,
+            targetWidth = 256,
+            variant = ThumbnailVariant.IMAGE_PREVIEW,
+            format = format,
+        )
+        val webp = keyOf(ThumbnailImageFormat.WEBP)
+        val jpeg = keyOf(ThumbnailImageFormat.JPEG)
+        val png = keyOf(ThumbnailImageFormat.PNG)
+
+        assertEquals("webp", webp.extension)
+        assertEquals("jpg", jpeg.extension)
+        assertEquals("png", png.extension)
+        assertTrue(jpeg.relativePath.startsWith("image/"))
+        assertTrue("JPEG 内容不能命名成 .webp", jpeg.relativePath.endsWith(".jpg"))
+        assertTrue(png.relativePath.endsWith(".png"))
+        // 扩展名进哈希：同一张图不同封装格式各自独立，不会互相覆盖
+        assertNotEquals(jpeg.hash, png.hash)
+        assertNotEquals(webp.hash, jpeg.hash)
+    }
 }

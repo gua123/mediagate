@@ -13,36 +13,52 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.model.RemoteEntry
+import io.github.gua123.mediagate.data.storage.api.StorageBackend
+import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
 import io.github.gua123.mediagate.feature.browser.BrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.BrowserRootState
 import io.github.gua123.mediagate.feature.browser.RootModeKind
+import io.github.gua123.mediagate.feature.viewer.image.ImageTooLargeException
+import io.github.gua123.mediagate.feature.viewer.image.ImageViewerEnvironment
+import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
+import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
+import io.github.gua123.mediagate.media.thumbnail.EmbeddedArtworkExtractor
 import io.github.gua123.mediagate.media.thumbnail.FfmpegFrameExtractor
+import io.github.gua123.mediagate.media.thumbnail.ImagePreviewPipeline
+import io.github.gua123.mediagate.media.thumbnail.ImageThumbnailExtractor
 import io.github.gua123.mediagate.media.thumbnail.MediaMetadataRetrieverFrameExtractor
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailCache
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
  * 手写 DI 容器（不引 Hilt）——`:app` 的应用级单例，由 [io.github.gua123.mediagate.MediaGateApplication]
  * 在 `onCreate` 创建并持有。
  *
- * 它负责三件事（R12 / R5 / R2）：
+ * 它负责四件事（R12 / R5 / R2 / R1）：
  * 1. **根目录设置**：[RootSettings] 用 DataStore Preferences 持久化「模式 + 路径/树 URI」，
  *    并对外暴露 [rootConfig]（首页展示用）；
- * 2. **当前根目录的后端**：配置一变就创建新的 [io.github.gua123.mediagate.data.storage.api.StorageBackend]
+ * 2. **当前根目录的后端**：配置一变就创建新的 [StorageBackend]
  *    （SAF → `SafStorageBackend`；全盘 → `FileStorageBackend`），并关闭旧实例，
  *    以 [BrowserEnvironment.root] 的形式提供给 :feature:browser；
- * 3. **缩略图仓库**：懒加载 [ThumbnailRepository]（两级缓存 + MMR 主策略 + FFmpeg 兜底）。
+ * 3. **缩略图仓库**：懒加载 [ThumbnailRepository]（两级缓存 + MMR 主策略 + FFmpeg 兜底 +
+ *    M1-F 的音频内嵌封面与图片缩略图两条分支）；
+ * 4. **图片查看器**（M1-F，R1）：实现 [ImageViewerEnvironment]，复用同一个当前后端
+ *    给 :feature:viewer-image 列同目录图片、按上限读取整张图片。
  *
  * 权限动作（拉起 SAF 选择器 / 跳「所有文件访问」设置页）也收在这里，页面只调方法，
- * 不各自拼 Intent。所有耗时动作都跑在 [ioScope] 或后端内部的 `Dispatchers.IO` 上。
+ * 不各自拼 Intent。所有耗时动作都跑在 [ioScope] 或 `Dispatchers.IO` 上。
  */
-class AppContainer(context: Context) : BrowserEnvironment {
+class AppContainer(context: Context) : BrowserEnvironment, ImageViewerEnvironment {
 
     private val appContext: Context = context.applicationContext
 
@@ -69,14 +85,78 @@ class AppContainer(context: Context) : BrowserEnvironment {
      * 缩略图仓库（R5，plan 4.4）。
      *
      * 懒加载：只有真正进浏览页才建缓存目录与抽帧器；缓存目录落在 App 缓存内（系统可回收）。
+     *
+     * M1-F 补齐两条分支：音频走 MMR 内嵌封面（[EmbeddedArtworkExtractor]），
+     * 图片走「解码 + 按目标宽度重编码」（[ImageThumbnailExtractor]）；
+     * [ImagePreviewPipeline] 把编码格式一起带上，缓存文件扩展名才与实际内容一致。
      */
     override val thumbnails: ThumbnailRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        val imagePreview = ImageThumbnailExtractor()
         ThumbnailRepository(
             cache = ThumbnailCache(rootDir = File(appContext.cacheDir, THUMBNAIL_CACHE_DIR)),
             primary = MediaMetadataRetrieverFrameExtractor(),
             fallback = FfmpegFrameExtractor(workDir = File(appContext.cacheDir, THUMBNAIL_WORK_DIR)),
+            audioArtwork = EmbeddedArtworkExtractor(),
+            imagePreview = ImagePreviewPipeline(extractor = imagePreview, format = imagePreview.format),
         )
     }
+
+    // ------------------------------------------------------------ 图片查看器（M1-F，R1）
+
+    /** 当前根目录的展示名（查看器顶栏用）；尚未选择根目录时是空串。 */
+    override val rootLabel: StateFlow<String> =
+        _root.map { it?.label.orEmpty() }.stateIn(ioScope, SharingStarted.Eagerly, "")
+
+    /**
+     * 列出 [path] 所在目录的**图片**（M1-F，R1 左右翻页的数据源）。
+     *
+     * 复用当前根目录的后端；过滤与排序口径交给 [ViewerMath.imageEntries]（与查看器同一份纯逻辑），
+     * 保证「后端给什么顺序」都不会影响「第 i / n 张」。
+     *
+     * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），查看器按分类给中文提示。
+     */
+    override suspend fun siblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
+        ViewerMath.imageEntries(currentBackend().list(parentOf(path), null))
+    }
+
+    /**
+     * 读取 [path] 的原始字节（M1-F，R1）。
+     *
+     * 边读边计数：一旦超过 [MAX_VIEWER_IMAGE_BYTES] 立刻中止并抛 [ImageTooLargeException]，
+     * 不会为了报错先把几百 MB 读进内存（目录项没给 size 时的唯一保护）。
+     *
+     * @throws StorageException 读取失败。
+     * @throws ImageTooLargeException 超过体积上限。
+     */
+    override suspend fun open(path: String): ByteArray = withContext(Dispatchers.IO) {
+        currentBackend().openRead(path).use { stream ->
+            val buffer = ByteArray(READ_BUFFER_BYTES)
+            val out = ByteArrayOutputStream(READ_BUFFER_BYTES)
+            var total = 0L
+            while (true) {
+                val read = stream.read(buffer, 0, buffer.size)
+                if (read <= 0) break
+                total += read
+                if (total > MAX_VIEWER_IMAGE_BYTES) throw ImageTooLargeException(total)
+                out.write(buffer, 0, read)
+            }
+            val bytes = out.toByteArray()
+            if (bytes.isEmpty()) throw StorageException.NotFound("图片内容为空：" + path)
+            bytes
+        }
+    }
+
+    /**
+     * 当前根目录的后端。
+     *
+     * 尚未选择根目录（R12）时按「无权限」抛：查看器会提示「没有访问权限 + 尚未选择媒体根目录」，
+     * 比笼统的「图片不存在」更贴近用户需要做的动作（去首页选目录）。
+     */
+    private fun currentBackend(): StorageBackend =
+        _root.value?.backend ?: throw StorageException.AccessDenied("尚未选择媒体根目录")
+
+    /** 目录路径（相对根目录，空串 = 根）：最后一个 `/` 之前的部分。 */
+    private fun parentOf(path: String): String = path.substringBeforeLast('/', "")
 
     init {
         ioScope.launch {
@@ -221,5 +301,8 @@ class AppContainer(context: Context) : BrowserEnvironment {
 
         /** FFmpeg 兜底抽帧的临时文件目录。 */
         const val THUMBNAIL_WORK_DIR = "thumb-work"
+
+        /** 图片查看器读取整张图片时的缓冲块（256 KiB）。 */
+        private const val READ_BUFFER_BYTES = 256 * 1024
     }
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:viewer-image 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$d / %2$s。
+-->
+<resources>
+    <string name="viewer_title">图片查看</string>
+    <string name="viewer_back">返回</string>
+    <string name="viewer_prev">上一张</string>
+    <string name="viewer_next">下一张</string>
+    <string name="viewer_page_indicator">第 %1$d / %2$d 张</string>
+    <string name="viewer_loading">正在加载图片…</string>
+    <string name="viewer_retry">重试</string>
+
+    <string name="viewer_error_access_denied">没有访问权限</string>
+    <string name="viewer_error_not_found">图片不存在</string>
+    <string name="viewer_error_not_supported">该存储后端不支持读取此图片</string>
+    <string name="viewer_error_network">网络不可用</string>
+    <string name="viewer_error_auth">认证失败</string>
+    <string name="viewer_error_too_large">图片过大，无法在查看器中打开</string>
+    <string name="viewer_error_decode">无法解码该图片（格式不支持或文件已损坏）</string>
+    <string name="viewer_error_unknown">加载失败，请重试</string>
+    <string name="viewer_error_detail">错误详情：%1$s</string>
+</resources>

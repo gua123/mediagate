@@ -128,15 +128,21 @@ class ThumbnailCacheTest {
 
     @Test
     fun `历史文件超出容量时由清理任务淘汰到上限以内`() = runTest {
+        // 注入假时钟：淘汰顺序只看 lastModified，用真实时钟时三次写入可能落在同一毫秒，
+        // 会退化成「按文件名（哈希）排序」而变得不确定
+        var now = 1_700_000_000_000L
         val dir = tmp.newFolder("sweep")
-        val big = ThumbnailCache(dir, memoryCapacity = 0, diskCapacityBytes = 10_000)
+        val big = ThumbnailCache(dir, memoryCapacity = 0, diskCapacityBytes = 10_000, clock = { now })
+        now += 1_000
         big.put(key("a"), bytes(1, 150))
+        now += 1_000
         big.put(key("b"), bytes(2, 150))
+        now += 1_000
         big.put(key("c"), bytes(3, 150))
         assertEquals(450L, big.sizeBytes())
 
-        // 模拟「设置里把容量改小了」：新实例按更小的上限清理存量缓存
-        val small = ThumbnailCache(dir, memoryCapacity = 0, diskCapacityBytes = 150)
+        // 模拟「设置里把容量改小了」：新实例按更小的上限清理存量缓存（最久未用的 a、b 先走）
+        val small = ThumbnailCache(dir, memoryCapacity = 0, diskCapacityBytes = 150, clock = { now })
         small.evictToCapacity()
         assertEquals(150L, small.sizeBytes())
         assertTrue(small.fileFor(key("c")).exists())
@@ -226,5 +232,37 @@ class ThumbnailCacheTest {
         assertEquals(0, cache.negativeSize())
         assertEquals(0L, cache.sizeBytes())
         assertNull(cache.get(a))
+    }
+
+    @Test
+    fun `非 webp 扩展名的条目同样参与容量统计与淘汰`() = runTest {
+        var now = 1_700_000_000_000L
+        val dir = tmp.newFolder("mixed")
+        val cache = ThumbnailCache(dir, memoryCapacity = 0, diskCapacityBytes = 300, clock = { now })
+        // 图片缩略图按实际编码格式落 .jpg（M1-F），它必须和 .webp 一样被计入容量
+        val jpeg = ThumbnailKey.of(
+            backendId = "local-file:/tmp/root",
+            entry = RemoteEntry(name = "photo.jpg", path = "/dir/photo.jpg", size = 1_000L, mtime = 1_000L),
+            targetWidth = 256,
+            variant = ThumbnailVariant.IMAGE_PREVIEW,
+            format = ThumbnailImageFormat.JPEG,
+        )
+
+        now += 1_000
+        cache.put(jpeg, bytes(1, 150))
+        assertTrue("应落成 .jpg：${cache.fileFor(jpeg).name}", cache.fileFor(jpeg).name.endsWith(".jpg"))
+        assertEquals(150L, cache.sizeBytes())
+
+        now += 1_000
+        cache.put(key("b"), bytes(2, 150))
+        assertEquals(300L, cache.sizeBytes())
+
+        // 第三次写入后 450 > 300：最久未用的 .jpg 条目也要被淘汰（按扩展名白名单就会漏掉它）
+        now += 1_000
+        cache.put(key("c"), bytes(3, 150))
+        assertEquals(300L, cache.sizeBytes())
+        assertFalse("非 webp 的条目必须参与淘汰", cache.fileFor(jpeg).exists())
+        assertTrue(cache.fileFor(key("b")).exists())
+        assertTrue(cache.fileFor(key("c")).exists())
     }
 }

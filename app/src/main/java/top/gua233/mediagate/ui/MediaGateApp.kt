@@ -15,11 +15,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -37,12 +41,17 @@ import androidx.navigation.compose.rememberNavController
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.app.AppContainer
 import io.github.gua123.mediagate.core.model.MediaKind
+import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.feature.browser.BrowserRoutes
 import io.github.gua123.mediagate.feature.browser.BrowserScreen
 import io.github.gua123.mediagate.feature.browser.LocalBrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 import io.github.gua123.mediagate.feature.home.HomeRootUi
 import io.github.gua123.mediagate.feature.home.HomeScreen
+import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
+import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
+import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
+import kotlinx.coroutines.launch
 
 /**
  * 顶层底部导航的五个目标（M1：首页 / 浏览有真实实现，连接 / 任务 / 设置先放占位页）。
@@ -77,6 +86,9 @@ private enum class TopLevelDestination(
  * - SAF：[rememberLauncherForActivityResult] + `OpenDocumentTree`，拿到 URI 交给容器持久化；
  * - 全盘访问：跳系统设置页后，靠 [LocalLifecycleOwner] 的 ON_RESUME 重新读授权状态。
  *
+ * 图片查看器（**M1-F**，R1）：浏览页点图片 → 导航到 [ViewerRoutes]（带相对路径参数），
+ * 返回后仍在原目录；查看器路由是全屏页，此时隐藏底部导航栏。
+ *
  * @param container 应用级依赖容器（由 [io.github.gua123.mediagate.MediaGateApplication] 持有）。
  */
 @Composable
@@ -84,6 +96,14 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
+
+    // 顶层提示条：浏览页点到「尚未接入播放器」的文件类型时给一句话，而不是点了没反应
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val unsupportedHint = stringResource(R.string.open_unsupported)
+
+    // 查看器是全屏页（R1）：隐藏底部导航栏，让图片占满整屏
+    val fullScreenDestination = currentDestination?.route == ViewerRoutes.ROUTE
 
     // R12 SAF 模式：系统目录选择器（结果 URI 由容器 takePersistableUriPermission 后落 DataStore）
     val safPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -102,21 +122,29 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
 
     Scaffold(
         modifier = modifier,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            NavigationBar {
-                TopLevelDestination.entries.forEach { destination ->
-                    val selected = currentDestination?.hierarchy?.any { it.route == destination.matchRoute } == true
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { navController.switchTopLevel(destination) },
-                        icon = { Icon(imageVector = destination.icon, contentDescription = null) },
-                        label = { Text(stringResource(destination.labelRes)) },
-                    )
+            // 查看器占满整屏，不给底部导航让位（R1）
+            if (!fullScreenDestination) {
+                NavigationBar {
+                    TopLevelDestination.entries.forEach { destination ->
+                        val selected = currentDestination?.hierarchy?.any { it.route == destination.matchRoute } == true
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { navController.switchTopLevel(destination) },
+                            icon = { Icon(imageVector = destination.icon, contentDescription = null) },
+                            label = { Text(stringResource(destination.labelRes)) },
+                        )
+                    }
                 }
             }
         },
     ) { innerPadding ->
-        CompositionLocalProvider(LocalBrowserEnvironment provides container) {
+        CompositionLocalProvider(
+            LocalBrowserEnvironment provides container,
+            // M1-F：图片查看器（R1）的宿主能力，同样由 AppContainer 提供
+            LocalImageViewerEnvironment provides container,
+        ) {
             NavHost(
                 navController = navController,
                 startDestination = TopLevelDestination.HOME.navRoute,
@@ -143,7 +171,23 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     BrowserScreen(
                         initialPath = BrowserRoutes.pathOf(entry.arguments?.getString(BrowserRoutes.ARG_PATH)),
                         initialKind = BrowserRoutes.kindOf(entry.arguments?.getString(BrowserRoutes.ARG_KIND)),
+                        onOpenEntry = { clicked ->
+                            // R1（M1-F）：图片进查看器；其它类型播放器尚未接入，给一句中文提示
+                            if (MediaKindGuesser.guess(clicked.name) == MediaKind.IMAGE) {
+                                navController.navigate(ViewerRoutes.route(clicked.path))
+                            } else {
+                                scope.launch { snackbarHostState.showSnackbar(unsupportedHint) }
+                            }
+                        },
                         onRequestRootAccess = { safPicker.launch(null) },
+                    )
+                }
+
+                // 图片查看器（M1-F，R1）：返回键由页面 BackHandler 回调到这里，回到原目录
+                composable(route = ViewerRoutes.ROUTE, arguments = ViewerRoutes.arguments) { entry ->
+                    ImageViewerScreen(
+                        path = ViewerRoutes.pathOf(entry.arguments?.getString(ViewerRoutes.ARG_PATH)),
+                        onBack = { navController.popBackStack() },
                     )
                 }
 

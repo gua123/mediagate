@@ -18,7 +18,9 @@ import kotlin.concurrent.withLock
  * 结构对齐 plan 4.4「两级缓存（内存 LruCache + 磁盘 webp，默认 512 MB LRU）+ 失败负缓存」：
  * - **内存层**：自己实现的 LRU（[LinkedHashMap] accessOrder=true + 计数上限），命中即刷新最近使用；
  *   刻意不用 `android.util.LruCache`，这样本文件与它的单测都能在纯 JVM 上跑；
- * - **磁盘层**：[ThumbnailKey.relativePath] 决定的 `<cacheDir>/<kind>/<hash前2位>/<hash>.webp`，
+ * - **磁盘层**：[ThumbnailKey.relativePath] 决定的
+ *   `<cacheDir>/<kind>/<hash前2位>/<hash>.<扩展名>`（视频帧/音频封面是 `.webp`，
+ *   图片缩略图按实际编码格式，见 [ThumbnailKey.extension]），
  *   写入后按 lastModified（命中会刷新）做 LRU 淘汰，直到总量回到 [diskCapacityBytes] 以内；
  * - **负缓存**：记录「这个 key 抽帧失败了」与失败时间戳，[negativeTtlMs] 内直接判定失败，
  *   避免对同一个坏文件反复发起远端读（plan 4.4「失败负缓存」）。
@@ -84,7 +86,7 @@ class ThumbnailCache(
         evictToCapacityInternal()
     }
 
-    /** 当前磁盘缓存占用（字节），只统计 `*.webp`，不含写入中的 .tmp 文件。 */
+    /** 当前磁盘缓存占用（字节），统计所有已落盘的缓存条目（不限扩展名），不含写入中的 .tmp 文件。 */
     suspend fun sizeBytes(): Long = withContext(io) { diskFiles().sumOf { it.length() } }
 
     /** 按 [diskCapacityBytes] 淘汰最久未使用的条目（写入后自动调用；也可由清理任务手动触发）。 */
@@ -179,7 +181,7 @@ class ThumbnailCache(
             return
         }
         // 唯一临时名，保证同一 key 的并发写互不覆盖
-        val tmp = File(parent, "${target.name}.tmp-${tmpSeq.incrementAndGet()}-${UUID.randomUUID()}")
+        val tmp = File(parent, "${target.name}$TMP_MARKER${tmpSeq.incrementAndGet()}-${UUID.randomUUID()}")
         try {
             tmp.writeBytes(bytes)
             if (!tmp.renameTo(target)) {
@@ -198,14 +200,20 @@ class ThumbnailCache(
         }
     }
 
-    /** 遍历缓存目录下所有 `*.webp`（.tmp 写入中的文件不算容量）。 */
+    /**
+     * 遍历缓存目录下所有已落盘的条目（`.tmp-` 写入中的文件不算容量）。
+     *
+     * M1-F 起缓存不再只有 `.webp`：图片缩略图按实际编码格式落 `.jpg` / `.png` / `.webp`
+     * （见 [ThumbnailKey.extension]），所以这里按「非临时文件」判定，而不是按扩展名白名单——
+     * 否则非 webp 的条目会永远不参与容量统计与淘汰。
+     */
     private fun diskFiles(): List<File> {
         val out = ArrayList<File>()
         fun walk(dir: File) {
             val children = dir.listFiles() ?: return
             for (child in children) {
                 if (child.isDirectory) walk(child)
-                else if (child.name.endsWith(".${ThumbnailKey.EXTENSION}")) out += child
+                else if (!child.name.contains(TMP_MARKER)) out += child
             }
         }
         walk(rootDir)
@@ -259,5 +267,8 @@ class ThumbnailCache(
 
         /** 负缓存条目上限，防止长时间运行后无限增长。 */
         private const val MAX_NEGATIVE_ENTRIES = 4096
+
+        /** 写入中临时文件的名字标记（[diskFiles] 靠它把半成品排除在容量统计之外）。 */
+        private const val TMP_MARKER = ".tmp-"
     }
 }

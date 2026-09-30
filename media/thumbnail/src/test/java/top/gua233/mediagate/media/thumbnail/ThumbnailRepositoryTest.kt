@@ -260,4 +260,115 @@ class ThumbnailRepositoryTest {
         cache.put(key, bytes(5))
         assertArrayEquals(bytes(5), repo.cached(image, backend)!!)
     }
+
+    // ------------------------------------------------------------ M1-F：音频 / 图片分支
+
+    @Test
+    fun `音频走内嵌封面分支且不调用抽帧器`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(1) })
+        val artwork = FakeExtractor(responder = { _, _ -> bytes(6) })
+        val repo = ThumbnailRepository(cache = cache, primary = primary, audioArtwork = artwork)
+        val song = RemoteEntry(name = "song.flac", path = "/music/song.flac", size = 5_000L, mtime = 7L)
+        val backend = FakeBackend()
+
+        assertArrayEquals(bytes(6), repo.thumbnail(song, backend)!!)
+        assertEquals("音频不该走抽帧分支", 0, primary.calls.get())
+        assertEquals(1, artwork.calls.get())
+        assertEquals(listOf(ThumbnailRepository.ANY_FRAME_MS), artwork.positions.toList())
+
+        // 第二次命中缓存：不再读远端，也不再调封面提取器
+        assertArrayEquals(bytes(6), repo.thumbnail(song, backend)!!)
+        assertEquals(1, artwork.calls.get())
+        assertEquals(1, backend.openCount.get())
+
+        val key = repo.keyFor(song, backend)
+        assertEquals(MediaKind.AUDIO, key.kind)
+        assertEquals(ThumbnailVariant.FRAME, key.variant)
+        assertTrue(key.relativePath.startsWith("audio/"))
+    }
+
+    @Test
+    fun `音频没有内嵌封面时落负缓存且不换位重试`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(1) })
+        val artwork = FakeExtractor()
+        val repo = ThumbnailRepository(cache = cache, primary = primary, audioArtwork = artwork)
+        val song = RemoteEntry(name = "song.mp3", path = "/music/song.mp3", size = 100L, mtime = 1L)
+        val backend = FakeBackend()
+        val key = repo.keyFor(song, backend)
+
+        assertNull(repo.thumbnail(song, backend))
+        assertEquals("封面只试一次，不换位重试", 1, artwork.calls.get())
+        assertEquals("抽帧分支不适用于音频", 0, primary.calls.get())
+        assertTrue("失败要写负缓存", cache.isNegative(key))
+        assertEquals(0L, cache.sizeBytes())
+
+        // 负缓存 TTL 内第二次直接判失败，不再打远端
+        assertNull(repo.thumbnail(song, backend))
+        assertEquals(1, artwork.calls.get())
+        assertEquals(1, backend.openCount.get())
+    }
+
+    @Test
+    fun `图片走图片流水线并复用缓存`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(1) })
+        val image = FakeExtractor(responder = { _, targetWidth -> if (targetWidth == 256) bytes(8) else null })
+        val repo = ThumbnailRepository(
+            cache = cache,
+            primary = primary,
+            imagePreview = ImagePreviewPipeline(extractor = image, format = ThumbnailImageFormat.WEBP),
+        )
+        val photo = RemoteEntry(name = "photo.jpg", path = "/pics/photo.jpg", size = 2_000L, mtime = 3_000L)
+        val backend = FakeBackend()
+
+        assertArrayEquals(bytes(8), repo.thumbnail(photo, backend)!!)
+        assertEquals("图片不该走抽帧分支", 0, primary.calls.get())
+        assertEquals(1, image.calls.get())
+
+        // 二次请求：命中两级缓存，远端与提取器都不再被调用（R5「二次进入秒显」）
+        assertArrayEquals(bytes(8), repo.thumbnail(photo, backend)!!)
+        assertEquals(1, image.calls.get())
+        assertEquals(1, backend.openCount.get())
+
+        val key = repo.keyFor(photo, backend)
+        assertEquals(ThumbnailVariant.IMAGE_PREVIEW, key.variant)
+        assertTrue(key.relativePath.startsWith("image/"))
+        assertTrue(cache.fileFor(key).isFile)
+    }
+
+    @Test
+    fun `图片缩略图扩展名跟随实际编码格式`() = runTest {
+        val cache = newCache()
+        val repo = ThumbnailRepository(
+            cache = cache,
+            primary = FakeExtractor(),
+            imagePreview = ImagePreviewPipeline(
+                extractor = FakeExtractor(responder = { _, _ -> bytes(2) }),
+                format = ThumbnailImageFormat.JPEG,
+            ),
+        )
+        val photo = RemoteEntry(name = "photo.png", path = "/pics/photo.png", size = 2_000L, mtime = 3_000L)
+        val backend = FakeBackend()
+        val key = repo.keyFor(photo, backend)
+
+        // 源图是 PNG，但产出的是 JPEG 字节：扩展名跟**内容格式**走，而不是跟源文件后缀
+        assertEquals("jpg", key.extension)
+        assertTrue("PNG 源图 + JPEG 输出：缓存名必须跟内容走", key.relativePath.endsWith(".jpg"))
+        assertArrayEquals(bytes(2), repo.thumbnail(photo, backend)!!)
+        assertTrue(cache.fileFor(key).isFile)
+        assertTrue(cache.fileFor(key).name.endsWith(".jpg"))
+    }
+
+    @Test
+    fun `未接线图片流水线时退回抽帧分支`() = runTest {
+        val primary = FakeExtractor(responder = { _, _ -> bytes(4) })
+        primary.durationHint = 10_000L
+        val repo = repository(primary)
+        val photo = RemoteEntry(name = "photo.jpg", path = "/pics/photo.jpg", size = 2_000L, mtime = 3_000L)
+
+        assertArrayEquals(bytes(4), repo.thumbnail(photo, FakeBackend())!!)
+        assertEquals(1, primary.calls.get())
+    }
 }
