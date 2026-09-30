@@ -8,14 +8,18 @@ import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.PlayerEngine
 import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
+import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 
 /**
- * 视频播放页的持久化偏好（R9 内核 / R10 解码模式）。
+ * 视频播放页的持久化偏好（R9 内核 / R10 解码模式 / R14 字幕）。
  *
- * 只两件事：**上次用的是哪个内核**（下次进页面直接用它）与**解码档位**（默认 AUTO_HW = 硬解优先）。
- * 接口留给 :app 用 DataStore 实现（本模块不碰 DataStore，也不碰 Context）。
+ * 三件事：**上次用的是哪个内核**（下次进页面直接用它）、**解码档位**（默认 AUTO_HW = 硬解优先）、
+ * **字幕设置**（R14：开关 / 样式 / 时间轴微调——微调完写回，下次进来仍是用户调好的样子）。
+ * 接口留给 :app 用 DataStore 实现（本模块不碰 DataStore，也不碰 Context）；
+ * R14 的字幕设置写进**同一个偏好文件**，只做加法，老键位不受影响。
  *
- * 线程约定：两个 [StateFlow] 是热流，可在任意线程读；两个写方法是挂起函数，内部自己切 IO。
+ * 线程约定：[StateFlow] 是热流，可在任意线程读（ViewModel 进页面时直接读 .value 初始化状态）；
+ * 写方法都是挂起函数，内部自己切 IO。
  */
 interface VideoPlayerPreferences {
 
@@ -30,6 +34,24 @@ interface VideoPlayerPreferences {
 
     /** 记住解码档位（用户改档位时写，R10 要求持久化）。 */
     suspend fun setDecoderMode(mode: DecoderMode)
+
+    /** 字幕总开关（R14）；默认关。 */
+    val subtitleEnabled: StateFlow<Boolean>
+
+    /** 字幕显示样式（R14：字号 / 颜色 / 描边 / 底部边距 / 加粗 / 斜体）。 */
+    val subtitleStyle: StateFlow<SubtitleStyle>
+
+    /** 字幕时间轴微调（R14），毫秒；正数 = 字幕延后，默认 0。 */
+    val subtitleOffsetMs: StateFlow<Long>
+
+    /** 记住字幕开关（R14）。 */
+    suspend fun setSubtitleEnabled(enabled: Boolean)
+
+    /** 记住字幕样式（R14：字号/颜色/描边/边距等改动都会写一次）。 */
+    suspend fun setSubtitleStyle(style: SubtitleStyle)
+
+    /** 记住字幕时间轴微调（R14：±0.5 s 步进的结果要能跨会话保留）。 */
+    suspend fun setSubtitleOffsetMs(offsetMs: Long)
 }
 
 /**
@@ -71,8 +93,15 @@ interface VideoPlayerEnvironment {
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */
     val progress: PlaybackProgressStore
 
-    /** 内核与解码档位的持久化（R9/R10）。 */
+    /** 内核与解码档位的持久化（R9/R10）＋ 字幕设置（R14）。 */
     val preferences: VideoPlayerPreferences
+
+    /**
+     * 字幕能力（R14）：:app 用 :media:subtitle 装配（定位器 / 解析器 / 写回 + 本地兜底）。
+     *
+     * 本模块只发命令：列同目录、读解析、写回；远端与本地由同一个 StorageBackend 承担。
+     */
+    val subtitles: SubtitleHost
 
     /**
      * 列出 [path] 所在目录里的**视频与音频**（R1 上下集队列）。

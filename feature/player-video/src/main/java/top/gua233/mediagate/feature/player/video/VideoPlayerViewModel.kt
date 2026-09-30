@@ -25,6 +25,12 @@ import io.github.gua123.mediagate.media.engine.MediaSourceRef
 import io.github.gua123.mediagate.media.engine.PlayerEngine
 import io.github.gua123.mediagate.media.engine.SwitchReason
 import io.github.gua123.mediagate.media.playback.PlaybackProgress
+import io.github.gua123.mediagate.media.subtitle.SubtitleCandidate
+import io.github.gua123.mediagate.media.subtitle.SubtitleCue
+import io.github.gua123.mediagate.media.subtitle.SubtitleFormat
+import io.github.gua123.mediagate.media.subtitle.SubtitleSource
+import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
+import io.github.gua123.mediagate.media.subtitle.SubtitleTimeline
 
 /** 日志 TAG。 */
 private const val TAG = "player-video"
@@ -42,7 +48,11 @@ private const val TAG = "player-video"
  * - **降级**（plan 4.6）：内核报 [EngineState.Error] 时给出「一键切 LibVLC 续播」
  *   （[fallbackFromFailure]，判定与 PlayerEngineSwitcher 同一份纯逻辑，位置用 UI 观测值兜底）；
  * - **断点续播**（R18）：进入时读一次、播放中每 5 秒写一次、暂停补写一次、[onCleared] 再写一次；
- * - **拖拽**（R4）：拖拽中不被进度回调覆盖（[VideoPlayerEvent.SeekChanged]），松手才 seek 内核。
+ * - **拖拽**（R4）：拖拽中不被进度回调覆盖（[VideoPlayerEvent.SeekChanged]），松手才 seek 内核；
+ * - **字幕**（R14，单轨）：自动匹配同目录候选（[SubtitleLocator] 的优先级由 [SubtitleHost] 提供），
+ *   用户可在面板里换轨/关开/调样式/±0.5 秒微调；**渲染走 Compose 覆盖层**（[subtitleCue]），
+ *   不交给引擎——原因见 [VideoPlayerScreen] 的字幕说明（Media3 没有字幕延迟 API，
+ *   LibVLC 也没有可用的样式接口，覆盖层是唯一能让两个内核表现一致、且可纯函数单测的做法）。
  *
  * 线程约定：所有内核调用都发生在 viewModelScope（主线程）上；读偏好、列目录、读写断点走 [io]。
  *
@@ -88,11 +98,30 @@ class VideoPlayerViewModel(
     private var switchJob: Job? = null
     private var blackoutJob: Job? = null
     private var resumeJob: Job? = null
+    private var subtitleJob: Job? = null
+    private var discoverJob: Job? = null
+    private var subtitleTickJob: Job? = null
+    private var writeBackJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
     private var endedSaved: Boolean = false
 
+    /** 平移结果的缓存键（cue 列表 + 偏移），避免 100 ms 一次的字幕刷新反复做 O(n) 平移。 */
+    private var shiftedKey: Pair<List<SubtitleCue>, Long>? = null
+    private var shiftedValue: List<SubtitleCue> = emptyList()
+
+    private val _subtitleCue = MutableStateFlow<SubtitleCue?>(null)
+
+    /**
+     * 覆盖层当前要显示的 cue（R14）。
+     *
+     * 单独一条热流而不是塞进 [VideoPlayerUiState]：字幕要按 ~100 ms 的精度跟随播放位置，
+     * 而页面状态（位置/时长）是 500 ms 采样一次；两者放一起会把整份状态刷得太频繁。
+     */
+    val subtitleCue: StateFlow<SubtitleCue?> = _subtitleCue.asStateFlow()
+
     init {
+        applyStoredSubtitleSettings()
         load(initialPath)
     }
 
@@ -230,6 +259,301 @@ class VideoPlayerViewModel(
         sampleNow()
     }
 
+    // ------------------------------------------------------------------ 字幕（R14，单轨）
+
+    /**
+     * 用户点开字幕面板（R14）：按需重新匹配同目录候选。
+     *
+     * 面板是界面本地状态（不进 [VideoPlayerUiState]），这里只负责把候选列表拉回来。
+     */
+    fun openSubtitlePanel() {
+        refreshSubtitleCandidates()
+    }
+
+    /**
+     * 匹配同目录字幕候选（R14：同目录同名 → 语言后缀 → 修饰后缀 → 手动可选）。
+     *
+     * 远端字幕走的就是这条路：与视频**同一个 StorageBackend**，能列目录就能匹配到；
+     * 列目录期间界面显示加载中（[VideoPlayerUiState.subtitleLoading] 由后续的加载事件置位）。
+     *
+     * 没有当前轨道时会自动加载优先级最高的候选；否则只刷新候选列表，
+     * 不打断用户已经选好的那一条。
+     */
+    fun refreshSubtitleCandidates() {
+        val path = _state.value.path.ifEmpty { source?.path ?: initialPath }
+        if (path.isEmpty()) return
+        discoverJob?.cancel()
+        // 远端列目录也要给"加载中"（R14）：候选列表出来之前界面不是一片空白
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleDiscoverStarted) }
+        discoverJob = viewModelScope.launch {
+            val candidates = try {
+                withContext(io) { environment.subtitles.discover(path) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "匹配同目录字幕失败：$path", t)
+                _state.update {
+                    it.reduce(VideoPlayerEvent.SubtitleNoticeRaised(SubtitleNoticeKind.LOAD_FAILED, t.message))
+                }
+                return@launch
+            }
+            _state.update { it.reduce(VideoPlayerEvent.SubtitleDiscovered(candidates)) }
+            val auto = candidates.firstOrNull { it.source == SubtitleSource.AUTO }
+            val current = _state.value.subtitlePath
+            when {
+                auto != null && current == null -> loadSubtitle(auto.path, auto.displayName)
+
+                candidates.isEmpty() && current == null -> _state.update {
+                    it.reduce(VideoPlayerEvent.SubtitleNoticeRaised(SubtitleNoticeKind.NO_CANDIDATE, null))
+                }
+            }
+        }
+    }
+
+    /** 选一条候选（R14：**一次只加载一条轨道**，选了就替换）。 */
+    fun selectSubtitle(candidate: SubtitleCandidate) {
+        loadSubtitle(candidate.path, candidate.displayName)
+    }
+
+    /** 手动指定一个字幕路径（不在候选列表里的也行，R14「手动选择文件」）。 */
+    fun selectSubtitle(path: String) {
+        if (path.isBlank()) return
+        loadSubtitle(path, VideoPlayerMath.fileNameOf(path))
+    }
+
+    /**
+     * 字幕总开关（R14）。
+     *
+     * 关掉只是不渲染（轨道与 cue 留着，再打开立刻可用）；打开时若还没有轨道，
+     * 顺手做一次自动匹配——用户不用再去面板里点一次。
+     */
+    fun setSubtitleEnabled(enabled: Boolean) {
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleEnabledChanged(enabled)) }
+        persistSubtitlePreference { environment.preferences.setSubtitleEnabled(enabled) }
+        if (enabled && _state.value.subtitleCues.isEmpty()) refreshSubtitleCandidates()
+        refreshSubtitleCue()
+    }
+
+    /** 开关轮转（面板上的开关按钮用）。 */
+    fun toggleSubtitle() {
+        setSubtitleEnabled(!_state.value.subtitleEnabled)
+    }
+
+    /**
+     * 时间轴微调（R14：±0.5 秒步进；长按连续微调就是连续调用本方法）。
+     *
+     * @param steps 步数；正数 = 字幕延后（+0.5 s/步）。
+     */
+    fun nudgeSubtitle(steps: Int = 1) {
+        setSubtitleOffset(SubtitleTimeline.step(_state.value.subtitleOffsetMs, steps))
+    }
+
+    /** 直接设一个毫秒偏移（R14「任意毫秒偏移」；越界会被钳住）。 */
+    fun setSubtitleOffset(offsetMs: Long) {
+        val clamped = SubtitleTimeline.clampOffset(offsetMs)
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleOffsetChanged(clamped)) }
+        persistSubtitlePreference { environment.preferences.setSubtitleOffsetMs(clamped) }
+        refreshSubtitleCue()
+    }
+
+    /** 整体换一份样式（R14：字号 / 颜色 / 描边 / 底部边距 / 加粗斜体），越界值会被钳住并持久化。 */
+    fun setSubtitleStyle(style: SubtitleStyle) {
+        val clamped = style.clamped()
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleStyleChanged(clamped)) }
+        persistSubtitlePreference { environment.preferences.setSubtitleStyle(clamped) }
+    }
+
+    /** 字号（sp，R14）。 */
+    fun setSubtitleFontSize(sp: Float) = setSubtitleStyle(_state.value.subtitleStyle.copy(fontSizeSp = sp))
+
+    /** 文字颜色（ARGB，R14）。 */
+    fun setSubtitleTextColor(argb: Int) = setSubtitleStyle(_state.value.subtitleStyle.copy(textColorArgb = argb))
+
+    /** 描边宽度（dp，R14；0 = 不描边）。 */
+    fun setSubtitleOutlineWidth(dp: Float) = setSubtitleStyle(_state.value.subtitleStyle.copy(outlineWidthDp = dp))
+
+    /** 描边颜色（ARGB，R14）。 */
+    fun setSubtitleOutlineColor(argb: Int) = setSubtitleStyle(_state.value.subtitleStyle.copy(outlineColorArgb = argb))
+
+    /** 底部边距（dp，R14）。 */
+    fun setSubtitleBottomMargin(dp: Float) = setSubtitleStyle(_state.value.subtitleStyle.copy(bottomMarginDp = dp))
+
+    /** 加粗开关（R14）。 */
+    fun toggleSubtitleBold() = setSubtitleStyle(_state.value.subtitleStyle.copy(bold = !_state.value.subtitleStyle.bold))
+
+    /** 斜体开关（R14）。 */
+    fun toggleSubtitleItalic() =
+        setSubtitleStyle(_state.value.subtitleStyle.copy(italic = !_state.value.subtitleStyle.italic))
+
+    /**
+     * 写回 / 另存字幕（R14）。
+     *
+     * 把**当前微调后的时间轴**写进视频同目录的同名文件（另存 VTT 同理）：写回成功后偏移归零，
+     * 因为偏移已经"烙"进文件里了。无写权限时 [SubtitleHost] 会落到 App 私有目录并返回
+     * [SubtitleWriteResult.LocalFallback]，界面提示「已保存到本地，可分享/稍后重试」——绝不静默丢弃。
+     *
+     * @param format 目标格式；null = 原格式（ASS/SSA 自动另存为 SRT）。
+     */
+    fun writeBackSubtitle(format: SubtitleFormat? = null) {
+        val current = _state.value
+        val path = current.subtitlePath ?: return
+        if (current.subtitleCues.isEmpty()) return
+        val target = format ?: current.subtitleWriteFormat
+        val cues = SubtitleTimeline.shift(current.subtitleCues, current.subtitleOffsetMs)
+        val videoPath = current.path
+        writeBackJob?.cancel()
+        writeBackJob = viewModelScope.launch {
+            val result = try {
+                withContext(io) { environment.subtitles.writeBack(videoPath, target, cues) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "写回字幕失败：$path", t)
+                SubtitleWriteResult.Failed(t.message)
+            }
+            when (result) {
+                is SubtitleWriteResult.Written -> {
+                    _state.update { state ->
+                        state
+                            .reduce(
+                                VideoPlayerEvent.SubtitleLoaded(
+                                    path = path,
+                                    label = state.subtitleLabel ?: VideoPlayerMath.fileNameOf(path),
+                                    cues = cues,
+                                ),
+                            )
+                            .reduce(VideoPlayerEvent.SubtitleOffsetChanged(0L))
+                            .reduce(VideoPlayerEvent.SubtitleNoticeRaised(SubtitleNoticeKind.WRITE_OK, result.path))
+                    }
+                    persistSubtitlePreference { environment.preferences.setSubtitleOffsetMs(0L) }
+                }
+
+                is SubtitleWriteResult.LocalFallback -> _state.update {
+                    it.reduce(VideoPlayerEvent.SubtitleNoticeRaised(SubtitleNoticeKind.WRITE_LOCAL, result.path))
+                }
+
+                is SubtitleWriteResult.Failed -> _state.update {
+                    it.reduce(VideoPlayerEvent.SubtitleNoticeRaised(SubtitleNoticeKind.WRITE_FAILED, result.reason))
+                }
+            }
+            refreshSubtitleCue()
+        }
+    }
+
+    /** 清掉字幕提示（用户看过之后）。 */
+    fun clearSubtitleNotice() {
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleNoticeCleared) }
+    }
+
+    /** 卸载当前字幕轨（回到「无字幕」；候选列表保留，用户可以再选）。 */
+    fun clearSubtitle() {
+        subtitleJob?.cancel()
+        subtitleTickJob?.cancel()
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleCleared) }
+        refreshSubtitleCue()
+    }
+
+    /**
+     * 加载一条字幕（R14 单轨）。
+     *
+     * 远端字幕在这里**显示加载中**（[VideoPlayerUiState.subtitleLoading]）：整个读取都走
+     * [SubtitleHost.load]（内部是 StorageBackend 的流式读取 + 解析），失败给中文提示。
+     */
+    private fun loadSubtitle(path: String, label: String?) {
+        val name = label ?: VideoPlayerMath.fileNameOf(path)
+        subtitleJob?.cancel()
+        _state.update { it.reduce(VideoPlayerEvent.SubtitleLoadStarted(path, name)) }
+        subtitleJob = viewModelScope.launch {
+            val result = try {
+                withContext(io) { environment.subtitles.load(path) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "加载字幕失败：$path", t)
+                _state.update { it.reduce(VideoPlayerEvent.SubtitleLoadFailed(t.message)) }
+                refreshSubtitleCue()
+                return@launch
+            }
+            if (result.cues.isEmpty()) {
+                _state.update { it.reduce(VideoPlayerEvent.SubtitleLoadFailed(EMPTY_SUBTITLE_MESSAGE)) }
+                refreshSubtitleCue()
+                return@launch
+            }
+            _state.update {
+                it.reduce(
+                    VideoPlayerEvent.SubtitleLoaded(
+                        path = path,
+                        label = name,
+                        cues = result.cues,
+                        dropped = result.dropped,
+                        truncatedLines = result.truncatedLines,
+                    ),
+                )
+            }
+            withContext(io) { runCatching { environment.preferences.setSubtitleEnabled(true) } }
+            startSubtitleTicker()
+            refreshSubtitleCue()
+        }
+    }
+
+    /** 换媒体后同步字幕（R14）：轨道由 reduce 清掉，这里按开关决定要不要重新自动匹配。 */
+    private fun syncSubtitle() {
+        _subtitleCue.value = null
+        subtitleTickJob?.cancel()
+        if (!_state.value.subtitleEnabled) return
+        refreshSubtitleCandidates()
+    }
+
+    /** 进页面时把持久化的字幕设置读进状态（开关 / 样式 / 时间轴微调，R14）。 */
+    private fun applyStoredSubtitleSettings() {
+        val preferences = environment.preferences
+        _state.update {
+            it.reduce(VideoPlayerEvent.SubtitleEnabledChanged(preferences.subtitleEnabled.value))
+                .reduce(VideoPlayerEvent.SubtitleOffsetChanged(preferences.subtitleOffsetMs.value))
+                .reduce(VideoPlayerEvent.SubtitleStyleChanged(preferences.subtitleStyle.value))
+        }
+    }
+
+    /** 字幕跟随播放位置的定时刷新（~100 ms）；暂停时不刷新（位置不动，刷新没意义）。 */
+    private fun startSubtitleTicker() {
+        if (subtitleTickJob?.isActive == true) return
+        subtitleTickJob = viewModelScope.launch {
+            while (isActive) {
+                delay(SUBTITLE_TICK_MS)
+                if (engine?.isPlaying == true) refreshSubtitleCue()
+            }
+        }
+    }
+
+    /** 重算覆盖层要显示的 cue（R14：先按偏移平移，再取命中项；平移结果有缓存）。 */
+    private fun refreshSubtitleCue() {
+        val current = _state.value
+        if (!current.subtitleEnabled || current.subtitleCues.isEmpty()) {
+            _subtitleCue.value = null
+            return
+        }
+        val position = engine?.positionMs() ?: current.positionMs
+        _subtitleCue.value = SubtitleTimeline.activeCue(shiftedCues(current), position)
+    }
+
+    /** 平移后的 cue 列表（缓存：字幕刷新很频繁，不能每次都重建列表）。 */
+    private fun shiftedCues(current: VideoPlayerUiState): List<SubtitleCue> {
+        val key = current.subtitleCues to current.subtitleOffsetMs
+        if (shiftedKey != key) {
+            shiftedKey = key
+            shiftedValue = SubtitleTimeline.shift(key.first, key.second)
+        }
+        return shiftedValue
+    }
+
+    /** 写字幕偏好（R14）：失败只记日志，绝不影响播放。 */
+    private fun persistSubtitlePreference(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            runCatching { withContext(io) { block() } }
+                .onFailure { AppLog.w(TAG, "写入字幕偏好失败", it) }
+        }
+    }
+
     override fun onCleared() {
         val ref = source
         val position = _state.value.positionMs
@@ -240,6 +564,10 @@ class VideoPlayerViewModel(
         switchJob?.cancel()
         blackoutJob?.cancel()
         resumeJob?.cancel()
+        subtitleJob?.cancel()
+        discoverJob?.cancel()
+        subtitleTickJob?.cancel()
+        writeBackJob?.cancel()
         releaseEngine()
         if (ref == null || position <= 0L) return
         // 播完后退出时记成总时长：下次进入按「已看完」从头开始（与 EngineSwitchPlanner 的位置口径一致）
@@ -255,6 +583,8 @@ class VideoPlayerViewModel(
     private fun load(path: String) {
         loadJob?.cancel()
         _state.update { it.reduce(VideoPlayerEvent.LoadStarted(path)) }
+        // 换媒体先把覆盖层上的旧字幕收掉（轨道已在 reduce 里清空，这里同步热流）
+        refreshSubtitleCue()
         loadJob = viewModelScope.launch {
             proxyAvailable = withContext(io) { runCatching { environment.proxyBaseUrl }.getOrNull() != null }
             val backendId = environment.backend.value?.id
@@ -317,6 +647,8 @@ class VideoPlayerViewModel(
         endedSaved = false
         startTicker()
         applyResume(ref, created)
+        // R14：开着字幕就自动匹配同目录候选（本地与远端同一套逻辑）
+        syncSubtitle()
     }
 
     /** 读断点并 seek（R18「进入时读一次，有则 seek 并提示」）。 */
@@ -351,6 +683,7 @@ class VideoPlayerViewModel(
         loadJob = viewModelScope.launch {
             saveProgress(current.positionMs)
             _state.update { it.reduce(VideoPlayerEvent.EpisodeOpened(current.siblingPaths, index)) }
+            refreshSubtitleCue()
             val running = engine
             if (running == null) {
                 // 内核已经不在了（切换失败/已释放）：按偏好重新建一个
@@ -369,6 +702,8 @@ class VideoPlayerViewModel(
             endedSaved = false
             startTicker()
             applyResume(ref, running)
+            // R14：换集后重新匹配这一集的字幕（上一集的轨道已在 EpisodeOpened 里清掉）
+            syncSubtitle()
         }
     }
 
@@ -487,6 +822,8 @@ class VideoPlayerViewModel(
             ended = engineState is EngineState.Ended,
         )
         _state.update { it.reduce(tick) }
+        // 字幕覆盖层跟着采样点走（±0.5 s 微调在 refreshSubtitleCue 里应用）
+        refreshSubtitleCue()
         return tick
     }
 
@@ -559,6 +896,9 @@ class VideoPlayerViewModel(
         /** 进度采样间隔：500 ms 足够跟手，也不会把主线程吵醒得太频繁。 */
         const val TICK_MS = 500L
 
+        /** 字幕刷新间隔（R14）：比进度采样细一档，字幕进出场才不会明显滞后。 */
+        const val SUBTITLE_TICK_MS = 100L
+
         /** 播放中写断点的间隔（R18 要求每 5 秒一次）。 */
         const val PROGRESS_SAVE_INTERVAL_MS = 5_000L
 
@@ -570,5 +910,8 @@ class VideoPlayerViewModel(
 
         /** 尚未选择根目录时的中文说明（R12）。 */
         const val NO_ROOT_MESSAGE = "尚未选择媒体根目录"
+
+        /** 字幕文件读出来了却没有可用条目时的中文提示（R14：不静默丢弃）。 */
+        const val EMPTY_SUBTITLE_MESSAGE = "字幕文件里没有可显示的条目"
     }
 }

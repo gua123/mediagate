@@ -32,4 +32,40 @@
     <string name="video_error_auth">认证失败</string>
     <string name="video_error_unknown">播放失败，请重试</string>
     <string name="video_error_detail">错误详情：%1$s</string>
+
+    <!-- 字幕（R14：外挂字幕 + 样式 + 时间轴微调 + 写回；单轨，不做双字幕） -->
+    <string name="video_subtitle">字幕：%1$s</string>
+    <string name="video_subtitle_open">打开字幕面板</string>
+    <string name="video_subtitle_title">字幕</string>
+    <string name="video_subtitle_on">开</string>
+    <string name="video_subtitle_off">关</string>
+    <string name="video_subtitle_close">关闭</string>
+    <string name="video_subtitle_status_off">关</string>
+    <string name="video_subtitle_status_loading">加载中…</string>
+    <string name="video_subtitle_status_empty">无字幕</string>
+    <string name="video_subtitle_loading">正在加载字幕…</string>
+    <string name="video_subtitle_candidates">字幕轨道（一次只显示一条）</string>
+    <string name="video_subtitle_no_candidate">同目录没有找到字幕文件</string>
+    <string name="video_subtitle_source_auto">自动匹配 · %1$s</string>
+    <string name="video_subtitle_source_manual">手动选择 · %1$s</string>
+    <string name="video_subtitle_style">样式</string>
+    <string name="video_subtitle_font_size">字号</string>
+    <string name="video_subtitle_color">颜色</string>
+    <string name="video_subtitle_outline">描边</string>
+    <string name="video_subtitle_outline_color">描边色</string>
+    <string name="video_subtitle_bottom_margin">底部边距</string>
+    <string name="video_subtitle_bold">加粗</string>
+    <string name="video_subtitle_italic">斜体</string>
+    <string name="video_subtitle_offset">时间轴</string>
+    <string name="video_subtitle_offset_value">延迟 %1$s 秒</string>
+    <string name="video_subtitle_write_back">写回 %1$s</string>
+    <string name="video_subtitle_save_as_vtt">另存为 VTT</string>
+    <string name="video_subtitle_notice_dismiss">知道了</string>
+    <string name="video_subtitle_notice_load_failed">字幕加载失败：%1$s</string>
+    <string name="video_subtitle_notice_load_failed_brief">字幕加载失败，可在下面手动选一条</string>
+    <string name="video_subtitle_notice_no_candidate">同目录没有找到字幕文件</string>
+    <string name="video_subtitle_notice_damaged">这份字幕有 %1$s 处坏数据已跳过</string>
+    <string name="video_subtitle_notice_write_ok">已写回：%1$s</string>
+    <string name="video_subtitle_notice_write_local">已保存到本地，可分享/稍后重试：%1$s</string>
+    <string name="video_subtitle_notice_write_failed">字幕写回失败：%1$s</string>
 </resources>
