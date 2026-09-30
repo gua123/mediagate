@@ -103,13 +103,13 @@
 | 层 | 选型 | 版本 | 说明 |
 | --- | --- | --- | --- |
 | 语言 / UI | Kotlin + Jetpack Compose + Material3 | Kotlin 2.4.20 / Compose BOM 2026.09.00 | 声明式 UI |
-| 构建 | AGP + Gradle + KSP + Version Catalog | AGP 9.4.1 / KSP 2.3.12 | 见第 5 章隔离方案 |
-| 系统 | minSdk 33（Android 13）/ targetSdk 36 | — | 只保澎湃机型 |
+| 构建 | AGP + Gradle + KSP + Version Catalog | AGP 9.4.1 / Gradle 9.8.0 / KSP 2.3.12（Kotlin 由 AGP 9 内置，不再声明 kotlin.android 插件） | 见第 5 章隔离方案 |
+| 系统 | compileSdk 37.2（AGP 9 的 compileSdk + compileSdkMinor）/ targetSdk 36 / minSdk 33（Android 13） | — | 只保澎湃机型；2026 年的 androidx 已强制要求 compileSdk ≥ 37 |
 | 播放内核①（默认） | Media3 ExoPlayer | 1.11.1（exoplayer / ui-compose / session / datasource-okhttp / extractor / exoplayer-hls） | 硬解为主，seek 支持完善 |
 | 播放内核②（兜底） | LibVLC | 3.7.6（3.x 稳定线） | 可强制软解，覆盖畸形 TS / 冷门编码 |
-| 软件音频解码 | Media3 FFmpeg 解码扩展（可选叠加） | 随 Media3 1.11.1 | 补设备缺失的音频解码器 |
-| FFmpeg 原生库 | **FFmpeg 精简包（简版）** | 实施时锁定：社区维护分支（ffmpegkit-maintained，支持 16KB 页）或自建 NDK 精简包 | 抽帧兜底、时间戳重建、ASR 音频解码；不够用再换全版 |
-| 语音识别 | **whisper.cpp（ggml 量化模型，CPU 多线程）** | 实施时锁定最新稳定 tag | 带段时间戳，适合生成 SRT；模型不内置 APK |
+| 软件音频解码 | 不走 Media3 FFmpeg 扩展（该扩展不发布 Maven 包，需自建 NDK），软解统一交给 LibVLC | — | 少一个 native 依赖，软件解码路径只留一条 |
+| FFmpeg 原生库 | **FFmpeg 简版**：dev.ffmpegkit-maintained:ffmpeg-kit-min | **8.1.9**（原 com.arthenica 线已下架；社区分支支持 16 KB 页） | 抽帧兜底、时间戳重建、ASR 音频解码；不够用再换全版 |
+| 语音识别 | **whisper.cpp（ggml 量化模型，CPU 多线程）** | **v1.9.4 自建**（NDK r30 / CMake 4.1.2） | Maven 上只有桌面 native，Android 必须自编；带段时间戳，适合生成 SRT；模型不内置 APK |
 | 图片 | Coil 3 | 3.6.3 | 自定义 Fetcher 走随机访问源 |
 | WebDAV | OkHttp + 自研 PROPFIND/Range | OkHttp 5.5.0 | 约 600 行，可控 |
 | SFTP | JSch（mwiede 分支） | com.github.mwiede:jsch 2.28.7 | Android 上成熟 |
@@ -118,6 +118,19 @@
 | DI / 异步 / 序列化 | Hilt / Coroutines / kotlinx-serialization | 实施时锁最新稳定 / 1.11.0 / 1.11.0 | — |
 | 加密 | Android Keystore + AES-GCM | — | 凭据落库只存密文 |
 | 分页 / 导航 | Paging 3 / navigation-compose | 3.5.1 / 2.10.2 | — |
+
+### 2.1 M0 实测落定（2026-09-30）
+
+工程骨架已在 /root/project/mediagate 落地，**`./gradlew :app:assembleDebug` 构建通过**；下面每一条都是实测结果，不再是预估：
+
+- **Gradle 9.8.0**（wrapper 固定）。官方发行包在本机只有 ~20 KB/s，首次改用华为镜像取回后预置进项目私有 `GRADLE_USER_HOME/wrapper/dists`，此后 `./gradlew` 不再联网下载发行包。
+- **AGP 9 内置 Kotlin**：AGP 9 起不允许再声明 `org.jetbrains.kotlin.android`（会直接构建失败），Kotlin 编译由 AGP 自带；Compose 仍用 `org.jetbrains.kotlin.plugin.compose`，KSP 2.3.12 正常跑 Room 处理器（`core:database` 已建 connection/address 两张表验证）。
+- **compileSdk 37.2**（AGP 9 的 `compileSdk` + `compileSdkMinor`）：2026-09 的 androidx（navigation 2.10.2 / coil 3.6.3 / room 2.8.5 …）AAR 元数据要求 `compileSdk ≥ 37`，用 36 会被 `checkDebugAarMetadata` 直接拦下。targetSdk 仍 36。
+- **FFmpeg 简版 = `dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.9`**：原 `com.arthenica` 线已归档并从 Maven Central 下架；该社区分支同名 API、支持 16 KB 页。
+- **whisper.cpp v1.9.4 自建**：Maven 上的 `io.github.givimad:whisper-jni` 只含桌面 native，Android 只能自己编。用项目私有 NDK r30（30.0.16248370）+ CMake 4.1.2 编 `arm64-v8a`，产出 `libwhisper.so / libggml.so / libggml-base.so / libggml-cpu.so`；**四个库 LOAD 段对齐均为 0x4000（16 KB）**，由 `scripts/check-page-align.sh` 校验通过。重新生成：`bash scripts/build-whisper-android.sh`（产物不进 git）。
+- **依赖源加速**：`settings.gradle.kts` 阿里云镜像优先、官方源兜底（本机实测快 10~20 倍）。
+- **签名**：`keystore/mediagate.jks`（PKCS12 / RSA4096 / 30 年）+ `keystore.properties`，均在 .gitignore 内；`app/build.gradle.kts` 自动读取，文件缺失时 release 退化为未签名，不影响 debug 构建。
+- **Android SDK 整体改为项目私有**：见第 5 章（公共 `/opt/android-sdk` 只有 android-36，满足不了 compileSdk 37，又不该去改公共资源）。
 
 ---
 
@@ -289,14 +302,16 @@
     /root/project/mediagate/
     ├─ .toolchain/
     │  ├─ jdk-21/          # Temurin 解压版，项目私有（不写系统 PATH、不装系统包）
+    │  ├─ gradle-9.8.0/    # Gradle 发行版本体（wrapper 已预置，不联网取发行包）
     │  ├─ gradle-home/     # GRADLE_USER_HOME：依赖缓存、守护进程、配置，项目私有
+    │  ├─ android-sdk/     # 项目私有 Android SDK：platform 37.2 / build-tools 37 / platform-tools / NDK r30 / CMake 4.1.2
     │  └─ android-user/    # ANDROID_USER_HOME：许可、缓存，项目私有
     ├─ local.properties    # sdk.dir=...（本机文件，不入 git）
     └─ scripts/env.sh      # source 一下即进入本项目环境
 
     # scripts/env.sh
     export JAVA_HOME=/root/project/mediagate/.toolchain/jdk-21
-    export ANDROID_HOME=/opt/android-sdk          # 公共只读，按 API 版本分目录，天然不冲突
+    export ANDROID_HOME=/root/project/mediagate/.toolchain/android-sdk   # 项目私有（含 platform 37.2 / build-tools / NDK / CMake）
     export ANDROID_USER_HOME=/root/project/mediagate/.toolchain/android-user
     export GRADLE_USER_HOME=/root/project/mediagate/.toolchain/gradle-home
     export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
@@ -304,7 +319,7 @@
 - 所有构建命令统一 `source scripts/env.sh` 之后再跑；**系统层面不安装任何 JDK/SDK**，因此对别的项目零影响。
 - 同一台机可并存多套 JDK（17/21/25…），每个项目在自己的 `GRADLE_USER_HOME` 下有独立依赖缓存与 Gradle 守护进程，构建不会互相踩。
 - 也可用 Gradle 官方的 **Java Toolchain**（`java.toolchain.languageVersion = 21` + foojay-resolver 插件）让 Gradle 自动获取所需 JDK，配合 `org.gradle.java.home` 指定守护进程 JVM——与方案 A 叠加使用更省心。
-- Android SDK 若也要完全私有，把 `ANDROID_HOME` 改成 `/root/project/mediagate/.toolchain/android-sdk`（代价 +2~3 GB，可选）。
+- **Android SDK 已私有化（2026-09-30 实做）**：`ANDROID_HOME=/root/project/mediagate/.toolchain/android-sdk`，内含 platform 37.2、build-tools 37.0.0、platform-tools 37.0.1、NDK r30（30.0.16248370）、CMake 4.1.2，约 2.7 GB，随 `.toolchain/` 一起不进 git。公共 `/opt/android-sdk` 只作为 sdkmanager 的下载来源，**不再被本项目构建引用**。原因是 2026 年的 androidx 要求 compileSdk ≥ 37，而公共 SDK 只装到 android-36，与其去改公共资源不如整体私有；代价是多占约 2.7 GB。
 - 内存注意：本机 9 GB，Gradle 守护进程限 `-Xmx3g`，多项目同时构建时错峰。
 
 **方案 B：容器完全隔离**（Podman/Docker）：镜像 pin 死 JDK21 + SDK36 + Gradle，项目目录挂载进去构建；真机调试需 `--network host -v /dev/bus/usb:/dev/bus/usb`。优点是可复现、可迁移，缺点是首次拉镜像慢、adb 稍绕。作为 `scripts/` 里的可选项提供。
@@ -420,7 +435,7 @@
 
 | 阶段 | 内容 | 人日 |
 | --- | --- | --- |
-| M0 | 环境按项目隔离（env.sh + 项目私有 JDK/Gradle + 公共 SDK）、工程骨架、git、签名、FFmpeg/VLC/whisper 依赖可用性验证 | 3–4 |
+| M0 ✅ 2026-09-30 完成 | 环境按项目隔离（env.sh + 项目私有 JDK / Gradle / Android SDK / NDK）、27 模块工程骨架 + Version Catalog、git、签名、FFmpeg/VLC/whisper 依赖可用性验证（均已实测：debug APK 构建通过、whisper 四个 .so 16 KB 对齐） | 3–4 |
 | M1 | 本地闭环（SAF + 全盘访问）、缩略图、图片查看、音频后台播放 | 6–8 |
 | M2 | **播放内核框架**：PlayerEngine 抽象 + Media3 实现 + 回环代理 + LibVLC 实现 + 硬/软解切换 | 6–8 |
 | M3 | WebDAV 后端 + DataSource + Range seek + 远端缩略图 | 5–7 |
@@ -437,7 +452,7 @@
 
 v2 的 6 条待确认已全部落定（见第 0 章「用户第二轮答复」）：ASR 默认 small、模型 App 内下载、字幕单文件（默认 SRT，可另存 VTT / 纯文本，单轨不双字幕）、支持软解但默认硬解、FTP 本机自测、密码不入 git；另加 R18 后台播放、R19 批量字幕生成任务中心。
 
-**现在只剩一件事：你说一声「开工」**——我就按本方案执行：建 /root/project/mediagate → 按第 5 章做环境隔离（项目私有 JDK21 + GRADLE_USER_HOME + 公共只读 SDK）→ git 初始化（.gitignore 首行 .dsh-meow/）→ 交接三样（记忆 / 任务 / docs/plan.md）→ 立即切换过去，从 M0 开始实现。
+**状态（2026-09-30）：已开工，M0 完成，现处于 M1。** 本文档即本项目的计划权威（方案工作区的 mediagate.md 已冻结为只读存档），后续需求变更与实施都改这里。
 
 > **一处口径待你点头**（我按此理解写进了方案）：「字幕全要，但只单个字幕文件」＝ 外挂字幕、样式、延迟微调、音转字幕功能都做，但每次只落**一个**字幕文件（默认 SRT），需要别的格式时另存，不并行生成多份；同时不做双字幕叠加。如与你的意思不符，说一声我改。
 
@@ -445,4 +460,4 @@ v2 的 6 条待确认已全部落定（见第 0 章「用户第二轮答复」�
 
 ## 13. 交接与后续
 
-你确认 v3（即说「开工」）后：在 /root/project/mediagate 建实施工作空间并初始化（第 5 章的环境隔离方案 + git + 签名），随后按约定交接：① 迁记忆到项目工作空间记忆库；② 迁任务（本方案的里程碑与待办）；③ 方案复制到 docs/plan.md；④ 本工作区 mediagate.md 冻结为只读存档；⑤ **立即切换**到项目工作空间继续开发，并告知你后续入口。
+**已完成（2026-09-29～30）**：方案工作区 /root/project/project-plan/mediagate.md 冻结为只读存档；本项目工作空间建立并初始化（第 5 章的环境隔离 + git + 签名）；记忆、任务与本文档均已交接；M0 全部完成（见第 2.1 节与第 11 章）。后续开发一律在本工作区（/root/project/mediagate）进行。

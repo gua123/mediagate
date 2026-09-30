@@ -14,3 +14,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 *.log
+
+# native 产物（用 scripts/build-whisper-android.sh 重建，不进 git）
+/media/asr/src/main/jniLibs/
+
