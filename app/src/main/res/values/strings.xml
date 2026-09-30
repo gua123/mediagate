@@ -17,6 +17,9 @@
     <!-- M1-F：浏览页点击图片以外的文件（播放器尚未接入）时的顶层提示 -->
     <string name="open_unsupported">该类型暂不支持打开，将在后续版本提供</string>
 
+    <!-- M1-G（R18）：音频后台播放 -->
+    <string name="audio_notification_denied">未授予通知权限：后台播放仍可继续，但通知栏与锁屏看不到播放控制</string>
+
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>

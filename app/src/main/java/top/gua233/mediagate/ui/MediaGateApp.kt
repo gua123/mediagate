@@ -1,8 +1,11 @@
 package io.github.gua123.mediagate.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -26,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -48,6 +52,9 @@ import io.github.gua123.mediagate.feature.browser.LocalBrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 import io.github.gua123.mediagate.feature.home.HomeRootUi
 import io.github.gua123.mediagate.feature.home.HomeScreen
+import io.github.gua123.mediagate.feature.player.audio.AudioPlayerRoutes
+import io.github.gua123.mediagate.feature.player.audio.AudioPlayerScreen
+import io.github.gua123.mediagate.feature.player.audio.LocalAudioPlayerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
@@ -89,6 +96,10 @@ private enum class TopLevelDestination(
  * 图片查看器（**M1-F**，R1）：浏览页点图片 → 导航到 [ViewerRoutes]（带相对路径参数），
  * 返回后仍在原目录；查看器路由是全屏页，此时隐藏底部导航栏。
  *
+ * 音频播放（**M1-G**，R1/R18）：浏览页点音频 → 先要通知权限（R18 的通知栏控制需要它），
+ * 再导航到 [AudioPlayerRoutes]；播放本身交给 :media:playback 的 MediaSessionService，
+ * 界面拿到的只有 [io.github.gua123.mediagate.feature.player.audio.AudioPlaybackSnapshot]。
+ *
  * @param container 应用级依赖容器（由 [io.github.gua123.mediagate.MediaGateApplication] 持有）。
  */
 @Composable
@@ -102,8 +113,25 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val unsupportedHint = stringResource(R.string.open_unsupported)
 
-    // 查看器是全屏页（R1）：隐藏底部导航栏，让图片占满整屏
-    val fullScreenDestination = currentDestination?.route == ViewerRoutes.ROUTE
+    // 全屏页（R1）：图片查看器占满整屏；音频播放页是播放场景，同样不给底部导航让位
+    val fullScreenDestination = currentDestination?.route == ViewerRoutes.ROUTE ||
+        currentDestination?.route == AudioPlayerRoutes.ROUTE
+
+    // R18：后台播放的通知栏/锁屏控制需要通知权限；拒绝也照常播放，只提示一句中文
+    val context = LocalContext.current
+    val notificationDeniedHint = stringResource(R.string.audio_notification_denied)
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted: Boolean ->
+        if (!granted) scope.launch { snackbarHostState.showSnackbar(notificationDeniedHint) }
+    }
+
+    /** 首次点音频时申请一次通知权限（已授权则什么都不做）。 */
+    fun ensureNotificationPermission() {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!granted) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     // R12 SAF 模式：系统目录选择器（结果 URI 由容器 takePersistableUriPermission 后落 DataStore）
     val safPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -144,6 +172,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             LocalBrowserEnvironment provides container,
             // M1-F：图片查看器（R1）的宿主能力，同样由 AppContainer 提供
             LocalImageViewerEnvironment provides container,
+            // M1-G：音频后台播放（R1/R18）的宿主能力（MediaController + 进度存储）
+            LocalAudioPlayerEnvironment provides container,
         ) {
             NavHost(
                 navController = navController,
@@ -172,11 +202,17 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                         initialPath = BrowserRoutes.pathOf(entry.arguments?.getString(BrowserRoutes.ARG_PATH)),
                         initialKind = BrowserRoutes.kindOf(entry.arguments?.getString(BrowserRoutes.ARG_KIND)),
                         onOpenEntry = { clicked ->
-                            // R1（M1-F）：图片进查看器；其它类型播放器尚未接入，给一句中文提示
-                            if (MediaKindGuesser.guess(clicked.name) == MediaKind.IMAGE) {
-                                navController.navigate(ViewerRoutes.route(clicked.path))
-                            } else {
-                                scope.launch { snackbarHostState.showSnackbar(unsupportedHint) }
+                            // R1：图片进查看器（M1-F）、音频进音频播放页（M1-G）；
+                            // 其余类型播放器尚未接入，给一句中文提示
+                            when (MediaKindGuesser.guess(clicked.name)) {
+                                MediaKind.IMAGE -> navController.navigate(ViewerRoutes.route(clicked.path))
+
+                                MediaKind.AUDIO -> {
+                                    ensureNotificationPermission()
+                                    navController.navigate(AudioPlayerRoutes.route(clicked.path))
+                                }
+
+                                else -> scope.launch { snackbarHostState.showSnackbar(unsupportedHint) }
                             }
                         },
                         onRequestRootAccess = { safPicker.launch(null) },
@@ -187,6 +223,15 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(route = ViewerRoutes.ROUTE, arguments = ViewerRoutes.arguments) { entry ->
                     ImageViewerScreen(
                         path = ViewerRoutes.pathOf(entry.arguments?.getString(ViewerRoutes.ARG_PATH)),
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+
+                // 音频播放页（M1-G，R1/R18）：队列由播放页按「同目录音频」自己解析，
+                // 路由只带路径；真正的播放器在后台服务里，退到后台/息屏不中断。
+                composable(route = AudioPlayerRoutes.ROUTE, arguments = AudioPlayerRoutes.arguments) { entry ->
+                    AudioPlayerScreen(
+                        path = AudioPlayerRoutes.pathOf(entry.arguments?.getString(AudioPlayerRoutes.ARG_PATH)),
                         onBack = { navController.popBackStack() },
                     )
                 }

@@ -26,6 +26,10 @@ import io.github.gua123.mediagate.data.storage.local.LocalBackends
 import io.github.gua123.mediagate.feature.browser.BrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.BrowserRootState
 import io.github.gua123.mediagate.feature.browser.RootModeKind
+import io.github.gua123.mediagate.feature.player.audio.AudioPlaybackSnapshot
+import io.github.gua123.mediagate.feature.player.audio.AudioPlayerEnvironment
+import io.github.gua123.mediagate.feature.player.audio.AudioPlayerMath
+import io.github.gua123.mediagate.feature.player.audio.AudioRepeatMode
 import io.github.gua123.mediagate.feature.viewer.image.ImageTooLargeException
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
@@ -35,6 +39,7 @@ import io.github.gua123.mediagate.media.thumbnail.FfmpegFrameExtractor
 import io.github.gua123.mediagate.media.thumbnail.ImagePreviewPipeline
 import io.github.gua123.mediagate.media.thumbnail.ImageThumbnailExtractor
 import io.github.gua123.mediagate.media.thumbnail.MediaMetadataRetrieverFrameExtractor
+import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailCache
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
 import java.io.ByteArrayOutputStream
@@ -53,12 +58,18 @@ import java.io.File
  * 3. **缩略图仓库**：懒加载 [ThumbnailRepository]（两级缓存 + MMR 主策略 + FFmpeg 兜底 +
  *    M1-F 的音频内嵌封面与图片缩略图两条分支）；
  * 4. **图片查看器**（M1-F，R1）：实现 [ImageViewerEnvironment]，复用同一个当前后端
- *    给 :feature:viewer-image 列同目录图片、按上限读取整张图片。
+ *    给 :feature:viewer-image 列同目录图片、按上限读取整张图片；
+ * 5. **音频播放**（M1-G，R1/R18）：实现 [AudioPlayerEnvironment]，用 [AudioSessionController]
+ *    连上 :media:playback 的 MediaSessionService（MediaController），给 :feature:player-audio
+ *    提供「当前后端 + 队列 + 播放状态 + 命令」，并持有断点续播存储（R18）。
  *
  * 权限动作（拉起 SAF 选择器 / 跳「所有文件访问」设置页）也收在这里，页面只调方法，
  * 不各自拼 Intent。所有耗时动作都跑在 [ioScope] 或 `Dispatchers.IO` 上。
  */
-class AppContainer(context: Context) : BrowserEnvironment, ImageViewerEnvironment {
+class AppContainer(context: Context) :
+    BrowserEnvironment,
+    ImageViewerEnvironment,
+    AudioPlayerEnvironment {
 
     private val appContext: Context = context.applicationContext
 
@@ -99,6 +110,69 @@ class AppContainer(context: Context) : BrowserEnvironment, ImageViewerEnvironmen
             audioArtwork = EmbeddedArtworkExtractor(),
             imagePreview = ImagePreviewPipeline(extractor = imagePreview, format = imagePreview.format),
         )
+    }
+
+    // ------------------------------------------------------------ 音频播放（M1-G，R1/R18）
+
+    /** 当前后端流：音频页取封面、把路径编成 MediaItem 都用它（换根目录自动跟随）。 */
+    private val audioBackend: StateFlow<StorageBackend?> =
+        _root.map { it?.backend }.stateIn(ioScope, SharingStarted.Eagerly, null)
+
+    /**
+     * MediaController 连接与状态映射。
+     *
+     * 懒加载：只有真的进音频播放页（或起播）才去 bind 后台服务，冷启动不碰它。
+     */
+    private val audioSession: AudioSessionController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AudioSessionController(appContext, audioBackend)
+    }
+
+    /**
+     * 断点续播存储（R18）：DataStore 实现，由 [io.github.gua123.mediagate.MediaGateApplication]
+     * 通过 PlaybackHost 交给 :media:playback 的后台服务读写。
+     */
+    val playbackProgress: PlaybackProgressStore = PlaybackProgressSettings(appContext)
+
+    /** 播放状态（来自 MediaController，见 [AudioSessionController]）。 */
+    override val state: StateFlow<AudioPlaybackSnapshot> get() = audioSession.state
+
+    /** 当前根目录的后端；尚未选择时为 null。 */
+    override val backend: StateFlow<StorageBackend?> get() = audioSession.backend
+
+    /**
+     * 列出 [path] 所在目录里的音频（同目录队列，R1）。
+     *
+     * 复用当前后端与 [AudioPlayerMath.audioEntries] 的过滤/排序口径，与浏览页看到的顺序一致。
+     *
+     * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），播放页按分类给中文提示。
+     */
+    override suspend fun audioSiblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
+        AudioPlayerMath.audioEntries(currentBackend().list(parentOf(path), null))
+    }
+
+    /** 用给定队列起播（R18）：交给后台服务，多首连播由服务的播放列表承担。 */
+    override suspend fun play(paths: List<String>, startIndex: Int) {
+        audioSession.play(paths, startIndex)
+    }
+
+    override fun playAt(index: Int) {
+        audioSession.playAt(index)
+    }
+
+    override fun togglePlayPause() {
+        audioSession.togglePlayPause()
+    }
+
+    override fun seekTo(positionMs: Long) {
+        audioSession.seekTo(positionMs)
+    }
+
+    override fun setSpeed(speed: Float) {
+        audioSession.setSpeed(speed)
+    }
+
+    override fun setRepeatMode(mode: AudioRepeatMode) {
+        audioSession.setRepeatMode(mode)
     }
 
     // ------------------------------------------------------------ 图片查看器（M1-F，R1）

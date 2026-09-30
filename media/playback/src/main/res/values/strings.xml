@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :media:playback 的资源（R16 简体中文单语）。
+  目前只有后台播放通知的渠道名——它显示在系统通知设置里，同样要求中文。
+-->
+<resources>
+    <string name="playback_notification_channel_name">媒体播放</string>
+</resources>

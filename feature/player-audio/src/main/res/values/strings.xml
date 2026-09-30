@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  :feature:player-audio 的全部界面文案（R16 简体中文单语）。
+  约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$d / %2$s。
+-->
+<resources>
+    <string name="audio_title">音乐播放</string>
+    <string name="audio_back">返回</string>
+    <string name="audio_previous">上一首</string>
+    <string name="audio_next">下一首</string>
+    <string name="audio_play">播放</string>
+    <string name="audio_pause">暂停</string>
+    <string name="audio_buffering">正在缓冲…</string>
+    <string name="audio_loading">正在加载…</string>
+    <string name="audio_queue_position">第 %1$d / %2$d 首</string>
+    <string name="audio_speed_value">倍速 %1$s</string>
+    <string name="audio_repeat_off">顺序播放</string>
+    <string name="audio_repeat_all">列表循环</string>
+    <string name="audio_repeat_one">单曲循环</string>
+    <string name="audio_retry">重试</string>
+
+    <string name="audio_error_access_denied">没有访问权限</string>
+    <string name="audio_error_not_found">文件不存在</string>
+    <string name="audio_error_not_supported">该存储后端不支持播放此文件</string>
+    <string name="audio_error_network">网络不可用</string>
+    <string name="audio_error_auth">认证失败</string>
+    <string name="audio_error_unknown">播放失败，请重试</string>
+    <string name="audio_error_detail">错误详情：%1$s</string>
+</resources>

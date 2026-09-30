@@ -41,5 +41,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          音频后台播放（R18）：MediaSessionService + 前台服务（mediaPlayback 类型）。
+          exported=true + 标准 action 是 Media3 的约定：系统的媒体控制（通知栏/锁屏/蓝牙/耳机键）
+          通过它绑定会话；:app 只负责声明，服务本体在 :media:playback。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.media.playback.AudioPlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
