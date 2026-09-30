@@ -32,7 +32,8 @@
 ## 4. 常用命令
 
     source scripts/env.sh                      # 进入本项目环境
-    bash scripts/install-toolchain.sh          # 首次：装项目私有 JDK21 + 公共 SDK
+    bash scripts/install-toolchain.sh          # 首次：装项目私有 JDK21 + SDK(platform 37.2/NDK/CMake) + Gradle 9.8 + wrapper 缓存
+    bash scripts/build-whisper-android.sh      # 需要音转字幕时：重建 ASR native 库（不进 git）
     ./gradlew :app:assembleDebug               # 构建
     adb install -r app/build/outputs/apk/debug/app-debug.apk
 
@@ -42,4 +43,7 @@
 - **M0 已完成（2026-09-30）**：27 模块 Gradle 骨架 + Version Catalog + Room/KSP 跑通；`:app:assembleDebug` 构建通过；
   签名 keystore 就绪；whisper.cpp v1.9.4 用私有 NDK r30 编出四个 16 KB 对齐的 .so（`scripts/build-whisper-android.sh`）；
   FFmpeg 简版锁定 `dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.9`；依赖源改用阿里云镜像优先。
-- **M1 进行中**：本地闭环（SAF + 全盘访问）、缩略图、图片查看、音频后台播放。
+- **M1 已完成（2026-10-01）**：数据层（File/SAF 双模式）+ 缩略图流水线（Key v2：视频抽帧 / 图片预览重编码 / 音频内嵌封面）
+  + 应用接线（手写 AppContainer + 导航 + 首页 + 浏览器 + 双模式引导）+ 图片查看器 + 音频播放与后台播放（MediaSessionService）。
+  验收记录见 docs/验收记录-M1.md；本阶段新增 198 个 JVM 用例（每片均以 --rerun-tasks --no-build-cache 复核）。
+- **M2 进行中**：播放内核（PlayerEngine 抽象 + Media3 实现 + 回环 HTTP 代理 + LibVLC 实现 + 硬/软解切换）。

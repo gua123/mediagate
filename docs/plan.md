@@ -436,7 +436,7 @@
 | 阶段 | 内容 | 人日 |
 | --- | --- | --- |
 | M0 ✅ 2026-09-30 完成 | 环境按项目隔离（env.sh + 项目私有 JDK / Gradle / Android SDK / NDK）、27 模块工程骨架 + Version Catalog、git、签名、FFmpeg/VLC/whisper 依赖可用性验证（均已实测：debug APK 构建通过、whisper 四个 .so 16 KB 对齐） | 3–4 |
-| M1 | 本地闭环（SAF + 全盘访问）、缩略图、图片查看、音频后台播放 | 6–8 |
+| M1 ✅ 2026-10-01 完成 | 本地闭环（SAF + 全盘访问双模式）、缩略图流水线、图片查看器、音频播放 + 后台播放（R18 音频侧）；累计 198 个 JVM 用例，见 docs/验收记录-M1.md | 6–8 |
 | M2 | **播放内核框架**：PlayerEngine 抽象 + Media3 实现 + 回环代理 + LibVLC 实现 + 硬/软解切换 | 6–8 |
 | M3 | WebDAV 后端 + DataSource + Range seek + 远端缩略图 | 5–7 |
 | M4 | 连接管理 + 多地址选路 + 连通性测试（用真实 LAN/公网地址验收） | 4–5 |
