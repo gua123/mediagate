@@ -147,6 +147,8 @@ class BrowserViewModel(
         is StorageException.AccessDenied -> BrowserErrorKind.ACCESS_DENIED
         is StorageException.NotFound -> BrowserErrorKind.NOT_FOUND
         is StorageException.NotSupported -> BrowserErrorKind.NOT_SUPPORTED
+        // 认证失败单独一类：界面要给出"去哪儿改密码"的可照做指引（真机反馈过）
+        is StorageException.Auth -> BrowserErrorKind.AUTH_FAILED
         else -> BrowserErrorKind.UNKNOWN
     }
 

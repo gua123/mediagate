@@ -98,6 +98,10 @@ data class ConnectionsUiState(
     val results: Map<Long, ConnectionTestUi> = emptyMap(),
     val editor: ConnectionDraft? = null,
     val editorErrors: ConnectionFormResult = ConnectionFormResult(),
+    /** 正在用草稿测连通性（编辑器里的「测试一下」）。 */
+    val draftTesting: Boolean = false,
+    /** 草稿测试结果（中文一行）；改动草稿会清掉。 */
+    val draftTestResult: String? = null,
     val pendingDeleteId: Long? = null,
     val notice: String? = null,
     val summary: TestAllSummary? = null,
@@ -159,13 +163,31 @@ data class ConnectionsUiState(
             notice = event.message,
         )
 
-        is ConnectionsEvent.EditorOpened -> copy(editor = event.draft, editorErrors = ConnectionFormResult())
+        is ConnectionsEvent.EditorOpened -> copy(
+            editor = event.draft,
+            editorErrors = ConnectionFormResult(),
+            draftTestResult = null,
+        )
 
-        is ConnectionsEvent.EditorChanged -> copy(editor = event.draft, editorErrors = ConnectionFormResult())
+        // 草稿一改，上一次的测试结论就作废（否则用户会拿旧结论判断新参数）
+        is ConnectionsEvent.EditorChanged -> copy(
+            editor = event.draft,
+            editorErrors = ConnectionFormResult(),
+            draftTestResult = null,
+        )
 
         is ConnectionsEvent.EditorInvalid -> copy(editorErrors = event.errors)
 
-        ConnectionsEvent.EditorClosed -> copy(editor = null, editorErrors = ConnectionFormResult())
+        ConnectionsEvent.EditorClosed -> copy(
+            editor = null,
+            editorErrors = ConnectionFormResult(),
+            draftTesting = false,
+            draftTestResult = null,
+        )
+
+        ConnectionsEvent.DraftTestStarted -> copy(draftTesting = true, draftTestResult = null)
+
+        is ConnectionsEvent.DraftTestFinished -> copy(draftTesting = false, draftTestResult = event.result)
 
         is ConnectionsEvent.DeletePending -> copy(pendingDeleteId = event.id)
 
@@ -220,6 +242,12 @@ sealed interface ConnectionsEvent {
 
     /** 保存时校验不通过。 */
     data class EditorInvalid(val errors: ConnectionFormResult) : ConnectionsEvent
+
+    /** 编辑器里点了「测试一下」（用草稿测，不落库）。 */
+    data object DraftTestStarted : ConnectionsEvent
+
+    /** 草稿测试结束（中文一句话，直接显示）。 */
+    data class DraftTestFinished(val result: String) : ConnectionsEvent
 
     /** 关闭编辑器。 */
     data object EditorClosed : ConnectionsEvent

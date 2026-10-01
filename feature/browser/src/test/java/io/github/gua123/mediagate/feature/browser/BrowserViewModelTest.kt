@@ -140,6 +140,29 @@ class BrowserViewModelTest {
     }
 
     @Test
+    fun `认证失败单独归类（界面据此给"去哪儿改密码"的指引）`() = runTest(dispatcher) {
+        val backend = FakeBackend(mapOf("" to emptyList()))
+        backend.failures["Locked"] = StorageException.Auth("SFTP 认证失败（账号或密码错误）：hml@nas.local:2222")
+        val environment = FakeEnvironment()
+        val viewModel = BrowserViewModel(environment, io = dispatcher)
+        advanceUntilIdle()
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+
+        viewModel.open("Locked")
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(BrowserStatus.ERROR, state.status)
+        assertEquals(
+            "认证失败不能混进 UNKNOWN——那样界面只会说「加载失败，请重试」，用户不知道该改密码",
+            BrowserErrorKind.AUTH_FAILED,
+            state.errorKind,
+        )
+        assertTrue(state.errorDetail.orEmpty().contains("认证失败"))
+    }
+
+    @Test
     fun `目录不存在归类为不存在错误`() = runTest(dispatcher) {
         val backend = FakeBackend(mapOf("" to emptyList()))
         backend.failures["Gone"] = StorageException.NotFound("目录不存在：Gone")

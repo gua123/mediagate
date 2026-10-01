@@ -2,6 +2,7 @@ package io.github.gua123.mediagate.feature.connections
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -152,6 +153,47 @@ class ConnectionsViewModel(
             runCatching { withContext(io) { repository.save(draft) } }
                 .onSuccess { _state.update { it.reduce(ConnectionsEvent.Saved(draft.name.trim(), created)) } }
                 .onFailure { t -> _state.update { it.reduce(ConnectionsEvent.Notice("保存失败：" + friendly(t))) } }
+        }
+    }
+
+    /**
+     * 编辑器里「测试一下」（**R8**）：**用草稿直接测，不落库**。
+     *
+     * 为什么值得单独做：真机上出现过"填完保存 → 点开浏览 → 认证失败"，而用户无从判断
+     * 到底是密码打错了、端口/协议不对，还是服务器在拒人。草稿级测试让用户**在保存之前**
+     * 就拿到结论；密码框留空时沿用已保存的密文（与保存口径一致），所以"改没改密码"也测得出来。
+     *
+     * 校验不通过时不打网络：先把红字写回状态（与保存同一条校验）。
+     */
+    fun testDraft() {
+        val draft = _state.value.editor ?: return
+        if (_state.value.draftTesting) return
+        val validation = ConnectionFormValidator.validate(draft)
+        if (!validation.valid) {
+            _state.update { it.reduce(ConnectionsEvent.EditorInvalid(validation)) }
+            _state.update { it.reduce(ConnectionsEvent.DraftTestFinished("先补全上面的必填项再测")) }
+            return
+        }
+        _state.update { it.reduce(ConnectionsEvent.DraftTestStarted) }
+        viewModelScope.launch {
+            val result = try {
+                val record = DraftTestSupport.recordOf(draft)
+                // 与保存同一口径：新输入的密码优先，否则用已保存的密文（没存过就是 null）
+                val secret = draft.password.takeIf { it.isNotEmpty() }
+                    ?: withContext(io) { draft.id?.let { repository.revealSecret(it) } }
+                val tester = ConnectionTester(
+                    handshakes = StorageConnectionHandshakes.forConnection(record, secret),
+                    io = io,
+                )
+                DraftTestSupport.summarize(
+                    tester.testAll(record.protocol ?: ProtocolKind.LOCAL, record.selectableAddresses()),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                "测试失败：" + friendly(t)
+            }
+            _state.update { it.reduce(ConnectionsEvent.DraftTestFinished(result)) }
         }
     }
 
