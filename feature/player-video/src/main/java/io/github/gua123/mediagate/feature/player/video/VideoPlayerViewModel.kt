@@ -18,6 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.EngineState
@@ -796,7 +797,8 @@ class VideoPlayerViewModel(
         // 内核/解码器在真机上抛出的异常（MediaCodec 初始化失败、容器不支持…）不该让 App 直接消失，
         // 统一降级成播放页的错误卡片 + 中文原因。
         try {
-            created.setDecoderMode(mode)
+            Breadcrumbs.mark("开始播放：" + path + "（内核 " + kind.label + "）")
+        created.setDecoderMode(mode)
             created.setMedia(ref)
             created.prepare()
             created.play()
@@ -955,6 +957,8 @@ class VideoPlayerViewModel(
         saveProgress(plan.stopAtMs)
         runCatching { current.pause() }
         releaseEngine()
+        // 面包屑：切内核是"点了就闪退"的高危路径（LibVLC 走 .so），这几行能在原生崩溃后留下现场
+        Breadcrumbs.mark("切换内核：→ " + target.label + "（已释放旧内核）")
         val created = try {
             environment.createEngine(target)
         } catch (e: CancellationException) {
@@ -976,11 +980,14 @@ class VideoPlayerViewModel(
         // seekTo → setSpeed → 字幕 → play）与会话绑定都在 try 之外：LibVLC 建实例、回环代理、
         // SurfaceView 挂载任何一步抛异常，都会顺着 viewModelScope 冒到默认处理器 → 整机闪退。
         try {
+            Breadcrumbs.mark("切换内核：新内核已创建 " + target.label)
             engine = created
             observe(created)
             val view = created.videoView()
             _videoOutput.value = view
+            Breadcrumbs.mark("切换内核：开始恢复现场（装载媒体）")
             VideoEngineSwitch.applyRestore(created, plan.restore)
+            Breadcrumbs.mark("切换内核：现场恢复完成")
             // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）
             source?.let { ref -> bindSession(created, ref, view) }
             if (reason == SwitchReason.USER_REQUEST) {
@@ -1000,11 +1007,13 @@ class VideoPlayerViewModel(
             wasPlaying = plan.restore.playWhenReady
             endedSaved = false
             startTicker()
+            Breadcrumbs.mark("切换内核：完成 " + target.label)
         } catch (e: CancellationException) {
             runCatching { created.release() }
             throw e
         } catch (t: Throwable) {
             AppLog.w(TAG, "切换内核后初始化失败：" + target.label, t)
+            Breadcrumbs.mark("切换内核失败：" + target.label + " → " + (t.message ?: t.javaClass.simpleName))
             runCatching { created.release() }
             engine = null
             _videoOutput.value = null

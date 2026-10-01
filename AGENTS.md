@@ -161,7 +161,13 @@
   切 LibVLC 时任何一步抛异常都会冒到默认处理器 → 闪退（与 0.1.9 同源的"异常逃逸路径"）。
   修：整段 try/catch（失败 → 释放半成品 + engine/output 置空 + 归约 `SwitchFailed` 显示中文原因）；
   `SwitchFailed` 补 `playing/buffering = false`；:feature:player-video +1。
-  当前版本 **0.1.18 / versionCode 19**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.17）。
+- **M26 没捕捉到崩溃日志（2026-10-03，0.1.19）**：用户反馈"点内核闪退但没捕捉到日志" →
+  ① `captureLastExit` 放宽口径（只跳过 `REASON_EXIT_SELF`；原生崩溃/被信号杀/低内存/未知都留报告）；
+  ② 新增**面包屑**（`:core:common` 的 `Breadcrumbs` + `:app` 装 sink，**同步写盘**、留最近 40 行；
+  在应用启动/开始播放/切内核各阶段打点）——原生崩溃时内存日志消失，只有它留下"最后走到哪一步"；
+  ③ 诊断卡兜底：`lastExitSummary()`（现读 ApplicationExitInfo）+ `fallbackDiagnosticText(...)`（纯函数），
+  没有崩溃报告也能显示「上次进程退出」+ 面包屑并支持复制/分享；:app +3。
+  当前版本 **0.1.19 / versionCode 20**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.18）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

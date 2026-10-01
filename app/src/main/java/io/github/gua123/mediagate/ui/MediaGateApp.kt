@@ -501,6 +501,9 @@ private fun SettingsRoute(
     var crashReport by remember { mutableStateOf(container.readLatestCrash()) }
     var crashTimeMs by remember { mutableStateOf(container.latestCrashTimeMs()) }
     var crashReportCount by remember { mutableStateOf(container.crashReportCount()) }
+    // 没有崩溃报告时也要能说清"上次是怎么没的"（2026-10-03 用户反馈"没捕捉到崩溃日志"）
+    var lastExit by remember { mutableStateOf(container.lastExitSummary()) }
+    var breadcrumbs by remember { mutableStateOf(container.readBreadcrumbs()) }
     LaunchedEffect(asrModelState.notice) {
         val notice = asrModelState.notice ?: return@LaunchedEffect
         onNotice(notice)
@@ -550,11 +553,16 @@ private fun SettingsRoute(
                 crashReport = crashReport,
                 crashTimeMs = crashTimeMs,
                 reportCount = crashReportCount,
+                lastExit = lastExit,
+                breadcrumbs = breadcrumbs,
                 onClear = {
                     container.clearCrashes()
+                    container.clearBreadcrumbs()
                     crashReport = null
                     crashTimeMs = null
                     crashReportCount = 0
+                    lastExit = null
+                    breadcrumbs = emptyList()
                 },
             )
             // SFTP 主机密钥（R2）：TOFU 落库后的展示与"忘掉重来"出口

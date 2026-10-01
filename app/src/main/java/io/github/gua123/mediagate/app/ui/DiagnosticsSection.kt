@@ -54,10 +54,19 @@ fun DiagnosticsSection(
     reportCount: Int,
     onClear: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 上次进程退出原因（现读 ApplicationExitInfo），形如"内存不足被系统杀掉 · 10-02 07:13"。 */
+    lastExit: String? = null,
+    /** 磁盘上的面包屑（旧 → 新）：原生崩溃时唯一能留下的"最后走到哪一步"。 */
+    breadcrumbs: List<String> = emptyList(),
 ) {
     var showFull by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val toast = remember { ToastHolder(context) }
+    // 没有崩溃报告时，把"上次退出原因 + 面包屑"凑成一份能复制发走的诊断文本（用户的原始诉求：
+    // "没有捕捉到崩溃日志"——那就至少给点别的证据）
+    val fallbackReport = remember(lastExit, breadcrumbs) {
+        fallbackDiagnosticText(lastExit, breadcrumbs)
+    }
 
     // 「另存为」：系统文件选择器（SAF），用户挑位置，我们只负责写文本
     val saveLauncher = rememberLauncherForActivityResult(
@@ -83,6 +92,24 @@ fun DiagnosticsSection(
 
             if (crashReport == null) {
                 Text(stringResource(R.string.diagnostics_no_crash), style = MaterialTheme.typography.bodySmall)
+                lastExit?.let { Text(stringResource(R.string.diagnostics_last_exit, it), style = MaterialTheme.typography.bodySmall) }
+                if (breadcrumbs.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.diagnostics_breadcrumbs) + "\n" + breadcrumbs.takeLast(8).joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+                if (fallbackReport != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { toast.show(copyReport(context, fallbackReport)) }) {
+                            Text(stringResource(R.string.diagnostics_copy))
+                        }
+                        TextButton(onClick = { shareReport(context, fallbackReport) }) {
+                            Text(stringResource(R.string.diagnostics_share))
+                        }
+                    }
+                }
                 return@Column
             }
 
@@ -158,6 +185,28 @@ fun DiagnosticsSection(
             },
         )
     }
+}
+
+/**
+ * 没有崩溃报告时的"兜底诊断文本"（**2026-10-03 用户反馈"没有捕捉到崩溃日志"**）。
+ *
+ * 把"上次进程退出原因 + 面包屑"凑成一段可复制的文本——原生崩溃 / 被系统杀掉这类情形，
+ * 崩溃处理器根本不会跑，但这两样信息足以判断"是不是 VLC 那条路把进程带走了"。
+ *
+ * @return 两者都没有时返回 null（那时界面上也没什么可给的）。
+ */
+internal fun fallbackDiagnosticText(lastExit: String?, breadcrumbs: List<String>): String? {
+    if (lastExit == null && breadcrumbs.isEmpty()) return null
+    val builder = StringBuilder()
+    builder.append("== mediagate 诊断信息（没有崩溃报告）==").append('\n')
+    builder.append("上次进程退出：").append(lastExit ?: "（系统没给原因）").append('\n')
+    builder.append('\n').append("== 最后走到哪一步（面包屑）==").append('\n')
+    if (breadcrumbs.isEmpty()) {
+        builder.append("（没有面包屑）").append('\n')
+    } else {
+        breadcrumbs.forEach { builder.append(it).append('\n') }
+    }
+    return builder.toString()
 }
 
 /** 把报告写进系统剪贴板；返回给用户看的提示语。 */

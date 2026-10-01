@@ -307,6 +307,22 @@ class AppContainer(context: Context) :
     /** 崩溃报告份数。 */
     fun crashReportCount(): Int = runCatching { CrashReporter.reports(appContext).size }.getOrDefault(0)
 
+    /**
+     * 上次进程退出原因（现读，形如"内存不足被系统杀掉 · 10-02 07:13"）；正常退出返回 null。
+     *
+     * **2026-10-03**：用户反馈"点内核闪退却没捕捉到日志"——Java 处理器抓不到的场景（原生崩溃/被系统杀）
+     * 至少要能把"上次是怎么没的"摆到界面上。
+     */
+    fun lastExitSummary(): String? = CrashReporter.lastExitSummary(appContext)
+
+    /** 磁盘上的面包屑（旧 → 新）：原生崩溃时唯一留得下的"最后走到哪一步"。 */
+    fun readBreadcrumbs(): List<String> = CrashReporter.readBreadcrumbs(appContext)
+
+    /** 清掉面包屑（与崩溃报告一起清）。 */
+    fun clearBreadcrumbs() {
+        runCatching { java.io.File(CrashReporter.dir(appContext), "breadcrumbs.txt").delete() }
+    }
+
     /** 清空崩溃报告。 */
     fun clearCrashes() {
         CrashReporter.clear(appContext)
