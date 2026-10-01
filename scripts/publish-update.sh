@@ -106,27 +106,34 @@ RELEASE_ID="$(printf '%s' "$BODY" | python3 -c 'import json,sys; print(json.load
 echo "-- Release id=$RELEASE_ID"
 
 # ---------------------------------------------------------------- 3. 传资产（同名先删再传，保证可重跑）
-EXISTING="$(api "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID/assets" | python3 - "$ASSET" <<'PY'
+# 注意：这里不能用 "python3 - <<PY" 读管道——heredoc 会占掉 stdin，json.load(sys.stdin) 拿到空串。
+api "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID/assets" -o /tmp/publish-assets.json
+EXISTING="$(python3 -c '
 import json, sys
-name = sys.argv[1]
-assets = json.load(sys.stdin)
-for a in assets:
-    if a.get("name") == name:
-        print(a["id"])
+name, path = sys.argv[1], sys.argv[2]
+for asset in json.load(open(path)):
+    if asset.get("name") == name:
+        print(asset["id"])
         break
-PY
-)"
+' "$ASSET" /tmp/publish-assets.json)"
 if [ -n "$EXISTING" ]; then
   echo "-- 删除同名旧资产 id=$EXISTING"
   api -X DELETE "https://api.github.com/repos/$OWNER/$REPO/releases/assets/$EXISTING" -o /dev/null
 fi
 
-echo "-- 上传 $ASSET"
-"${CURL[@]}" -X POST \
+# 大文件上传强制 HTTP/1.1 并关掉 Expect: 100-continue：
+# 实测走代理时 HTTP/2 的 74 MB POST 会卡住（curl 读完全部字节却迟迟拿不到响应）。
+ASSET_URL="$(api "https://api.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["upload_url"].split("{")[0])')"
+echo "-- 上传 $ASSET → $ASSET_URL"
+# 上传走**直连**：实测代理下 74 MB 的 POST 会卡死（curl 读完全部字节却拿不到响应），
+# 而 uploads.github.com 直连是通的（302/0.7 s）。API 调用仍然走代理。
+curl -sS --http1.1 -X POST \
   -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-publish" \
   -H "Content-Type: application/vnd.android.package-archive" \
+  -H "Expect:" \
   --data-binary @"$APK" \
-  "https://uploads.github.com/repos/$OWNER/$REPO/releases/$RELEASE_ID/assets?name=$ASSET" \
+  "$ASSET_URL?name=$ASSET" \
   -o /tmp/publish-asset.json -w 'HTTP %{http_code}\n'
 python3 - <<'PY'
 import json
