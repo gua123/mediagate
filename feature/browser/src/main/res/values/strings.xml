@@ -19,6 +19,8 @@
     <string name="browser_error_not_found">目录不存在</string>
     <string name="browser_error_not_supported">该目录暂不支持浏览</string>
     <string name="browser_error_unknown">加载失败，请重试</string>
+    <string name="browser_action_copy_error">复制错误信息</string>
+    <string name="browser_error_copied">已复制错误信息</string>
     <string name="browser_action_sort">排序：%1$s</string>
     <string name="browser_sort_title">排序方式</string>
     <string name="browser_sort_ascending">改为升序 ↑</string>
