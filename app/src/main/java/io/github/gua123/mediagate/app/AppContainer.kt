@@ -75,6 +75,7 @@ import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
+import io.github.gua123.mediagate.feature.player.video.TsIndexInfo
 import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
 import io.github.gua123.mediagate.feature.update.SignatureCheck
 import io.github.gua123.mediagate.feature.update.UpdateEnvironment
@@ -475,6 +476,11 @@ class AppContainer(context: Context) :
      */
     private val _videoRepairRoot = MutableStateFlow<BrowserRootState?>(null)
 
+    /** TS 索引（R3/R4）：限量扫描 + 落盘缓存 + 摘要（PCR 标记）。 */
+    private val tsIndexPreparer: TsIndexPreparer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        TsIndexPreparer(File(appContext.cacheDir, TS_INDEX_DIR))
+    }
+
     private val videoBackend: StateFlow<StorageBackend?> =
         combine(audioBackend, _videoRepairRoot) { normal, repaired -> repaired?.backend ?: normal }
             .stateIn(ioScope, SharingStarted.Eagerly, null)
@@ -538,6 +544,32 @@ class AppContainer(context: Context) :
                 AppLog.w(TAG, "时间戳重建失败：" + path, t)
                 TimestampRepairOutcome.Failed(ErrorText.of(t, "时间戳重建失败"))
             }
+        }
+
+        /**
+         * 准备 TS 索引（R3/R4）：后台限量扫，用于"无 PCR 提示"与拖拽落点预取。
+         */
+        override suspend fun prepareTsIndex(path: String): TsIndexInfo? {
+            val backend = videoBackend.value ?: return null
+            val prepared = tsIndexPreparer.prepare(backend, path) ?: return null
+            return TsIndexInfo(
+                hasPcr = prepared.hasPcr,
+                keyframeCount = prepared.index.keyframeCount,
+                complete = prepared.complete,
+            )
+        }
+
+        /**
+         * 按索引预取拖拽落点（R4）：索引给出关键帧字节偏移，分段缓存负责把它拉下来。
+         *
+         * 只有"当前视频后端是分段缓存"时才预取——本地根目录本来就不需要预取。
+         */
+        override suspend fun prefetchSeek(path: String, positionMs: Long) {
+            val index = tsIndexPreparer.indexOf(path) ?: return
+            val offset = index.seekTarget(positionMs)
+            if (offset < 0L) return
+            val cache = videoBackend.value as? SegmentedCacheBackend ?: return
+            cache.prefetch(path, offset, PREFETCH_BYTES)
         }
 
         /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
@@ -1487,6 +1519,9 @@ class AppContainer(context: Context) :
         /** 时间戳重建（R3/R11）产物目录（cacheDir 下）与 ffmpeg 中间文件目录。 */
         /** 远端随机读的分段缓存（plan 4.1 降级链第二级）。 */
         const val SEGMENT_CACHE_DIR = "segments"
+
+        /** 拖拽预取的字节数（R4）：4 MB = 一个段。 */
+        const val PREFETCH_BYTES = 4L * 1024 * 1024
 
         /** TS 索引缓存目录（R4）：与 :media:tsext 的 TsIndexStore 配套。 */
         const val TS_INDEX_DIR = "ts-index"

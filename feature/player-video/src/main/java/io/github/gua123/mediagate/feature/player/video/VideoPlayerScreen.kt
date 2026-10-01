@@ -350,6 +350,22 @@ private fun Controls(
                     )
                 }
             }
+            // R3：无 PCR 的 TS 提示（拖拽会不准，并指出「修复时间戳」出口）
+            state.tsIndexNotice?.let { notice ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = notice,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    TextButton(onClick = viewModel::dismissTsIndexNotice) {
+                        Text(stringResource(R.string.video_repair_dismiss))
+                    }
+                }
+            }
             state.timestampRepairNotice?.let { notice ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

@@ -170,6 +170,8 @@ data class VideoPlayerUiState(
     val timestampRepairPercent: Int = 0,
     /** 重建的一次性提示（成功/失败的中文说明）；用户确认后清掉。 */
     val timestampRepairNotice: String? = null,
+    /** TS 索引相关提示（R3：无 PCR 的文件拖拽会不准）；用户确认后清掉。 */
+    val tsIndexNotice: String? = null,
 ) {
 
     /** 队列里有多少集。 */
@@ -405,6 +407,12 @@ sealed interface VideoPlayerEvent {
 
     /** 关掉重建提示。 */
     data object TimestampRepairNoticeCleared : VideoPlayerEvent
+
+    /** TS 索引提示（R3：无 PCR / 索引不可用）。 */
+    data class TsIndexNoticeRaised(val text: String) : VideoPlayerEvent
+
+    /** 关掉 TS 索引提示。 */
+    data object TsIndexNoticeCleared : VideoPlayerEvent
 }
 
 /**
@@ -641,6 +649,11 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
     )
 
     VideoPlayerEvent.TimestampRepairNoticeCleared -> copy(timestampRepairNotice = null)
+
+    // TS 索引（R3）：无 PCR 的提示只在拿到扫描结果时给一次
+    is VideoPlayerEvent.TsIndexNoticeRaised -> copy(tsIndexNotice = event.text)
+
+    VideoPlayerEvent.TsIndexNoticeCleared -> copy(tsIndexNotice = null)
 }
 
 /**

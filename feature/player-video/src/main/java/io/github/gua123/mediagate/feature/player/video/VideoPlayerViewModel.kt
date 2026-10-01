@@ -103,6 +103,7 @@ class VideoPlayerViewModel(
     private var subtitleTickJob: Job? = null
     private var writeBackJob: Job? = null
     private var repairJob: Job? = null
+    private var tsIndexJob: Job? = null
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
@@ -321,13 +322,34 @@ class VideoPlayerViewModel(
         _state.update { it.reduce(VideoPlayerEvent.SeekChanged(ratio)) }
     }
 
-    /** 松手：把拖到的位置提交给内核。 */
+    /** 松手：把拖到的位置提交给内核（并按 TS 索引预取落点，R4）。 */
     fun onSeekFinished() {
         _state.update { it.reduce(VideoPlayerEvent.SeekFinished) }
         val position = _state.value.positionMs
         engine?.seekTo(position)
         msSinceSave = 0L
         sampleNow()
+        prefetchSeek(position)
+    }
+
+    /**
+     * 按 TS 索引预取拖拽落点（**R4**，best-effort）。
+     *
+     * 索引把时间换算成关键帧字节偏移，预取那一段到分段缓存；拿不到索引就什么都不做。
+     * 说清楚边界：这**不是**替代 Media3 的 seek 实现，只是让落点附近的数据提前就位。
+     */
+    private fun prefetchSeek(positionMs: Long) {
+        val path = _state.value.path
+        if (path.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                withContext(io) { environment.prefetchSeek(path, positionMs) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "预取拖拽落点失败：$path @$positionMs", t)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ 字幕（R14，单轨）
@@ -697,6 +719,7 @@ class VideoPlayerViewModel(
         subtitleTickJob?.cancel()
         writeBackJob?.cancel()
         repairJob?.cancel()
+        tsIndexJob?.cancel()
         // 离开播放页就把视频后端切回正常根目录（否则浏览页会看到修复缓存目录）
         environment.exitRepairRoot()
         releaseEngine()
@@ -783,6 +806,38 @@ class VideoPlayerViewModel(
         applyResume(ref, created)
         // R14：开着字幕就自动匹配同目录候选（本地与远端同一套逻辑）
         syncSubtitle()
+        // R3/R4：TS 索引在后台准备（判定有没有 PCR + 供拖拽预取）；失败不影响播放
+        prepareTsIndex(path)
+    }
+
+    /**
+     * 准备 TS 索引（**R3 / R4**）。
+     *
+     * 后台跑、限量扫；只有"文件里没有 PCR"才提示用户（拖拽一定会不准，并指出「修复时间戳」这条出口）。
+     * 索引本身留给 [seekTo] 做落点预取。
+     */
+    private fun prepareTsIndex(path: String) {
+        // 只有 TS 家族才值得建索引（判据与「修复时间戳」入口同一套）
+        if (!VideoPlayerMath.isTimestampRepairable(path)) return
+        tsIndexJob?.cancel()
+        tsIndexJob = viewModelScope.launch {
+            val info = try {
+                withContext(io) { environment.prepareTsIndex(path) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "准备 TS 索引失败：$path", t)
+                null
+            } ?: return@launch
+            if (!info.hasPcr) {
+                _state.update { it.reduce(VideoPlayerEvent.TsIndexNoticeRaised(NO_PCR_MESSAGE)) }
+            }
+        }
+    }
+
+    /** 关掉 TS 索引提示。 */
+    fun dismissTsIndexNotice() {
+        _state.update { it.reduce(VideoPlayerEvent.TsIndexNoticeCleared) }
     }
 
     /** 读断点并 seek（R18「进入时读一次，有则 seek 并提示」）。 */
@@ -1058,5 +1113,8 @@ class VideoPlayerViewModel(
 
         /** 时间戳重建成功后的中文说明（R3/R11）。 */
         const val REPAIR_DONE_MESSAGE = "时间戳已重建，正在播放修复后的版本"
+
+        /** 无 PCR 的 TS 提示（R3：如实说明拖拽会不准，并指出出口）。 */
+        const val NO_PCR_MESSAGE = "这个文件没有时间戳信息（PCR），拖拽定位会不准；可以用「修复时间戳」重写一份再播"
     }
 }
