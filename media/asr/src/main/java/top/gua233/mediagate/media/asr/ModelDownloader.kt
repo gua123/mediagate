@@ -2,169 +2,14 @@ package io.github.gua123.mediagate.media.asr
 
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import java.io.Closeable
+import io.github.gua123.mediagate.core.download.DownloadError
+import io.github.gua123.mediagate.core.download.DownloadException
+import io.github.gua123.mediagate.core.download.DownloadProgress
+import io.github.gua123.mediagate.core.download.HttpRequest
+import io.github.gua123.mediagate.core.download.HttpStream
+import io.github.gua123.mediagate.core.download.HttpTransport
 import java.io.IOException
-import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URL
-
-/**
- * 一次 HTTP GET 请求（**M7-B / R14** 的 App 内下载）。
- *
- * @property url 目标地址。
- * @property rangeStart 断点续传的起点（> 0 时发 HTTP Range 头，只取这一段）。
- */
-data class HttpRequest(
-    val url: String,
-    val rangeStart: Long? = null,
-) {
-    /** Range 头；不需要时 null。 */
-    val rangeHeader: String? get() = rangeStart?.takeIf { it > 0L }?.let { "bytes=" + it + "-" }
-}
-
-/**
- * 一次 HTTP 响应（**只暴露下载需要的字段**）。
- *
- * @property code HTTP 状态码。
- * @property contentLength 本次响应的字节数；未知 -1。
- * @property contentRangeStart 206 时 Content-Range 里的起点；没有则 null。
- * @property etag ETag（诊断用）。
- */
-interface HttpStream : Closeable {
-
-    val code: Int
-    val contentLength: Long
-    val contentRangeStart: Long?
-    val etag: String?
-
-    /** 读一块；返回 -1 表示读完。 */
-    fun read(buffer: ByteArray): Int
-}
-
-/**
- * HTTP 传输抽象（**下载逻辑能被 JVM 单测穷举的关键**）。
- *
- * 选型说明（为什么不用 OkHttp）：:media:asr 只需要「带 Range 的顺序 GET」，不需要连接池、
- * 拦截器、HTTP/2；引入 OkHttp 会给一个纯媒体模块拖进 okio 与另一套版本约束。
- * java.net.HttpURLConnection 是 JDK/Android 自带的，零依赖，且这里把它关在一个单方法接口
- * 后面——单测灌一个假实现（假 HTTP）就能把断点续传、取消、校验和失败重下全跑一遍。
- */
-interface HttpTransport {
-
-    /** 发起请求并返回响应流（调用方负责 close）。失败抛 [IOException]。 */
-    suspend fun open(request: HttpRequest): HttpStream
-}
-
-/**
- * 真机实现：java.net.HttpURLConnection（**唯一碰网络的地方**）。
- *
- * @param connectTimeoutMs 连接超时（默认 15 s）。
- * @param readTimeoutMs 读超时（默认 30 s；大文件一段一段读，不能设太短）。
- * @param userAgent 带项目标识，便于日后从服务端日志分辨。
- */
-class HttpUrlConnectionTransport(
-    private val connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
-    private val readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
-    private val userAgent: String = DEFAULT_USER_AGENT,
-) : HttpTransport {
-
-    override suspend fun open(request: HttpRequest): HttpStream {
-        val connection = (URL(request.url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = connectTimeoutMs
-            readTimeout = readTimeoutMs
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", userAgent)
-            setRequestProperty("Accept-Encoding", "identity")
-            request.rangeHeader?.let { setRequestProperty("Range", it) }
-        }
-        val responseCode = connection.responseCode
-        val headerLength = connection.getHeaderFieldLong("Content-Length", -1L)
-        val rangeStart = parseContentRangeStart(connection.getHeaderField("Content-Range"))
-        val etagValue = connection.getHeaderField("ETag")
-        val body: InputStream? = runCatching {
-            if (responseCode in 200..299) connection.inputStream else connection.errorStream
-        }.getOrNull()
-        return object : HttpStream {
-            override val code: Int = responseCode
-            override val contentLength: Long = headerLength
-            override val contentRangeStart: Long? = rangeStart
-            override val etag: String? = etagValue
-
-            override fun read(buffer: ByteArray): Int = body?.read(buffer) ?: -1
-
-            override fun close() {
-                runCatching { body?.close() }
-                connection.disconnect()
-            }
-        }
-    }
-
-    companion object {
-
-        const val DEFAULT_CONNECT_TIMEOUT_MS = 15_000
-        const val DEFAULT_READ_TIMEOUT_MS = 30_000
-        const val DEFAULT_USER_AGENT = "mediagate-android/0.1 (asr-model-downloader)"
-
-        /** 解析 Content-Range 头（形如 bytes 100-999/1000）的起点（**纯函数**）。 */
-        fun parseContentRangeStart(header: String?): Long? {
-            val text = header?.trim().orEmpty()
-            if (!text.startsWith("bytes", ignoreCase = true)) return null
-            val range = text.substringAfter(' ').substringBefore('/')
-            val start = range.substringBefore('-').trim()
-            return start.toLongOrNull()
-        }
-    }
-}
-
-/** 下载失败的分类（每一种都有中文说明，界面直接显示）。 */
-enum class ModelDownloadError(val zhText: String) {
-
-    /** 网络中断 / 连不上 / 超时。 */
-    NETWORK("网络中断"),
-
-    /** 服务器返回非 200/206。 */
-    HTTP("服务器返回错误"),
-
-    /** 下载完的字节数与官方大小不符（多半是被截断）。 */
-    SIZE_MISMATCH("下载不完整"),
-
-    /** 校验和与预期不符（文件被改坏 / 中间有代理插了内容）。 */
-    CHECKSUM_MISMATCH("校验和不符"),
-
-    /** 本地写不进去（磁盘满 / 目录不可写）。 */
-    STORAGE("本地写入失败"),
-}
-
-/** 下载异常（带分类，便于界面给中文原因）。 */
-class ModelDownloadException(
-    val kind: ModelDownloadError,
-    detail: String? = null,
-    cause: Throwable? = null,
-) : IOException(if (detail.isNullOrBlank()) kind.zhText else kind.zhText + "：" + detail, cause)
-
-/**
- * 下载进度（**R14：模型下载要显示进度**）。
- *
- * @property receivedBytes 已下载字节数（含断点续传前已有的部分）。
- * @property totalBytes 总字节数（官方大小，已知）。
- * @property resumedFrom 本次开始时已有的字节数（> 0 表示是续传）。
- */
-data class ModelDownloadProgress(
-    val receivedBytes: Long,
-    val totalBytes: Long,
-    val resumedFrom: Long = 0L,
-) {
-    /** 0..1。 */
-    val fraction: Float
-        get() = if (totalBytes <= 0L) 0f else (receivedBytes.toDouble() / totalBytes).coerceIn(0.0, 1.0).toFloat()
-
-    /** 0..100。 */
-    val percent: Int get() = (fraction * 100f).toInt().coerceIn(0, 100)
-
-    /** 是否续传中。 */
-    val isResuming: Boolean get() = resumedFrom > 0L
-}
 
 /**
  * App 内下载模型（**M7-B / R14 的默认获取方式**：进度 / 断点续传 / 取消 / 校验和失败重下）。
@@ -176,6 +21,9 @@ data class ModelDownloadProgress(
  * 4. 字节数必须等于 [WhisperModel.sizeBytes]，有 [WhisperModel.sha256] 时再核一遍；
  * 5. 校验不过 → **删掉 .part 并抛错**（下次从头重下，不会拿着坏文件反复失败）；
  * 6. 都过了才改名为最终文件名。
+ *
+ * 2026-10-02（R20）：HTTP 传输、进度与错误分类已抽到 `:core:download`，与 APK 更新下载共用
+ * （[io.github.gua123.mediagate.core.download.FileDownloader]）；本类保留"模型目录 + ModelStore"这层。
  */
 class ModelDownloader(
     private val store: ModelStore,
@@ -187,24 +35,24 @@ class ModelDownloader(
      *
      * @param mirror 镜像前缀；null 表示直连。
      * @param onProgress 进度回调（在下载协程里同步调用，别做重活）。
-     * @throws ModelDownloadException 分类失败。
+     * @throws DownloadException 分类失败。
      * @throws kotlinx.coroutines.CancellationException 用户取消（.part 保留）。
      */
     suspend fun download(
         model: WhisperModel,
         mirror: String? = null,
-        onProgress: (ModelDownloadProgress) -> Unit = {},
+        onProgress: (DownloadProgress) -> Unit = {},
     ): String {
         val partName = partNameOf(model)
         var received = existingPartBytes(partName, model)
-        onProgress(ModelDownloadProgress(received, model.sizeBytes, received))
+        onProgress(DownloadProgress(received, model.sizeBytes, received))
 
         if (received < model.sizeBytes) {
             val request = HttpRequest(model.downloadUrl(mirror), rangeStart = received.takeIf { it > 0L })
             val stream = try {
                 transport.open(request)
             } catch (e: IOException) {
-                throw ModelDownloadException(ModelDownloadError.NETWORK, e.message, e)
+                throw DownloadException(DownloadError.NETWORK, e.message, e)
             }
             stream.use { response ->
                 when (response.code) {
@@ -215,7 +63,7 @@ class ModelDownloader(
 
                     HttpURLConnection.HTTP_PARTIAL -> Unit
 
-                    else -> throw ModelDownloadException(ModelDownloadError.HTTP, "HTTP " + response.code)
+                    else -> throw DownloadException(DownloadError.HTTP, "HTTP " + response.code)
                 }
                 writeBody(model, partName, stream, received, onProgress)
             }
@@ -224,7 +72,7 @@ class ModelDownloader(
         verify(model, partName)
         if (!store.rename(partName, model.fileName)) {
             // 罕见：改名失败（目标被占 / 权限）。至少把内容留在 .part，报 STORAGE 让用户重试。
-            throw ModelDownloadException(ModelDownloadError.STORAGE, "重命名 " + partName + " 失败")
+            throw DownloadException(DownloadError.STORAGE, "重命名 " + partName + " 失败")
         }
         return model.fileName
     }
@@ -246,7 +94,7 @@ class ModelDownloader(
         partName: String,
         stream: HttpStream,
         startBytes: Long,
-        onProgress: (ModelDownloadProgress) -> Unit,
+        onProgress: (DownloadProgress) -> Unit,
     ) {
         var received = startBytes
         try {
@@ -259,12 +107,12 @@ class ModelDownloader(
                     if (read == 0) continue
                     output.write(buffer, 0, read)
                     received += read
-                    onProgress(ModelDownloadProgress(received, model.sizeBytes, startBytes))
+                    onProgress(DownloadProgress(received, model.sizeBytes, startBytes))
                 }
                 output.flush()
             }
         } catch (e: IOException) {
-            throw ModelDownloadException(ModelDownloadError.STORAGE, e.message, e)
+            throw DownloadException(DownloadError.STORAGE, e.message, e)
         }
     }
 
@@ -273,8 +121,8 @@ class ModelDownloader(
         val size = store.size(partName)
         if (size != model.sizeBytes) {
             store.delete(partName)
-            throw ModelDownloadException(
-                ModelDownloadError.SIZE_MISMATCH,
+            throw DownloadException(
+                DownloadError.SIZE_MISMATCH,
                 "实际 " + size + " 字节，预期 " + model.sizeBytes + " 字节",
             )
         }
@@ -282,7 +130,7 @@ class ModelDownloader(
         val actual = store.sha256(partName)
         if (actual == null || !actual.equals(expected, ignoreCase = true)) {
             store.delete(partName)
-            throw ModelDownloadException(ModelDownloadError.CHECKSUM_MISMATCH, "校验和不符，已删除损坏文件")
+            throw DownloadException(DownloadError.CHECKSUM_MISMATCH, "校验和不符，已删除损坏文件")
         }
     }
 

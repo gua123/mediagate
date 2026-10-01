@@ -75,7 +75,7 @@ import io.github.gua123.mediagate.media.asr.AsrItem
 import io.github.gua123.mediagate.media.asr.AsrYieldSettings
 import io.github.gua123.mediagate.media.asr.FileModelStore
 import io.github.gua123.mediagate.media.asr.FfmpegPcmProvider
-import io.github.gua123.mediagate.media.asr.HttpUrlConnectionTransport
+import io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport
 import io.github.gua123.mediagate.media.asr.ModelDownloader
 import io.github.gua123.mediagate.media.asr.ModelManager
 import io.github.gua123.mediagate.media.asr.ModelStore
