@@ -1,8 +1,8 @@
 {
-  "versionCode": 13,
-  "versionName": "0.1.12",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.12/mediagate-0.1.12.apk",
-  "sizeBytes": 74508786,
-  "sha256": "e894db6414ed531a6242522d00a340512e9a1161a3be364cdc0976ed0a5b1fa2",
-  "notes": "## mediagate 0.1.12\n\n**「开始生成字幕就闪退」找到根因了**——你发来的诊断日志把栈摆得明明白白：\n\n```\nService.startForeground\n  → IActivityManager.setServiceForeground\n    → Parcel.readException      ← 系统直接拒绝了这次\"转前台\"\n      → AsrForegroundService.onCreate\n```\n\n### 根因\n字幕服务是 `START_STICKY`（被系统杀掉后由系统重新拉起）。App 进程在**后台**被拉起来时，\n`onCreate` 里立刻把服务\"转前台\"，而 `mediaProcessing` 这个前台服务类型**不允许从后台进入前台**，\n系统拒绝 → 抛异常 → 服务崩 → 整机闪退。（日志里正好是\"启动 → 恢复字幕队列 3 项 → 崩\"，\n就是被系统在后台拉起的那一瞬间。）\n\n### 修法\n- **不再让系统在后台重启它**：`onStartCommand` 改返回 `START_NOT_STICKY`。队列状态本来就存在数据库里，\n  你下次进 App 会看到「已中断，可续跑」，点一下继续即可——比在后台偷偷跑更符合系统规则，也不会再闪退。\n- **前台化失败就不硬跑**：`onCreate` 里记下\"没前台化成功\"，`onStartCommand` 直接退场，\n  不去触发另一条崩溃路径（\"startForegroundService 没有按时 startForeground\"）。\n- **拉起失败如实反馈**：`startService` 现在返回成败，起不来就把队列停在「已暂停」，\n  不让你对着一个永远不动的\"运行中\"发呆。\n\n### 说明\n- 正常用法不受影响：**你在 App 里点「开始/继续」时，App 一定在前台**，前台化是合法的，照旧后台跑、息屏也跑。\n- 包名不变，可直接覆盖安装（这一版也包含 0.1.11 的播放页改造：转屏、白字、同文件夹列表直跳）。"
+  "versionCode": 14,
+  "versionName": "0.1.13",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.13/mediagate-0.1.13.apk",
+  "sizeBytes": 74561673,
+  "sha256": "c561ba270fda86d04dd6f9f47b97b60358d385c4e5c1bf88b0627773e88f852d",
+  "notes": "## mediagate 0.1.13\n\n你说的对——诊断日志之前只能截图，是我忘了给它出口。这一版补齐。\n\n### 新增\n- **诊断与崩溃日志**：卡片与全文对话框都加了三个按钮——\n  · 「**复制全文**」：一键写进剪贴板（粘贴到微信发我即可）；\n  · 「**另存为文件**」：走系统文件选择器存成 `.txt`（文件名 `mediagate-崩溃报告-时间.txt`），放哪儿你定；\n  · 「**分享**」：直接调系统分享（可以选微信/邮件），报告作为纯文本正文。\n  正文另外套了可选中容器，长按也能手动选。\n- **浏览页的错误提示**（加载失败那一屏）也加了「**复制错误信息**」：把\"错误 + 详情 + 处理指引\"一起复制，\n  以后报错不用截图，直接粘过来。\n\n### 说明\n- 包名不变，可直接覆盖安装（包含 0.1.11 的播放页改造与 0.1.12 的字幕闪退根因修复）。"
 }
