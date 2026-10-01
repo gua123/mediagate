@@ -133,21 +133,31 @@ class VideoPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // 会话建不起来（渠道/图标/Media3 断言…）不该让整个 App 消失：
+        // 真机上"一开始播放就闪退"很可能就发生在服务这一侧（2026-10-03）。
         val player = VideoSessionPlayer(::currentSource)
-        val session = MediaSession.Builder(this, player)
-            .setSessionActivity(openAppIntent())
-            .build()
+        val session = try {
+            MediaSession.Builder(this, player)
+                .setSessionActivity(openAppIntent())
+                .build()
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "创建视频会话失败：退化为无会话（播放页本身仍能播）", t)
+            sessionPlayer = player
+            return
+        }
         sessionPlayer = player
         mediaSession = session
 
         // 通知渠道名用本模块中文资源（R16）；图标复用音频侧那张单色小图标
-        val provider = DefaultMediaNotificationProvider.Builder(this)
-            .setChannelId(CHANNEL_ID)
-            .setChannelName(R.string.video_playback_channel_name)
-            .setNotificationId(NOTIFICATION_ID)
-            .build()
-        provider.setSmallIcon(R.drawable.ic_playback_notification)
-        setMediaNotificationProvider(provider)
+        runCatching {
+            val provider = DefaultMediaNotificationProvider.Builder(this)
+                .setChannelId(CHANNEL_ID)
+                .setChannelName(R.string.video_playback_channel_name)
+                .setNotificationId(NOTIFICATION_ID)
+                .build()
+            provider.setSmallIcon(R.drawable.ic_playback_notification)
+            setMediaNotificationProvider(provider)
+        }.onFailure { AppLog.w(TAG, "配置通知样式失败（通知可能显示默认样式）", it) }
 
         handler.post(poller)
         AppLog.i(TAG, "视频后台播放服务已启动（R18 视频侧）")
@@ -260,7 +270,20 @@ internal class VideoSessionPlayer(
         invalidateState()
     }
 
-    override fun getState(): State {
+    override fun getState(): State = try {
+        buildState()
+    } catch (t: Throwable) {
+        // Media3 对 State 有一堆一致性断言（playlist/索引/命令集…）；任何一条不满足都会抛，
+        // 抛出点在系统回调里 → 服务进程崩 → 用户看到"一播放就闪退"。
+        // 这里降级成"空会话"：通知栏暂时没有内容，但 App 与播放页都不受影响（同时留下日志）。
+        AppLog.e("video-session", "构建会话状态失败，降级为空状态", t)
+        State.Builder()
+            .setAvailableCommands(AVAILABLE_COMMANDS)
+            .setPlaybackState(Player.STATE_IDLE)
+            .build()
+    }
+
+    private fun buildState(): State {
         val builder = State.Builder()
             .setAvailableCommands(AVAILABLE_COMMANDS)
             .setSeekBackIncrementMs(SEEK_INCREMENT_MS)

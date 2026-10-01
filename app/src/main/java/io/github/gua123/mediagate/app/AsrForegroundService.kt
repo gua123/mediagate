@@ -77,13 +77,20 @@ class AsrForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(null, 0, false),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
-        )
+        // 前台化失败（渠道/类型/权限，或系统限制）不该让 App 消失：如实记日志并退出服务，
+        // 任务留在队列里（下次进来能续跑）。2026-10-03 真机"开始生成字幕就闪退"的另一个嫌疑点。
+        try {
+            createChannel()
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(null, 0, false),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
+            )
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "字幕服务前台化失败，退出服务", t)
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
