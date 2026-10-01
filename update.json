@@ -1,8 +1,8 @@
 {
-  "versionCode": 12,
-  "versionName": "0.1.11",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.11/mediagate-0.1.11.apk",
-  "sizeBytes": 74508777,
-  "sha256": "4881704fbf2b7679efee4c40293373d4a0edf4e769d20f26ae0c91747409b0f1",
-  "notes": "## mediagate 0.1.11\n\n按你的要求改播放页：**能转屏、字看得清、能直接跳到同文件夹的别的文件**。\n\n### 新增 / 改动\n- **旋转屏幕**：播放页右上角新增旋转按钮（图标 ↻），点一下在横屏/竖屏之间切换。\n  退出播放页自动恢复「跟随系统」，不会把整个 App 的方向锁死。Activity 已声明\n  `configChanges=orientation|screenSize|…`，所以转屏**不会重建界面、播放不中断**。\n- **文字全部改成白色高对比**：播放页是黑底，而 Material3 的芯片默认取主题的灰色字，在手机上几乎看不清。\n  现在「内核 / 列表 / 字幕 / 倍速 / 解码 / 缩放 / 修复时间戳」这些芯片统一白字 + 半透明白底 + 白色描边\n  （走同一个配色入口，避免以后漏掉某一个）。\n- **同文件夹列表 + 直接跳转**：芯片行最左边新增「列表」，点开是一个底部面板，\n  列出**当前播放文件所在文件夹的全部可播文件**（视频与音频都算一集），当前这条标「正在播放」，\n  点任意一行**直接跳过去**（复用同一个播放内核，不重建解码器，切换更快、也更省电）。\n\n### 说明\n- 列表数据就是播放页原有的\"上下集队列\"（进页面时列过一次目录），所以远端目录同样适用；\n  跨目录播放仍然用上一集/下一集按钮。\n- 包名不变，可直接覆盖安装。"
+  "versionCode": 13,
+  "versionName": "0.1.12",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.12/mediagate-0.1.12.apk",
+  "sizeBytes": 74508786,
+  "sha256": "e894db6414ed531a6242522d00a340512e9a1161a3be364cdc0976ed0a5b1fa2",
+  "notes": "## mediagate 0.1.12\n\n**「开始生成字幕就闪退」找到根因了**——你发来的诊断日志把栈摆得明明白白：\n\n```\nService.startForeground\n  → IActivityManager.setServiceForeground\n    → Parcel.readException      ← 系统直接拒绝了这次\"转前台\"\n      → AsrForegroundService.onCreate\n```\n\n### 根因\n字幕服务是 `START_STICKY`（被系统杀掉后由系统重新拉起）。App 进程在**后台**被拉起来时，\n`onCreate` 里立刻把服务\"转前台\"，而 `mediaProcessing` 这个前台服务类型**不允许从后台进入前台**，\n系统拒绝 → 抛异常 → 服务崩 → 整机闪退。（日志里正好是\"启动 → 恢复字幕队列 3 项 → 崩\"，\n就是被系统在后台拉起的那一瞬间。）\n\n### 修法\n- **不再让系统在后台重启它**：`onStartCommand` 改返回 `START_NOT_STICKY`。队列状态本来就存在数据库里，\n  你下次进 App 会看到「已中断，可续跑」，点一下继续即可——比在后台偷偷跑更符合系统规则，也不会再闪退。\n- **前台化失败就不硬跑**：`onCreate` 里记下\"没前台化成功\"，`onStartCommand` 直接退场，\n  不去触发另一条崩溃路径（\"startForegroundService 没有按时 startForeground\"）。\n- **拉起失败如实反馈**：`startService` 现在返回成败，起不来就把队列停在「已暂停」，\n  不让你对着一个永远不动的\"运行中\"发呆。\n\n### 说明\n- 正常用法不受影响：**你在 App 里点「开始/继续」时，App 一定在前台**，前台化是合法的，照旧后台跑、息屏也跑。\n- 包名不变，可直接覆盖安装（这一版也包含 0.1.11 的播放页改造：转屏、白字、同文件夹列表直跳）。"
 }
