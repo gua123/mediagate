@@ -185,9 +185,11 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 is UnknownHostException -> "DNS 解析失败（${config.host}）"
                 is SocketTimeoutException, is java.io.InterruptedIOException ->
                     "连接或读取超时（${config.connectTimeoutMs} ms / ${config.readTimeoutMs} ms）"
-                // R16：界面只给中文；异常的原始英文留在 AppLog 的 probe 异常日志里
-                is IOException -> "网络不可达：" + ErrorText.of(t, "详情见诊断日志")
-                else -> "未知错误：" + ErrorText.of(t, "详情见诊断日志")
+                // R16：界面只给中文；异常的原始英文留在 AppLog 的 probe 异常日志里。
+                // 刻意不再统一加「网络不可达：」前缀——明文被系统拦、认证失败都不是"不可达"，
+                // 加错前缀会把用户引去查网线（2026-10-02 真机截图就是这么误导的）。
+                is IOException -> ErrorText.of(t, "网络请求失败")
+                else -> ErrorText.of(t, "请求失败")
             }
             AppLog.w(TAG, "probe 异常：${config.requestBaseUrl} → $message", t)
             // DNS 失败时监听器收不到 dnsEnd：把整段耗时算进 DNS，保证三段相加 ≈ 总耗时

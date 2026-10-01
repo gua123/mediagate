@@ -51,6 +51,13 @@ class ConnectivityErrorTest {
         assertEquals(ConnectivityError.TLS_FAILED, ConnectivityError.fromThrowable(SSLHandshakeException("bad cert")))
         assertEquals(ConnectivityError.TIMEOUT, ConnectivityError.fromThrowable(IOException("Read timed out")))
         assertEquals(ConnectivityError.UNKNOWN, ConnectivityError.fromThrowable(IllegalStateException("???")))
+        // 真机实测（2026-10-02 连接页截图）：targetSdk 36 未放开明文时 OkHttp 抛的就是这一句
+        assertEquals(
+            ConnectivityError.CLEARTEXT_BLOCKED,
+            ConnectivityError.fromThrowable(
+                IOException("CLEARTEXT communication to 192.168.1.10 not permitted by network security policy"),
+            ),
+        )
     }
 
     @Test
@@ -74,6 +81,12 @@ class ConnectivityErrorTest {
         assertEquals(ConnectivityError.DNS_FAILED, ConnectivityError.fromMessage("DNS 解析失败（dav.example.com）"))
         assertEquals(ConnectivityError.TIMEOUT, ConnectivityError.fromMessage("连接或读取超时（5000 ms / 15000 ms）"))
         assertEquals(ConnectivityError.CONNECTION_REFUSED, ConnectivityError.fromMessage("网络不可达之前先被拒绝"))
+        // 明文被拦不能被"不可达"抢走分类（WebDAV probe 曾经统一加「网络不可达：」前缀）
+        assertEquals(
+            ConnectivityError.CLEARTEXT_BLOCKED,
+            ConnectivityError.fromMessage("系统禁止明文 http：请改用 https，或在连接页打开「允许明文 http」"),
+        )
+        assertEquals(ConnectivityError.CLEARTEXT_BLOCKED, ConnectivityError.fromMessage("网络不可达：CLEARTEXT not permitted"))
         assertNull(ConnectivityError.fromMessage(null))
         assertNull(ConnectivityError.fromMessage("  "))
         assertEquals(ConnectivityError.UNKNOWN, ConnectivityError.fromMessage("莫名其妙的一句话"))
