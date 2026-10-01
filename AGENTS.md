@@ -96,7 +96,10 @@
   使用内部存储 / 开启全部文件访问 / 清除）——此前只有首页能选本地目录，在连接页想换目录没有入口；
   ② **首页根目录卡片统一远端文案**（远端生效时写「正在使用远端连接：xxx」，本地那项改称「备用本地目录」
   并说明清除不影响远端；判据收敛成 `HomeRootUi.remoteActive/localStandby` 两个纯逻辑属性）。
-  当前版本 **0.1.3 / versionCode 4**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1/0.1.2）。
+- **M13 更新源缓存修复（2026-10-03，0.1.4）**：raw 清单有 CDN 缓存（`max-age=300`，实测发版后 6 分钟仍读到旧清单；
+  查询参数与 `Cache-Control: no-cache` 都绕不过）→ App 改读**两条不同缓存键**的 raw 路径
+  （`main/update.json` + `refs/heads/main/update.json`）取 versionCode 较高者；已确认有更新就不再打第二次网络。
+  当前版本 **0.1.4 / versionCode 5**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.3）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
