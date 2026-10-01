@@ -34,6 +34,8 @@ kotlin {
 
 dependencies {
     implementation(project(":core:common"))
+    // DownloadProgress / DownloadException 出现在 ModelManager / ModelDownloader 的公开签名（R20 起与更新下载共用）
+    api(project(":core:download"))
     // RemoteEntry / MediaKindGuesser 出现在 AsrSelection 的公开签名（R19 过滤非视频）
     api(project(":core:model"))
     // StorageBackend / StorageException 出现在 AsrOutput.write 的公开签名（R14 写回与无权限兜底）

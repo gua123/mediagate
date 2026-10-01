@@ -26,7 +26,7 @@ rootProject.name = "mediagate"
 include(":app")
 
 // 核心
-include(":core:common", ":core:model", ":core:database", ":core:crypto", ":core:network")
+include(":core:common", ":core:model", ":core:database", ":core:crypto", ":core:network", ":core:download")
 
 // 数据层：统一 StorageBackend → RandomAccessSource，四协议后端
 include(

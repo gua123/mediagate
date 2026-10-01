@@ -1,5 +1,7 @@
 package io.github.gua123.mediagate.media.asr
 
+import io.github.gua123.mediagate.core.download.DownloadException
+import io.github.gua123.mediagate.core.download.DownloadProgress
 import java.io.File
 
 /** 模型体检结果（**R14**：下载前/识别前都要知道手上这份模型到底能不能用）。 */
@@ -114,13 +116,13 @@ class ModelManager(
     /**
      * 下载模型（转交 [ModelDownloader]）。
      *
-     * @throws ModelDownloadException 分类失败。
+     * @throws DownloadException 分类失败。
      * @throws IllegalStateException 没装配下载器。
      */
     suspend fun download(
         model: WhisperModel,
         mirror: String? = WhisperModel.DEFAULT_MIRROR,
-        onProgress: (ModelDownloadProgress) -> Unit = {},
+        onProgress: (DownloadProgress) -> Unit = {},
     ): File {
         val engine = downloader ?: error("没有装配下载器，无法下载模型")
         val name = engine.download(model, mirror, onProgress)

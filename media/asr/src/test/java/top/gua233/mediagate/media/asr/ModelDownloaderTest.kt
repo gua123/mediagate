@@ -1,5 +1,12 @@
 package io.github.gua123.mediagate.media.asr
 
+import io.github.gua123.mediagate.core.download.DownloadError
+import io.github.gua123.mediagate.core.download.DownloadException
+import io.github.gua123.mediagate.core.download.DownloadProgress
+import io.github.gua123.mediagate.core.download.HttpRequest
+import io.github.gua123.mediagate.core.download.HttpStream
+import io.github.gua123.mediagate.core.download.HttpTransport
+import io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -59,7 +66,7 @@ class ModelDownloaderTest {
         store.openWrite("ggml-test.bin.part", append = false).use { it.write(payload, 0, half) }
         val transport = FakeTransport(payload)
 
-        val progress = mutableListOf<ModelDownloadProgress>()
+        val progress = mutableListOf<DownloadProgress>()
         ModelDownloader(store, transport).download(model()) { progress += it }
 
         assertEquals(half.toLong(), transport.requests.single().rangeStart)
@@ -90,8 +97,8 @@ class ModelDownloaderTest {
             ModelDownloader(store, FakeTransport(payload)).download(model(size = payload.size + 10L))
         }.exceptionOrNull()
 
-        assertTrue(error is ModelDownloadException)
-        assertEquals(ModelDownloadError.SIZE_MISMATCH, (error as ModelDownloadException).kind)
+        assertTrue(error is DownloadException)
+        assertEquals(DownloadError.SIZE_MISMATCH, (error as DownloadException).kind)
         assertFalse(store.exists("ggml-test.bin.part"))
         assertFalse(store.exists("ggml-test.bin"))
     }
@@ -103,7 +110,7 @@ class ModelDownloaderTest {
             ModelDownloader(store, FakeTransport(payload)).download(model(sha256 = "deadbeef"))
         }.exceptionOrNull()
 
-        assertEquals(ModelDownloadError.CHECKSUM_MISMATCH, (error as ModelDownloadException).kind)
+        assertEquals(DownloadError.CHECKSUM_MISMATCH, (error as DownloadException).kind)
         assertFalse(store.exists("ggml-test.bin.part"))
     }
 
@@ -122,7 +129,7 @@ class ModelDownloaderTest {
         val error = runCatching {
             ModelDownloader(store, FakeTransport(payload, codeOverride = 404)).download(model())
         }.exceptionOrNull()
-        assertEquals(ModelDownloadError.HTTP, (error as ModelDownloadException).kind)
+        assertEquals(DownloadError.HTTP, (error as DownloadException).kind)
     }
 
     @Test
@@ -131,7 +138,7 @@ class ModelDownloaderTest {
         val error = runCatching {
             ModelDownloader(store, FakeTransport(payload, failWith = IOException("connect reset"))).download(model())
         }.exceptionOrNull()
-        assertEquals(ModelDownloadError.NETWORK, (error as ModelDownloadException).kind)
+        assertEquals(DownloadError.NETWORK, (error as DownloadException).kind)
     }
 
     @Test
@@ -169,7 +176,7 @@ class ModelDownloaderTest {
     @Test
     fun download_progressIsMonotonic() = runTest {
         val store = store()
-        val progress = mutableListOf<ModelDownloadProgress>()
+        val progress = mutableListOf<DownloadProgress>()
         ModelDownloader(store, FakeTransport(payload, chunkSize = 256)).download(model()) { progress += it }
         assertTrue(progress.size > 2)
         progress.zipWithNext { a, b -> assertTrue(b.receivedBytes >= a.receivedBytes) }
@@ -199,8 +206,8 @@ class ModelDownloaderTest {
 
     @Test
     fun downloadErrorMessagesAreChinese() {
-        assertTrue(ModelDownloadError.NETWORK.zhText.isNotEmpty())
-        assertEquals("校验和不符", ModelDownloadError.CHECKSUM_MISMATCH.zhText)
+        assertTrue(DownloadError.NETWORK.zhText.isNotEmpty())
+        assertEquals("校验和不符", DownloadError.CHECKSUM_MISMATCH.zhText)
     }
 
     /** 假 HTTP：把一段内存字节当成远端文件，可选是否支持 Range。 */
