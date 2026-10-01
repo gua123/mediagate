@@ -7,6 +7,19 @@
     <string name="connections_title">连接</string>
     <string name="connections_action_new">新建连接</string>
     <string name="connections_action_test_all">测试全部</string>
+
+    <!-- 本地目录（R12）：连接页里也能选/切/清本地根目录 -->
+    <string name="connections_local_title">本地目录</string>
+    <string name="connections_local_mode">当前模式：%1$s</string>
+    <string name="connections_local_mode_saf">已授权目录</string>
+    <string name="connections_local_mode_all_files">内部存储（全部文件）</string>
+    <string name="connections_local_mode_none">还没选择</string>
+    <string name="connections_local_path">路径：%1$s</string>
+    <string name="connections_local_pick_saf">选择目录</string>
+    <string name="connections_local_use_all_files">使用内部存储</string>
+    <string name="connections_local_request_all_files">开启全部文件访问</string>
+    <string name="connections_local_clear">清除</string>
+    <string name="connections_local_hint">远端连接优先：一旦「设为当前连接」，浏览与播放就用那条连接；清除本地目录不会断开远端。</string>
     <string name="connections_action_test">测试连通性</string>
     <string name="connections_action_retest">重新测试</string>
     <string name="connections_action_edit">编辑</string>

@@ -180,9 +180,33 @@ private fun RootCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
+            // 远端优先（R8）：有当前连接时先说清楚"现在用的是远端"，否则用户会以为在看本地目录
+            if (root.remoteActive) {
+                Text(
+                    text = stringResource(R.string.home_root_remote_active, root.remoteLabel.orEmpty()),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(
+                        if (root.localStandby) {
+                            R.string.home_root_remote_local_standby
+                        } else {
+                            R.string.home_root_remote_no_local
+                        },
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             if (root.configured) {
                 Text(
-                    text = stringResource(R.string.home_root_mode_label, modeLabel(root.mode)),
+                    text = stringResource(
+                        if (root.remoteActive) R.string.home_root_mode_label_standby else R.string.home_root_mode_label,
+                        modeLabel(root.mode),
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(modifier = Modifier.height(2.dp))

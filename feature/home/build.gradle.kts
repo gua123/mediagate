@@ -41,4 +41,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
+
+    // JVM 单测（首页根目录卡片的展示口径：远端生效时本地是"备用"）
+    testImplementation(libs.junit)
 }

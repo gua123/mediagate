@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -73,14 +74,30 @@ import io.github.gua123.mediagate.core.network.ProtocolKind
  * - 列表：每张卡片显示 名称 / 协议 / 地址数 / 状态徽标 / 最近检测时间 / 当前网络下的首选地址与判定依据，
  *   展开后逐地址显示三段耗时与错误分类；
  * - 每张卡片：测试、重新测试、设为当前连接（也在长按菜单里）、编辑、删除；
- * - 右下角：新建连接；编辑器里协议 LOCAL/WEBDAV/SFTP/FTP 全可选，但只有 LOCAL/WEBDAV 能浏览
- *   （SFTP/FTP 会明确提示"只能测试连通性"，不谎报可用）。
+ * - **本地目录卡片（R12）**：本地根目录的模式与路径 + 「选择目录（SAF）」/「使用内部存储」/
+ *   「清除」——用户"媒体从哪来"的两个来源（本地与远端）在同一个页面里，不必再绕回首页；
+ * - 右下角：新建连接；编辑器里协议 LOCAL/WEBDAV/SFTP/FTP 全可选，四种都能浏览与播放
+ *   （M9 之后 SFTP/FTP 已接进组合根；数据层未接的协议才提示"只能测试连通性"）。
  *
- * 组合函数零 IO：所有副作用都通过 [ConnectionsViewModel] 发起。
+ * 组合函数零 IO：所有副作用都通过 [ConnectionsViewModel] 发起；本地目录那几个动作要
+ * Activity 的 ActivityResultLauncher，所以由 :app 以回调注入（与首页同一套口径）。
+ *
+ * @param localRoot 本地根目录摘要（:app 从 DataStore 配置 + 权限状态映射）。
+ * @param onPickSafDirectory 拉起系统目录选择器（SAF 授权）。
+ * @param onUseAllFilesRoot 已授权时切到全盘访问模式。
+ * @param onRequestAllFilesAccess 未授权时跳系统「所有文件访问」设置页。
+ * @param onClearRoot 清除当前本地根目录。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConnectionsScreen(modifier: Modifier = Modifier) {
+fun ConnectionsScreen(
+    modifier: Modifier = Modifier,
+    localRoot: LocalRootUi = LocalRootUi(),
+    onPickSafDirectory: () -> Unit = {},
+    onUseAllFilesRoot: () -> Unit = {},
+    onRequestAllFilesAccess: () -> Unit = {},
+    onClearRoot: () -> Unit = {},
+) {
     val environment = LocalConnectionsEnvironment.current
     val viewModel: ConnectionsViewModel = viewModel { ConnectionsViewModel(environment) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -136,6 +153,15 @@ fun ConnectionsScreen(modifier: Modifier = Modifier) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { NetworkCard(state) }
+                item {
+                    LocalRootCard(
+                        localRoot = localRoot,
+                        onPickSafDirectory = onPickSafDirectory,
+                        onUseAllFilesRoot = onUseAllFilesRoot,
+                        onRequestAllFilesAccess = onRequestAllFilesAccess,
+                        onClearRoot = onClearRoot,
+                    )
+                }
                 state.summary?.let { summary ->
                     item { SummaryCard(summary) }
                 }
@@ -198,6 +224,87 @@ private fun NetworkCard(state: ConnectionsUiState) {
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = stringResource(R.string.connections_network_policy),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * 本地目录卡片（**R12**）：模式 + 路径 + 三个入口。
+ *
+ * 与首页那张卡片同一套语义，但放在连接页——用户在这里管理"用哪台服务器/哪个目录"，
+ * 本地目录不该只存在于首页。
+ */
+@Composable
+private fun LocalRootCard(
+    localRoot: LocalRootUi,
+    onPickSafDirectory: () -> Unit,
+    onUseAllFilesRoot: () -> Unit,
+    onRequestAllFilesAccess: () -> Unit,
+    onClearRoot: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.connections_local_title), style = MaterialTheme.typography.titleSmall)
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(
+                    R.string.connections_local_mode,
+                    stringResource(
+                        when (localRoot.mode) {
+                            LocalRootMode.SAF -> R.string.connections_local_mode_saf
+                            LocalRootMode.ALL_FILES -> R.string.connections_local_mode_all_files
+                            LocalRootMode.NONE -> R.string.connections_local_mode_none
+                        },
+                    ),
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (localRoot.configured) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.connections_local_path, localRoot.displayPath),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPickSafDirectory) {
+                    Text(stringResource(R.string.connections_local_pick_saf))
+                }
+                OutlinedButton(
+                    onClick = {
+                        when (localRoot.allFilesAction) {
+                            AllFilesAction.USE -> onUseAllFilesRoot()
+                            AllFilesAction.REQUEST_PERMISSION -> onRequestAllFilesAccess()
+                        }
+                    },
+                ) {
+                    Text(
+                        stringResource(
+                            when (localRoot.allFilesAction) {
+                                AllFilesAction.USE -> R.string.connections_local_use_all_files
+                                AllFilesAction.REQUEST_PERMISSION -> R.string.connections_local_request_all_files
+                            },
+                        ),
+                    )
+                }
+                if (localRoot.canClear) {
+                    TextButton(onClick = onClearRoot) {
+                        Text(stringResource(R.string.connections_local_clear))
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.connections_local_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
