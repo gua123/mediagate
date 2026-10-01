@@ -415,12 +415,20 @@ private fun ErrorPanel(
         BrowserErrorKind.ACCESS_DENIED -> stringResource(R.string.browser_error_access_denied)
         BrowserErrorKind.NOT_FOUND -> stringResource(R.string.browser_error_not_found)
         BrowserErrorKind.NOT_SUPPORTED -> stringResource(R.string.browser_error_not_supported)
+        BrowserErrorKind.AUTH_FAILED -> stringResource(R.string.browser_error_auth)
         else -> stringResource(R.string.browser_error_unknown)
+    }
+    val detail = state.errorDetail?.let { stringResource(R.string.browser_error_detail, it) }.orEmpty()
+    // 认证失败是"用户自己能修"的一类：把去哪儿改说清楚（真机反馈：只看到认证失败，不知道该重填密码）
+    val authHint = if (state.errorKind == BrowserErrorKind.AUTH_FAILED) {
+        stringResource(R.string.browser_error_auth_hint)
+    } else {
+        ""
     }
     CenteredMessage(
         icon = Icons.Default.ErrorOutline,
         title = message,
-        message = state.errorDetail?.let { stringResource(R.string.browser_error_detail, it) }.orEmpty(),
+        message = listOf(detail, authHint).filter { it.isNotEmpty() }.joinToString("\n\n"),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (state.errorKind == BrowserErrorKind.ACCESS_DENIED) {

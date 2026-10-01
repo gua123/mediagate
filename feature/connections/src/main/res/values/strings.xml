@@ -9,6 +9,10 @@
     <string name="connections_action_test_all">测试全部</string>
 
     <!-- 本地目录（R12）：连接页里也能选/切/清本地根目录 -->
+    <!-- 编辑器里的「测试一下」（R8）：用草稿测，保存前就能知道密码/端口对不对 -->
+    <string name="connections_test_now">测试一下</string>
+    <string name="connections_testing">正在测试…</string>
+
     <string name="connections_local_title">本地目录</string>
     <string name="connections_local_mode">当前模式：%1$s</string>
     <string name="connections_local_mode_saf">已授权目录</string>

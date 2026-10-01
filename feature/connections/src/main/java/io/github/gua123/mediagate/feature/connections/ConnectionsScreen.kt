@@ -29,6 +29,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -119,6 +120,7 @@ fun ConnectionsScreen(
             onRemoveAddress = viewModel::removeAddress,
             onAddRule = viewModel::addRule,
             onRemoveRule = viewModel::removeRule,
+            onTestDraft = viewModel::testDraft,
             onSave = viewModel::save,
             onCancel = viewModel::closeEditor,
             modifier = modifier,
@@ -531,6 +533,7 @@ private fun ConnectionEditorScreen(
     onRemoveAddress: (Int) -> Unit,
     onAddRule: (RuleDraft) -> Unit,
     onRemoveRule: (Int) -> Unit,
+    onTestDraft: () -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -685,7 +688,32 @@ private fun ConnectionEditorScreen(
                 onRemove = onRemoveRule,
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+            // 「测试一下」（R8）：用**当前草稿**测，不落库——密码对不对、端口通不通，保存前就知道
+            OutlinedButton(
+                onClick = onTestDraft,
+                enabled = !state.draftTesting,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (state.draftTesting) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(stringResource(if (state.draftTesting) R.string.connections_testing else R.string.connections_test_now))
+            }
+            state.draftTestResult?.let { result ->
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = result,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (result.startsWith("测试通过")) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.connections_save))
             }
