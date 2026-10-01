@@ -247,11 +247,18 @@ class ConnectionsUiStateTest {
     }
 
     @Test
-    fun `SFTP 连接不可浏览且卡片如实标注`() {
-        val sftp = record.copy(id = 3L, name = "SFTP", protocolId = "SFTP", protocol = ProtocolKind.SFTP)
-        val state = ConnectionsUiState().reduce(ConnectionsEvent.Loaded(listOf(sftp), null, wifi))
-        val card = state.cards.single()
-        assertFalse(card.browsable)
-        assertEquals("SFTP", card.protocolText)
+    fun `四种协议都能浏览只有认不出的协议标识才标为不可浏览`() {
+        // R2：本地 / WebDAV / SFTP / FTP 的后端都已接进 App（M5 之后 SFTP、FTP 不再是"待接入"）
+        val all = ProtocolKind.entries.map { kind ->
+            record.copy(id = 10L + kind.ordinal, name = kind.id, protocolId = kind.id, protocol = kind)
+        }
+        val cards = ConnectionsUiState().reduce(ConnectionsEvent.Loaded(all, null, wifi)).cards
+        assertEquals(4, cards.size)
+        assertTrue("四种协议都应可浏览", cards.all { it.browsable })
+
+        val unknown = record.copy(id = 99L, name = "旧记录", protocolId = "SFTPX", protocol = null)
+        val card = ConnectionsUiState().reduce(ConnectionsEvent.Loaded(listOf(unknown), null, wifi)).cards.single()
+        assertFalse("协议标识认不出时照实标为不可浏览", card.browsable)
+        assertEquals("SFTPX", card.protocolText)
     }
 }

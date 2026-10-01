@@ -184,8 +184,9 @@ class ConnectionsViewModel(
     /**
      * 设为当前连接（**R8** 菜单/长按里的动作）。
      *
-     * :app 收到后会切换浏览器/播放器拿到的后端：LOCAL → 本地根目录后端，WEBDAV → WebDAV 后端；
-     * SFTP/FTP 本轮没有后端，这里只提示"能测通但不能浏览"，不改当前连接（避免切过去变成空白页）。
+     * :app 收到后会切换浏览器/播放器拿到的后端：LOCAL → 本地根目录后端，
+     * WEBDAV / SFTP / FTP → 各自的远端后端（R2 四协议都接进了 App，见 :app 的 applyCurrentConnection）。
+     * 只有数据库里的协议标识认不出（[ConnectionRecord.browsable] 为 false）时才拒绝切换并如实说明。
      */
     fun setCurrent(id: Long) {
         val record = _state.value.records.firstOrNull { it.id == id } ?: return
@@ -193,7 +194,7 @@ class ConnectionsViewModel(
             _state.update {
                 it.reduce(
                     ConnectionsEvent.Notice(
-                        record.protocolText + " 后端将在 M5 接入：现在只能测试连通性，暂时不能浏览与播放",
+                        record.protocolText + "：数据库里的协议标识认不出，不能设为当前连接（请编辑该连接重新选协议）",
                     ),
                 )
             }
@@ -268,7 +269,7 @@ class ConnectionsViewModel(
      * 真正跑一次测试：查缓存 → 建临时握手 → 并行测所有地址 → 写缓存 → 记录"最近检测"。
      *
      * 前两段（DNS/TCP）由 [io.github.gua123.mediagate.core.network.ConnectionTester] 负责，
-     * 第三段（协议握手）按协议注入：LOCAL 查目录、WEBDAV 发 PROPFIND、SFTP/FTP 本轮没有（只到 TCP）。
+     * 第三段（协议握手）按协议注入：LOCAL 查目录、WEBDAV 发 PROPFIND、SFTP 走 banner+认证、FTP 走 220+登录+PASV。
      */
     private suspend fun runTest(record: ConnectionRecord, force: Boolean): ConnectionTestUi {
         val key = cacheKey(record)
@@ -278,7 +279,7 @@ class ConnectionsViewModel(
         val secret = withContext(io) { repository.revealSecret(record.id) }
         val protocol = record.protocol ?: ProtocolKind.LOCAL
         val tester = ConnectionTester(
-            // M5 纯加法：SFTP / FTP 也走真握手（见 StorageConnectionHandshakes）；LOCAL/WEBDAV 语义不变
+            // 四种协议都走真握手：SFTP / FTP 由 StorageConnectionHandshakes 补上，LOCAL/WEBDAV 语义不变
             handshakes = StorageConnectionHandshakes.forConnection(record, secret),
             io = io,
         )

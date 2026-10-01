@@ -48,8 +48,8 @@ enum class ConnectivityError(
     /** 地址或端口本身不合法（表单校验兜底；正常流程不会走到这里）。 */
     PORT_INVALID("PORT_INVALID", "地址或端口不合法", "端口范围是 1-65535"),
 
-    /** 协议后端尚未接入（M5 的 SFTP / FTP）：只做到 DNS/TCP 两段，未做协议握手。 */
-    NOT_IMPLEMENTED("NOT_IMPLEMENTED", "协议后端未接入", "本轮只验证 DNS 与 TCP 两段，协议握手待 M5"),
+    /** 该协议没有握手实现（或协议标识认不出）：只做到 DNS/TCP 两段，未做协议握手。 */
+    NOT_IMPLEMENTED("NOT_IMPLEMENTED", "协议后端未接入", "只验证了 DNS 与 TCP 两段，没做协议握手（该协议暂无握手实现）"),
 
     /** TLS/证书问题。 */
     TLS_FAILED("TLS_FAILED", "安全连接失败", "证书不受信任或 TLS 版本不匹配"),

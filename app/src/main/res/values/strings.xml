@@ -29,7 +29,7 @@
     <string name="settings_note_credential_title">凭据</string>
     <string name="settings_note_credential_detail">协议密码在保存时立即用 Android Keystore（AES-GCM）加密，库里只存密文，界面不回显明文。</string>
     <string name="settings_note_protocol_title">协议现状</string>
-    <string name="settings_note_protocol_detail">本地目录与 WebDAV 已可浏览播放；SFTP / FTP 计划在 M5 接入，现在建了记录只能测试连通性（DNS / TCP 两段，协议握手未做）。</string>
+    <string name="settings_note_protocol_detail">本地目录、WebDAV、SFTP、FTP 四种协议都能浏览与播放：在连接页建好并「设为当前连接」即可。连通性测试会做真正的协议握手（本地查目录、WebDAV 发 PROPFIND、SFTP 走 SSH 认证、FTP 走登录 + PASV）。</string>
 
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>

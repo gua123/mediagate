@@ -12,8 +12,8 @@ import kotlinx.coroutines.withContext
  * 协议种类（**R2/R8**）——取值与 `:core:database` 的 `Protocols` 常量一一对应
  * （数据库里存的是字符串，这里给一个强类型视图，避免各页面各自写字符串）。
  *
- * 本轮（M4）只有 [LOCAL] 与 [WEBDAV] 有真实后端；[SFTP] / [FTP] 是 M5 的事，
- * 建了记录也只能测到 DNS/TCP 两段（见 [ConnectionTester]）。
+ * 四种协议（本地 / WebDAV / SFTP / FTP）都有真实后端；这里只负责"协议种类"这一层强类型视图，
+ * 谁有握手实现由调用方注入（见 [ConnectionTester]）。
  */
 enum class ProtocolKind(val id: String, val zhText: String) {
     LOCAL("LOCAL", "本地目录"),
@@ -34,7 +34,7 @@ enum class ProtocolKind(val id: String, val zhText: String) {
  *
  * 第 3 段是"真正的决定权"：TCP 通了不代表协议对（可能连到了别的服务）。
  * 各协议的握手指令不同（WebDAV = PROPFIND 期望 207/200；SFTP = banner + 认证；
- * FTP = 220 + 登录 + PASV），由调用方注入；M4 只注入 LOCAL 与 WEBDAV 两个。
+ * FTP = 220 + 登录 + PASV），由调用方注入；:feature:connections 四种协议都注入（LOCAL 查目录）。
  */
 fun interface ProtocolHandshake {
 
@@ -70,7 +70,7 @@ data class HandshakeOutcome(
  * @param error 失败分类；成功为 null。
  * @param failedStage 失败发生在哪一段（成功为 null）。
  * @param message 中文失败原因（可展示）。
- * @param notice 需要如实告知的补充说明（如「SFTP 后端 M5 才接入，本次只验证 DNS/TCP」）。
+ * @param notice 需要如实告知的补充说明（如「该协议没有握手实现，本次只验证 DNS/TCP 两段」）。
  * @param handshakeSkipped 协议握手是否被跳过（该协议本轮没有实现）。
  */
 data class AddressTestResult(
@@ -105,9 +105,10 @@ data class AddressTestResult(
  *
  * 特殊情形：
  * - [ProtocolKind.LOCAL]：没有 DNS/TCP 可言（前两段恒为 0），只有"路径是否存在/可读"这一段；
- * - [ProtocolKind.SFTP] / [ProtocolKind.FTP]：本轮（M4）没有后端，只测到 TCP 两段，
- *   结果里带 [AddressTestResult.handshakeSkipped] = true 与中文 [AddressTestResult.notice]，
- *   界面据此显示「仅 TCP 通（协议握手 M5 提供）」而不是谎报"正常"。
+ * - 调用方没注入握手实现的协议：只测到 TCP 两段，结果里带
+ *   [AddressTestResult.handshakeSkipped] = true 与中文 [AddressTestResult.notice]，
+ *   界面据此显示「仅 TCP 通（未做协议握手）」而不是谎报"正常"
+ *   （四种协议的握手都由 :feature:connections 注入，正常流程走不到这个分支）。
  *
  * @param tcp TCP 探测器。
  * @param handshakes 已实现的协议握手；未给的协议走"跳过握手"分支。
@@ -179,7 +180,7 @@ class ConnectionTester(
     ): AddressTestResult {
         val probe = handshakes[protocol]
         if (probe == null) {
-            val notice = protocol.zhText + " 后端尚未接入（M5）：本次只验证到 " +
+            val notice = protocol.zhText + " 暂无协议握手实现：本次只验证到 " +
                 if (protocol == ProtocolKind.LOCAL) "本地路径检查" else "DNS/TCP 两段，未做协议握手"
             return AddressTestResult(
                 address = address,

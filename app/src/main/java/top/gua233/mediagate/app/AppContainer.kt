@@ -30,14 +30,23 @@ import io.github.gua123.mediagate.core.network.AddressSelector
 import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
 import io.github.gua123.mediagate.core.network.NetworkContext
 import io.github.gua123.mediagate.core.network.ProtocolKind
+import io.github.gua123.mediagate.core.network.SelectableAddress
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
+import io.github.gua123.mediagate.data.storage.ftp.FtpStorageBackend
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
+import io.github.gua123.mediagate.data.storage.sftp.HostKeyVerifier
+import io.github.gua123.mediagate.data.storage.sftp.InMemoryKnownHostsStore
+import io.github.gua123.mediagate.data.storage.sftp.KnownHostsStore
+import io.github.gua123.mediagate.data.storage.sftp.SftpHostKeyPolicy
+import io.github.gua123.mediagate.data.storage.sftp.SftpStorageBackend
+import io.github.gua123.mediagate.data.storage.sftp.TofuHostKeyVerifier
 import io.github.gua123.mediagate.data.storage.webdav.WebDavConfig
 import io.github.gua123.mediagate.data.storage.webdav.WebDavStorageBackend
 import io.github.gua123.mediagate.feature.browser.BrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.BrowserRootState
 import io.github.gua123.mediagate.feature.browser.RootModeKind
+import io.github.gua123.mediagate.feature.connections.ConnectionBackends
 import io.github.gua123.mediagate.feature.connections.ConnectionEndpoints
 import io.github.gua123.mediagate.feature.connections.ConnectionRecord
 import io.github.gua123.mediagate.feature.connections.ConnectionRepository
@@ -127,7 +136,8 @@ class AppContainer(context: Context) :
     /** 「当前连接」（R8）的持久化：只存一个 id，连接本体在三张表里。 */
     private val connectionSettings = ConnectionSettings(appContext)
 
-    // ------------------------------------------------------------ 连接管理（M4，R6/R7/R8）
+    // ------------------------------------------------------------ 连接管理（R2/R6/R7/R8）
+    // 四协议都真正接进 App：本地双模式（R12）、WebDAV、SFTP、FTP —— 见 applyCurrentConnection
 
     /**
      * 连接/地址/规则三张表的数据库（plan 第 7 章）。
@@ -238,11 +248,44 @@ class AppContainer(context: Context) :
     /** 本地根目录后端（R12，来自 [RootSettings]）；远端连接生效时它作为备胎保留。 */
     private var localRoot: BrowserRootState? = null
 
-    /** 当前远端连接的后端（M4 只有 WEBDAV）。 */
+    /** 当前远端连接的后端（**R2**：WebDAV / SFTP / FTP 三种连接共用这一个槽位）。 */
     private var remoteRoot: BrowserRootState? = null
 
     /** 远端后端的构造指纹：选路结果、根路径、账号、密码有无变化时才重建。 */
     private var remoteSignature: String? = null
+
+    private val _remoteNotice = MutableStateFlow<String?>(null)
+
+    /**
+     * 远端连接切不过去时的中文提示（缺密码 / 配置不合法 / 当前网络没有可用地址）。
+     *
+     * 界面弹一条 Snackbar 后调 [dismissRemoteNotice] 消费掉；成功切过去会自动清空。
+     * 有它才不会出现"点过设为当前连接、目录还是本地那套"的哑巴状态。
+     */
+    val remoteNotice: StateFlow<String?> = _remoteNotice.asStateFlow()
+
+    /** 关掉一次性提示（Snackbar 消费完调用）。 */
+    fun dismissRemoteNotice() {
+        _remoteNotice.value = null
+    }
+
+    /**
+     * SFTP 已知主机指纹（plan 4.9 的 TOFU 落点）。
+     *
+     * 进程内共享一份：换地址 / 重建后端不会忘掉已经信任过的指纹，指纹变了照样拒绝连接并告警
+     * （[TofuHostKeyVerifier] 的规则：变更绝不静默接受）。
+     * **指纹落库仍未做**（见 docs/验收记录-M2-M8.md 的「已知限制」），所以冷启动等于重新 TOFU 一次——
+     * 这是当前明确的取舍，不是漏接。
+     */
+    private val knownHosts: KnownHostsStore = InMemoryKnownHostsStore()
+
+    private val sftpHostKeys: HostKeyVerifier by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        TofuHostKeyVerifier(
+            store = knownHosts,
+            policy = SftpHostKeyPolicy.TOFU,
+            onChange = { event -> AppLog.w(TAG, event.message) },
+        )
+    }
 
     private val _allFilesGranted = MutableStateFlow(hasAllFilesAccess())
 
@@ -908,30 +951,95 @@ class AppContainer(context: Context) :
      *
      * - **WEBDAV**：用 [AddressSelector] 在当前网络下选地址（命中规则就用规则偏好的，
      *   否则按优先级取首选），解密密码后构造 [WebDavStorageBackend]；
+     * - **SFTP**：同一条选路 + Keystore 解密密码 + TOFU 主机密钥校验（[sftpHostKeys]）；
+     * - **FTP**：同一条选路，`connection.tls` 决定明文 / 显式 FTPS / 隐式 FTPS；
      * - **LOCAL**：不建远端后端，改为把连接里的目录写回 [RootSettings]（SAF 树 URI 或绝对路径），
      *   于是浏览器拿到的仍是 [LocalBackends] 的双模式后端（R12）；
-     * - **SFTP / FTP**：M5 才有后端，本轮保持本地根目录，界面已明确提示"只能测连通性"；
-     * - 连接被删除 / 未选中：关掉远端后端，回落到本地根目录。
+     * - 连接被删除 / 未选中 / 协议标识认不出：关掉远端后端，回落到本地根目录（认不出时给一句提示）。
      */
     private suspend fun applyCurrentConnection(record: ConnectionRecord?, network: NetworkContext) {
         if (record == null) {
+            _remoteNotice.value = null
             closeRemoteRoot()
             return
         }
         when (record.protocol) {
             ProtocolKind.WEBDAV -> applyWebDavConnection(record, network)
+            ProtocolKind.SFTP -> applySftpConnection(record, network)
+            ProtocolKind.FTP -> applyFtpConnection(record, network)
 
             ProtocolKind.LOCAL -> {
+                _remoteNotice.value = null
                 closeRemoteRoot()
                 applyLocalConnectionRoot(record)
             }
 
-            else -> {
+            null -> {
+                AppLog.w(TAG, "连接 " + record.name + " 的协议标识 " + record.protocolId + " 认不出，继续使用本地根目录")
+                _remoteNotice.value = "连接「" + record.name + "」的协议标识（" + record.protocolId +
+                    "）认不出：仍在使用本地根目录，请到连接页编辑或删除它"
                 closeRemoteRoot()
-                AppLog.i(TAG, "连接 " + record.name + " 的协议 " + record.protocolId + " 尚未接入（M5），继续使用本地根目录")
             }
         }
     }
+
+    /**
+     * 选路（**R7**）：当前网络下该连接的首选地址。
+     *
+     * 没有可用地址时给一条中文提示（界面弹 Snackbar），调用方随后回落到本地根目录——
+     * 比起"悄悄什么都不做"，用户至少知道为什么目录还是本地那套。
+     */
+    private fun selectAddress(record: ConnectionRecord, network: NetworkContext): SelectableAddress? {
+        val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
+        val address = selection.primary
+        if (address == null) {
+            AppLog.w(TAG, "连接 " + record.name + " 当前没有可用地址（" + selection.explanation + "）")
+            _remoteNotice.value = "连接「" + record.name + "」当前没有可用地址：" + selection.explanation
+        }
+        return address
+    }
+
+    /**
+     * 远端后端的统一收尾（WebDAV / SFTP / FTP 共用）：换根、关旧、发布、启动自检。
+     *
+     * @param signature 重建指纹（[ConnectionBackends.rebuildSignature]）：只有它变了才重建后端，
+     *   否则网络抖动 / 重复回调都会把 SSH 会话或 FTP 控制连接拆掉重连。
+     * @param build 真正造后端；抛异常时保持本地根目录并给一句能照做的中文提示（R16）。
+     */
+    private suspend fun installRemoteRoot(
+        record: ConnectionRecord,
+        address: SelectableAddress,
+        signature: String,
+        displayPath: String,
+        protocolText: String,
+        build: suspend () -> StorageBackend,
+    ) {
+        if (remoteSignature == signature && remoteRoot != null) return
+        val previous = remoteRoot
+        val next = runCatching {
+            BrowserRootState(
+                // 远端连接不是"本地根目录模式"：NONE 只影响首页那个本地卡片，浏览器只读 label/displayPath/backend
+                mode = RootModeKind.NONE,
+                label = record.name + " · " + address.label.zhText,
+                displayPath = displayPath,
+                backend = build(),
+            )
+        }.onFailure { t ->
+            AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + address.display, t)
+            _remoteNotice.value = "连接「" + record.name + "」切不过去：" + friendlyReason(t) + "（仍在使用本地根目录）"
+        }.getOrNull()
+
+        remoteRoot = next
+        remoteSignature = if (next == null) null else signature
+        if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
+        if (next != null) _remoteNotice.value = null
+        publishRoot()
+        next?.let { ioScope.launch { logProbe(it) } }
+    }
+
+    /** 后端构造失败 → 给用户看的中文原因（R16：不把异常类名甩到界面上）。 */
+    private fun friendlyReason(t: Throwable): String =
+        t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
 
     /** 本地连接 → 写回根目录配置（R12：content:// 走 SAF，绝对路径走全盘模式）。 */
     private suspend fun applyLocalConnectionRoot(record: ConnectionRecord) {
@@ -949,44 +1057,90 @@ class AppContainer(context: Context) :
 
     /** WebDAV 连接 → 选路 + 解密密码 + 建后端（R7/R6）。 */
     private suspend fun applyWebDavConnection(record: ConnectionRecord, network: NetworkContext) {
-        val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
-        val address = selection.primary
+        val address = selectAddress(record, network)
         if (address == null) {
-            AppLog.w(TAG, "连接 " + record.name + " 当前没有可用地址（" + selection.explanation + "）")
             closeRemoteRoot()
             return
         }
-        val signature = record.id.toString() + "|" + address.id + "|" + record.basePath + "|" +
-            record.username.orEmpty() + "|" + record.hasSecret + "|" + address.scheme + address.host + address.port
-        if (remoteSignature == signature && remoteRoot != null) return
-
-        val previous = remoteRoot
-        val password = runCatching { connectionRepository.revealSecret(record.id) }.getOrNull()
-        val next = runCatching {
-            val config = WebDavConfig(
-                baseUrl = ConnectionEndpoints.baseUrl(address.scheme, address.host, address.port),
-                username = record.username,
-                password = password,
-                rootPath = record.basePath,
-                allowInsecureHttp = record.options.allowInsecureHttp,
-                connectTimeoutMs = record.options.connectTimeoutMs ?: WebDavConfig.DEFAULT_CONNECT_TIMEOUT_MS,
+        installRemoteRoot(
+            record = record,
+            address = address,
+            signature = ConnectionBackends.rebuildSignature(record, address),
+            displayPath = ConnectionEndpoints.baseUrl(address.scheme, address.host, address.port),
+            protocolText = "WebDAV",
+        ) {
+            val password = runCatching { connectionRepository.revealSecret(record.id) }.getOrNull()
+            WebDavStorageBackend(
+                WebDavConfig(
+                    baseUrl = ConnectionEndpoints.baseUrl(address.scheme, address.host, address.port),
+                    username = record.username,
+                    password = password,
+                    rootPath = record.basePath,
+                    allowInsecureHttp = record.options.allowInsecureHttp,
+                    connectTimeoutMs = record.options.connectTimeoutMs ?: WebDavConfig.DEFAULT_CONNECT_TIMEOUT_MS,
+                ),
             )
-            BrowserRootState(
-                // 远端连接不是"本地根目录模式"：NONE 只影响首页那个本地卡片，浏览器只读 label/displayPath/backend
-                mode = RootModeKind.NONE,
-                label = record.name + " · " + address.label.zhText,
-                displayPath = config.requestBaseUrl,
-                backend = WebDavStorageBackend(config),
-            )
-        }.onFailure { t ->
-            AppLog.w(TAG, "构造 WebDAV 后端失败：" + record.name + " → " + address.display, t)
-        }.getOrNull()
+        }
+    }
 
-        remoteRoot = next
-        remoteSignature = if (next == null) null else signature
-        if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
-        publishRoot()
-        next?.let { ioScope.launch { logProbe(it) } }
+    /**
+     * SFTP 连接 → 选路 + 解密密码 + TOFU 主机密钥 + 建后端（**R2** 四协议 / R7 / R6）。
+     *
+     * 没存过密码时直接给一句能照做的提示（而不是让后端抛"必须提供密码或私钥"）：
+     * 自用场景最常见的失败就是"建了连接忘了填密码"。
+     */
+    private suspend fun applySftpConnection(record: ConnectionRecord, network: NetworkContext) {
+        val address = selectAddress(record, network)
+        if (address == null) {
+            closeRemoteRoot()
+            return
+        }
+        installRemoteRoot(
+            record = record,
+            address = address,
+            signature = ConnectionBackends.rebuildSignature(record, address),
+            displayPath = ConnectionBackends.remoteDisplayPath("sftp", address, record.basePath),
+            protocolText = "SFTP",
+        ) {
+            if (record.username.isNullOrBlank()) {
+                error("还没有填用户名，请在连接页编辑这条连接并填写用户名")
+            }
+            val secret = runCatching { connectionRepository.revealSecret(record.id) }.getOrNull()
+            if (secret.isNullOrEmpty()) {
+                error("还没有保存密码，请在连接页编辑这条连接并填写密码")
+            }
+            SftpStorageBackend(
+                ConnectionBackends.sftpConfig(record, address, secret, hostKeyPolicy = SftpHostKeyPolicy.TOFU),
+                sftpHostKeys,
+            )
+        }
+    }
+
+    /**
+     * FTP 连接 → 选路 + 解密密码 + 建后端（R2 / R7）。
+     *
+     * tls 列决定明文 / 显式 FTPS / 隐式 FTPS（认不出的一律明文，与连通性测试同一口径）。
+     */
+    private suspend fun applyFtpConnection(record: ConnectionRecord, network: NetworkContext) {
+        val address = selectAddress(record, network)
+        if (address == null) {
+            closeRemoteRoot()
+            return
+        }
+        installRemoteRoot(
+            record = record,
+            address = address,
+            // tls 参与指纹：改加密方式要重建后端（明文与 FTPS 是两条不同的连接路径）
+            signature = ConnectionBackends.rebuildSignature(record, address, extra = record.tls.orEmpty().lowercase()),
+            displayPath = ConnectionBackends.remoteDisplayPath("ftp", address, record.basePath),
+            protocolText = "FTP",
+        ) {
+            if (record.username.isNullOrBlank()) {
+                error("还没有填用户名，请在连接页编辑这条连接并填写用户名（匿名 FTP 就填 anonymous）")
+            }
+            val secret = runCatching { connectionRepository.revealSecret(record.id) }.getOrNull()
+            FtpStorageBackend(ConnectionBackends.ftpConfig(record, address, secret))
+        }
     }
 
     /** 关掉远端后端（清除当前连接 / 连接被删 / 换协议时调用）。 */

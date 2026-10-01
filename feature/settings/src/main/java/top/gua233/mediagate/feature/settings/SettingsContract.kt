@@ -9,7 +9,7 @@ package io.github.gua123.mediagate.feature.settings
  * @param protocolText 协议展示名。
  * @param primaryAddress 当前网络下的首选地址（R7 选路结果）；未知为 null。
  * @param selectionReason 选路判定依据的中文说明（R7）。
- * @param browsable 该协议是否已接入（M4：LOCAL / WEBDAV 可以，SFTP / FTP 待 M5）。
+ * @param browsable 该协议是否已接入（本地 / WebDAV / SFTP / FTP 都可以；协议标识认不出时为 false）。
  */
 data class SettingsConnectionUi(
     val name: String? = null,

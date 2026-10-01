@@ -34,9 +34,14 @@ data class ConnectionRecord(
     /** 协议展示名（未知协议显示原始字符串）。 */
     val protocolText: String get() = protocol?.zhText ?: protocolId
 
-    /** 该连接是否本轮（M4）能真正列目录/播放：LOCAL 与 WEBDAV 可以，SFTP/FTP 待 M5。 */
+    /**
+     * 该连接是否已能真正列目录/播放（**R2** 四协议后端齐备：本地 / WebDAV / SFTP / FTP 都可以）。
+     *
+     * 只有"数据库里的协议标识认不出"（[protocol] == null）才为 false：那时界面照实说明，
+     * 并且不允许设为当前连接——否则会静默退回本地根目录，用户以为已经切过去了。
+     */
     val browsable: Boolean
-        get() = protocol == ProtocolKind.LOCAL || protocol == ProtocolKind.WEBDAV
+        get() = protocol != null
 
     /** 交给选路逻辑的地址列表（R7）。 */
     fun selectableAddresses(): List<SelectableAddress> = addresses.map { it.toSelectable() }

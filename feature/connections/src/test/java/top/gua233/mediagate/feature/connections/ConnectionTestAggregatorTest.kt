@@ -25,7 +25,7 @@ class ConnectionTestAggregatorTest {
         errorCode = if (ok) null else "TIMEOUT",
         errorText = if (ok) null else "连接超时（地址不可达）",
         message = null,
-        notice = if (handshakeSkipped) "SFTP 后端尚未接入（M5）：本次只验证到 DNS/TCP 两段，未做协议握手" else null,
+        notice = if (handshakeSkipped) "SFTP 暂无协议握手实现：本次只验证到 DNS/TCP 两段，未做协议握手" else null,
     )
 
     private fun result(id: Long, vararg addresses: AddressTestUi) =
@@ -109,7 +109,7 @@ class ConnectionTestAggregatorTest {
         val skipped = address(1L, true, handshakeSkipped = true)
         assertEquals("TCP 可达（未做协议握手）", skipped.statusText)
         assertTrue(skipped.timingLine.contains("握手未测"))
-        assertTrue(skipped.notice!!.contains("M5"))
+        assertTrue(skipped.notice!!.contains("暂无协议握手实现"))
         assertEquals(6L, skipped.totalMs)
     }
 

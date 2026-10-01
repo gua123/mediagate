@@ -12,15 +12,16 @@ import java.io.File
 /**
  * 各协议的"第三段"握手实现（**R8**，plan 4.5：协议握手才是真正的决定权）。
  *
- * 本轮（M4）只提供两种：
+ * 本对象只提供这两种（其余协议见 [StorageConnectionHandshakes]）：
  * - [ProtocolKind.LOCAL]：检查本地目录是否存在、是不是目录、能不能读；
  * - [ProtocolKind.WEBDAV]：构造一个**临时**的 [WebDavStorageBackend] 发一次 PROPFIND，期望 207/200；
  *   401 = 账号密码错、403 = 无权限、404 = 根路径不对（后端的 [io.github.gua123.mediagate.core.model.ProbeReport]
  *   已经给出中文结论，这里只把它翻译成稳定的错误枚举）。
  *
- * [ProtocolKind.SFTP] / [ProtocolKind.FTP] **故意不提供**：M5 才有对应后端，本轮只能测到
- * DNS/TCP 两段；[io.github.gua123.mediagate.core.network.ConnectionTester] 会在这两个协议上跳过握手并
- * 在结果里带"未做协议握手"的中文提示（界面如实展示，不谎报"正常"）。
+ * [ProtocolKind.SFTP] / [ProtocolKind.FTP] 的握手在 [StorageConnectionHandshakes] 里装配
+ * （M5 补的第三个分支），调用方用那个入口，四协议就都有真握手；
+ * 若哪个协议确实没有握手实现，[io.github.gua123.mediagate.core.network.ConnectionTester] 会跳过握手
+ * 并在结果里带"未做协议握手"的中文提示（界面如实展示，不谎报"正常"）。
  *
  * 临时后端用完即 [WebDavStorageBackend.close]，不会把连接池留在后台（测试全部时每个地址一个）。
  */
