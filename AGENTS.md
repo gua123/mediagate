@@ -60,6 +60,8 @@
   同日第三项：按用户要求「界面语言直接用中文，不要中英双语」做了错误提示统一——新增 `:core:common` 的
   `ErrorText`（含汉字原样保留 → 按异常类型/英文关键词归类 → 兜底中文），把连接页、:app 远端提示、WebDAV/SFTP/FTP
   后端、LibVLC、字幕任务、TS 扫描、whisper 引擎等处会露出的库英文 message 全部收口（提交 `e021c6c`）。
+  同日第四项（真机截图确认后）：明文被拦不再谎报「网络不可达」——`ConnectivityError` 新增 `CLEARTEXT_BLOCKED`，
+  WebDAV probe 去掉「网络不可达：」前缀（提交 `3f78b65`）。
 - **当前基线**：全项目 **1279 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest`；
   本轮真机修复新增 15 例：:feature:connections +8、:app +2、:core:common +5）；
   release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
