@@ -1,0 +1,8 @@
+{
+  "versionCode": 2,
+  "versionName": "0.1.1",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.1/mediagate-0.1.1.apk",
+  "sizeBytes": 74268719,
+  "sha256": "e3c1dd188a92a8267a6b80578d1b5d7d26820f5c0af76f68353552b911b7f792",
+  "notes": "## mediagate 0.1.1\n\n这一版把\"真机验收暴露出来的问题\"和\"计划里有、实现里缺的功能\"一起补齐了。\n\n### 修复\n- **SFTP / FTP 真正接进 App**：此前只交付了数据层后端，组合根仍是 WebDAV/本地两分支，真机上只提示\n  「（M5 接入）」。现已接进「设为当前连接 → 浏览 / 播放」，并清掉全部 M5 陈旧文案。\n- **放开明文 http**：targetSdk 36 下系统默认拦死明文流量，局域网 WebDAV（http://…）在真机上全挂；\n  新增 network_security_config 并加回归用例（JVM 单测抓不到这类平台策略问题）。\n- **明文被拦不再谎报「网络不可达」**：新增 CLEARTEXT_BLOCKED 分类，提示里给出可照做的出口。\n- **界面全中文**：新增 ErrorText，把底层库（OkHttp / JSch / LibVLC / ffmpeg）的英文 message\n  统一收口成中文，界面不再出现英文原句。\n\n### 新增\n- **应用内检查更新（R20）**：设置页「检查更新」→ 读公开仓库的 update.json → 应用内下载\n  （断点续传 + SHA-256 + **签名证书比对**）→ 调起系统安装器。安装那一下必须点系统确认页\n  （Android 不允许静默安装）。\n- **语音识别模型管理（R14）**：设置页可下载 / 删除 / 切换 whisper 档位（tiny / base / small），\n  带进度、断点续传与国内镜像开关——此前这块完全没有界面，音转字幕在真机上用不了。\n- **时间戳重建（R3 / R11）**：TS 家族在播放页多一条「修复时间戳」出口，用 FFmpeg 重写一份\n  时间戳正常的副本再续播。\n- **字幕另存为纯文本**（R14）。\n\n### 其它\n- 包名改为 io.github.gua123.mediagate（**更换包名 = 全新安装**：旧版的数据不会迁移，\n  连接记录需要重新添加一次）。\n- 源码仓库转为公开：仓库内全部真实地址 / 账号已脱敏（密码从未入库）。"
+}
