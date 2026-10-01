@@ -971,30 +971,52 @@ class VideoPlayerViewModel(
             }
             return
         }
-        engine = created
-        observe(created)
-        val view = created.videoView()
-        _videoOutput.value = view
-        VideoEngineSwitch.applyRestore(created, plan.restore)
-        // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）
-        source?.let { ref -> bindSession(created, ref, view) }
-        if (reason == SwitchReason.USER_REQUEST) {
-            withContext(io) { runCatching { environment.preferences.setEngine(target) } }
+        // 新内核"接管现场"这一段整体兜底（**2026-10-03 真机：点右上角「内核」切到 LibVLC 会闪退**）。
+        // 之前只包了 createEngine，而 applyRestore（setDecoderMode → setResizeMode → setMedia → prepare →
+        // seekTo → setSpeed → 字幕 → play）与会话绑定都在 try 之外：LibVLC 建实例、回环代理、
+        // SurfaceView 挂载任何一步抛异常，都会顺着 viewModelScope 冒到默认处理器 → 整机闪退。
+        try {
+            engine = created
+            observe(created)
+            val view = created.videoView()
+            _videoOutput.value = view
+            VideoEngineSwitch.applyRestore(created, plan.restore)
+            // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）
+            source?.let { ref -> bindSession(created, ref, view) }
+            if (reason == SwitchReason.USER_REQUEST) {
+                withContext(io) { runCatching { environment.preferences.setEngine(target) } }
+            }
+            _state.update {
+                it.reduce(
+                    VideoPlayerEvent.SwitchCompleted(
+                        kind = created.kind,
+                        decoderMode = plan.restore.decoderMode,
+                        positionMs = plan.restore.positionMs,
+                        playing = plan.restore.playWhenReady,
+                    ),
+                )
+            }
+            msSinceSave = 0L
+            wasPlaying = plan.restore.playWhenReady
+            endedSaved = false
+            startTicker()
+        } catch (e: CancellationException) {
+            runCatching { created.release() }
+            throw e
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "切换内核后初始化失败：" + target.label, t)
+            runCatching { created.release() }
+            engine = null
+            _videoOutput.value = null
+            _state.update {
+                it.reduce(
+                    VideoPlayerEvent.SwitchFailed(
+                        detail = t.message,
+                        canFallback = VideoEngineSwitch.fallbackTarget(target, proxyAvailable) != null,
+                    ),
+                )
+            }
         }
-        _state.update {
-            it.reduce(
-                VideoPlayerEvent.SwitchCompleted(
-                    kind = created.kind,
-                    decoderMode = plan.restore.decoderMode,
-                    positionMs = plan.restore.positionMs,
-                    playing = plan.restore.playWhenReady,
-                ),
-            )
-        }
-        msSinceSave = 0L
-        wasPlaying = plan.restore.playWhenReady
-        endedSaved = false
-        startTicker()
     }
 
     // ------------------------------------------------------------------ 内核状态与进度

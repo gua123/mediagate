@@ -155,7 +155,13 @@
   ② 任务栏：0.1.16 已在播放页 `hide(systemBars())`，本版补 `LifecycleEventEffect(ON_RESUME)` 重隐藏
   （切回桌面/解锁/上滑唤出之后系统会放回栏，只 hide 一次不够）+ **图片查看器同样全屏** +
   `remember` 缓存 insets controller。
-  当前版本 **0.1.17 / versionCode 18**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.16）。
+- **M25 切换内核闪退（2026-10-03，0.1.18）**：用户报"点右上角内核还会闪退" →
+  `performSwitch` 里只包了 `createEngine`，而**新内核接管现场**的整段（`observe` / `videoView()` /
+  `applyRestore`（setMedia→prepare→seekTo→倍速→字幕→play）/ `bindSession`）都在兜底之外，
+  切 LibVLC 时任何一步抛异常都会冒到默认处理器 → 闪退（与 0.1.9 同源的"异常逃逸路径"）。
+  修：整段 try/catch（失败 → 释放半成品 + engine/output 置空 + 归约 `SwitchFailed` 显示中文原因）；
+  `SwitchFailed` 补 `playing/buffering = false`；:feature:player-video +1。
+  当前版本 **0.1.18 / versionCode 19**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.17）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

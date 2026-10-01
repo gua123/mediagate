@@ -525,6 +525,10 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         errorKind = VideoErrorKind.PLAYBACK,
         errorDetail = event.detail,
         canFallback = event.canFallback,
+        // 旧内核已释放、新内核没建起来：此刻**没有任何东西在播**，
+        // 不把 playing 归零的话界面会继续显示"暂停"按钮（2026-10-03 切换失败用例抓到的）
+        playing = false,
+        buffering = false,
     )
 
     VideoPlayerEvent.SwitchHintCleared -> copy(
