@@ -67,7 +67,7 @@
   后端、LibVLC、字幕任务、TS 扫描、whisper 引擎等处会露出的库英文 message 全部收口（提交 `e021c6c`）。
   同日第四项（真机截图确认后）：明文被拦不再谎报「网络不可达」——`ConnectivityError` 新增 `CLEARTEXT_BLOCKED`，
   WebDAV probe 去掉「网络不可达：」前缀（提交 `3f78b65`）。
-- **当前基线**：全项目 **1279 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest`；
+- **当前基线（2026-10-03 更新）**：全项目 **1352 个 JVM 用例 0 失败**（29 个模块）（`./gradlew testDebugUnitTest`；
   本轮真机修复新增 15 例：:feature:connections +8、:app +2、:core:common +5）；
   release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
 - **M10 发版前整理（2026-10-03，0.1.1）已完成**：
@@ -81,7 +81,18 @@
   ④ **字幕另存为纯文本**（`SubtitleFormat.TXT` 只作导出目标，不进可加载字幕源）；
   ⑤ `scripts/publish-update.sh` 一键发版（建 Release + 传 APK + 写 update.json + 提交推送）；
   ⑥ 仓库**脱敏 + 包名替换 + 重写全部历史**后转公开（详见第 1 节红线与 docs/验收记录-M2-M8.md 第 10 节）。
-  当前版本 **0.1.1 / versionCode 2**，包名 `io.github.gua123.mediagate`。
+- **M11 已知限制清空（2026-10-03，0.1.2）**：上一版列的"已知限制"基本清完——
+  · **whisper 模型官方 SHA-256 回填**（下载三档官方模型逐份算，字节数与原 sizeBytes 一致），并修掉
+    **失效的镜像写法**（`gh-proxy` 前缀式已 404 → 改成替换主机的 `hf-mirror.com`，实测可用）；
+  · **SFTP 主机密钥指纹落库**（Room v3→v4 的 `sftp_host_key` 表 + `PersistentKnownHostsStore` 写穿；
+    设置页新增「已信任的 SFTP 主机密钥」可逐条忘掉——服务器真换钥时的复原路径）；
+  · **通知栏/锁屏封面**（缩略图 LRU 复用，不为封面额外抽帧）与**音频同目录 cover.jpg 兜底**；
+  · **分段缓存**（`SegmentedCacheBackend`：4 MB 段 + LRU + 大小缓存；远端根目录统一套一层，
+    让不支持随机读的协议也能拖拽）；
+  · **TS 索引接进 App**（无 PCR 提示 + 拖拽落点预取；**没有**替换 Media3 的 seek 实现，
+    因此不宣称毫秒级）；
+  · **强制硬解的口径落地**（Media3 侧 = 剔除软件解码器候选，无硬解时如实退回并提示）。
+  当前版本 **0.1.2 / versionCode 3**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
