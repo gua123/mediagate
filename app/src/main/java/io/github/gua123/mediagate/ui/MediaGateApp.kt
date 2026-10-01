@@ -68,6 +68,7 @@ import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
+import io.github.gua123.mediagate.app.ui.DiagnosticsSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelSection
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelViewModel
@@ -446,6 +447,11 @@ private fun SettingsRoute(
 
     // 已信任的 SFTP 主机指纹（R2）：TOFU 落库后要能看到、能忘掉
     val trustedHostKeys by container.trustedHostKeys.collectAsStateWithLifecycle()
+
+    // 崩溃诊断（2026-10-03）：进设置页时读一次最新报告（崩溃会杀进程，所以不需要轮询刷新）
+    var crashReport by remember { mutableStateOf(container.readLatestCrash()) }
+    var crashTimeMs by remember { mutableStateOf(container.latestCrashTimeMs()) }
+    var crashReportCount by remember { mutableStateOf(container.crashReportCount()) }
     LaunchedEffect(asrModelState.notice) {
         val notice = asrModelState.notice ?: return@LaunchedEffect
         onNotice(notice)
@@ -490,6 +496,18 @@ private fun SettingsRoute(
             container.keepAlive.setConfirmed(kind, confirmed)
         },
         extraSections = {
+            // 诊断（2026-10-03）：崩溃报告看得到、复制得走——真机闪退唯一的定位手段
+            DiagnosticsSection(
+                crashReport = crashReport,
+                crashTimeMs = crashTimeMs,
+                reportCount = crashReportCount,
+                onClear = {
+                    container.clearCrashes()
+                    crashReport = null
+                    crashTimeMs = null
+                    crashReportCount = 0
+                },
+            )
             // SFTP 主机密钥（R2）：TOFU 落库后的展示与"忘掉重来"出口
             TrustedHostKeysSection(
                 keys = trustedHostKeys,

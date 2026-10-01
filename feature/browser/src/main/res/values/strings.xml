@@ -19,6 +19,10 @@
     <string name="browser_error_not_found">目录不存在</string>
     <string name="browser_error_not_supported">该目录暂不支持浏览</string>
     <string name="browser_error_unknown">加载失败，请重试</string>
+    <string name="browser_action_sort">排序：%1$s</string>
+    <string name="browser_sort_title">排序方式</string>
+    <string name="browser_sort_ascending">改为升序 ↑</string>
+    <string name="browser_sort_descending">改为降序 ↓</string>
     <string name="browser_error_auth">认证失败：账号或密码不对</string>
     <string name="browser_error_auth_hint">怎么办：到「连接」页点开这条连接 →「编辑」，重新输入密码后先点「测试一下」，通过再保存（密码框留空表示沿用已保存的旧密码，所以改过服务器密码时必须重新输入）。</string>
     <string name="browser_error_detail">错误详情：%1$s</string>

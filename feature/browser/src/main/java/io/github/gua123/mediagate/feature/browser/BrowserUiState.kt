@@ -64,6 +64,8 @@ data class BrowserUiState(
     val entries: List<RemoteEntry> = emptyList(),
     /** 套上 [filter] 之后真正展示的列表（目录始终保留，否则进不去子目录）。 */
     val visibleEntries: List<RemoteEntry> = emptyList(),
+    /** 列表排序（用户可选，持久化在 :app）。 */
+    val sort: EntrySort = EntrySort(),
     /** 失败分类；非 [BrowserStatus.ERROR] 时为 null。 */
     val errorKind: BrowserErrorKind? = null,
     /** 后端给的具体错误信息（诊断用，可为 null）。 */
@@ -87,6 +89,9 @@ data class BrowserUiState(
 
 /** 状态事件：ViewModel 只负责把外部结果翻译成事件，状态迁移全在 [reduce] 里。 */
 sealed interface BrowserEvent {
+
+    /** 改排序方式（方式或升降序）。 */
+    data class SortChanged(val sort: EntrySort) : BrowserEvent
 
     /** 开始列某个目录（[refreshing] = 下拉刷新，保留旧内容）。 */
     data class LoadStarted(
@@ -135,7 +140,7 @@ fun BrowserUiState.reduce(event: BrowserEvent): BrowserUiState = when (event) {
     is BrowserEvent.LoadSucceeded -> copy(
         status = if (event.entries.isEmpty()) BrowserStatus.EMPTY else BrowserStatus.CONTENT,
         entries = event.entries,
-        visibleEntries = BrowserFilters.apply(event.entries, filter),
+        visibleEntries = EntrySorter.sort(BrowserFilters.apply(event.entries, filter), sort),
         refreshing = false,
         errorKind = null,
         errorDetail = null,
@@ -150,6 +155,15 @@ fun BrowserUiState.reduce(event: BrowserEvent): BrowserUiState = when (event) {
         visibleEntries = emptyList(),
     )
 
+    // 排序变了：拿当前目录项重算可见列表（不再打一次远端）
+    is BrowserEvent.SortChanged -> copy(
+        sort = event.sort,
+        visibleEntries = EntrySorter.sort(
+            BrowserFilters.apply(entries, filter),
+            event.sort,
+        ),
+    )
+
     BrowserEvent.RootMissing -> copy(
         status = BrowserStatus.NO_ROOT,
         refreshing = false,
@@ -161,7 +175,7 @@ fun BrowserUiState.reduce(event: BrowserEvent): BrowserUiState = when (event) {
 
     is BrowserEvent.FilterChanged -> copy(
         filter = event.filter,
-        visibleEntries = BrowserFilters.apply(entries, event.filter),
+        visibleEntries = EntrySorter.sort(BrowserFilters.apply(entries, event.filter), sort),
     )
 }
 

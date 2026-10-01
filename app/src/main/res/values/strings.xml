@@ -38,6 +38,15 @@
     <string name="trusted_host_keys_forget">忘掉</string>
     <string name="trusted_host_keys_forget_all">全部忘掉</string>
 
+    <!-- 诊断（2026-10-03 真机闪退之后补）：崩溃报告摆到界面上，用户复制给我即可定位 -->
+    <string name="diagnostics_title">诊断与崩溃日志</string>
+    <string name="diagnostics_subtitle">App 崩溃时会自动把堆栈与出事前的日志写进本机；这里能看到并复制全文。</string>
+    <string name="diagnostics_no_crash">还没有崩溃记录。</string>
+    <string name="diagnostics_last_crash">最近一次崩溃：%1$s（共 %2$d 份报告）</string>
+    <string name="diagnostics_view">查看全文</string>
+    <string name="diagnostics_clear">清空</string>
+    <string name="diagnostics_close">关闭</string>
+
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>

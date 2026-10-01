@@ -62,6 +62,18 @@ class BrowserViewModel(
         viewModelScope.launch {
             environment.root.collect { root -> onRootChanged(root) }
         }
+        // 排序设置由 :app 持久化：进页面先拿当前值，用户改了也跟着状态走
+        viewModelScope.launch {
+            environment.sort.collect { sort -> _state.update { it.reduce(BrowserEvent.SortChanged(sort)) } }
+        }
+    }
+
+    /**
+     * 改排序（2026-10-03 用户要求）：先更新界面，再落盘（落盘失败不影响本次浏览）。
+     */
+    fun setSort(sort: EntrySort) {
+        _state.update { it.reduce(BrowserEvent.SortChanged(sort)) }
+        viewModelScope.launch { environment.setSort(sort) }
     }
 
     /** 进入子目录（[path] 为相对根目录的 POSIX 路径）。 */

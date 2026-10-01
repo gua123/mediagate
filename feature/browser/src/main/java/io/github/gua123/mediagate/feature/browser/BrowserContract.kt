@@ -61,6 +61,16 @@ interface BrowserEnvironment {
 
     /** 缩略图仓库（R5，plan 4.4）：列表缩略图统一走它，不在组合函数里做 IO。 */
     val thumbnails: ThumbnailRepository
+
+    /**
+     * 列表排序设置（**2026-10-03 用户要求**：「增加文件文件夹排序功能」）。
+     *
+     * 由 :app 持久化（DataStore），所以换页/重启后仍是用户上次选的排法。
+     */
+    val sort: StateFlow<EntrySort>
+
+    /** 改排序并落盘。 */
+    suspend fun setSort(sort: EntrySort)
 }
 
 /**

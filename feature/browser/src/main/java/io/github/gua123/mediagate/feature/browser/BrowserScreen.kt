@@ -32,11 +32,14 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -51,8 +54,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -148,6 +153,11 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
+                    // 排序（2026-10-03 用户要求）：方式 + 升降序，选择落盘，换页/重启都记得
+                    SortMenu(
+                        sort = state.sort,
+                        onPick = { viewModel.setSort(it) },
+                    )
                     IconButton(onClick = viewModel::refresh) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
@@ -400,6 +410,54 @@ private fun NoRootPanel(onRequestRootAccess: () -> Unit) {
     ) {
         Button(onClick = onRequestRootAccess) {
             Text(stringResource(R.string.browser_action_pick_root))
+        }
+    }
+}
+
+/**
+ * 排序菜单（**2026-10-03 用户要求**：「增加文件文件夹排序功能」）。
+ *
+ * 两项交互：选排序方式（名称/大小/修改时间/类型）、切升降序。目录永远排在最前（见 [EntrySorter]）。
+ */
+@Composable
+private fun SortMenu(sort: EntrySort, onPick: (EntrySort) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                imageVector = Icons.Default.Sort,
+                contentDescription = stringResource(R.string.browser_action_sort, sort.label),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            Text(
+                text = stringResource(R.string.browser_sort_title),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+            EntrySortMode.entries.forEach { mode ->
+                DropdownMenuItem(
+                    text = { Text(mode.zhText) },
+                    onClick = {
+                        open = false
+                        onPick(sort.copy(mode = mode))
+                    },
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(
+                            if (sort.ascending) R.string.browser_sort_descending else R.string.browser_sort_ascending,
+                        ),
+                    )
+                },
+                onClick = {
+                    open = false
+                    onPick(sort.toggled())
+                },
+            )
         }
     }
 }

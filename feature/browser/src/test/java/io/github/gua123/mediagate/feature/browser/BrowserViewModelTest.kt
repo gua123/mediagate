@@ -266,10 +266,44 @@ class BrowserViewModelTest {
         mtime = mtime,
     )
 
+    @Test
+    fun `改排序后列表按新排法重排（不打远端）`() = runTest(dispatcher) {
+        val backend = FakeBackend(
+            mapOf(
+                "" to listOf(
+                    file("/dir/z.mp4", size = 900L),
+                    file("/dir/a.mp4", size = 100L),
+                ),
+            ),
+        )
+        val environment = FakeEnvironment()
+        val viewModel = BrowserViewModel(environment, io = dispatcher)
+        advanceUntilIdle()
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+
+        val listedBefore = backend.listed.size
+        assertEquals(listOf("a.mp4", "z.mp4"), viewModel.state.value.visibleEntries.map { it.name })
+
+        viewModel.setSort(EntrySort(mode = EntrySortMode.SIZE, ascending = false))
+        advanceUntilIdle()
+
+        assertEquals("降序：大的在前", listOf("z.mp4", "a.mp4"), viewModel.state.value.visibleEntries.map { it.name })
+        assertEquals("重排只动内存，不该再列一次目录", listedBefore, backend.listed.size)
+        assertEquals(EntrySortMode.SIZE, environment.sort.value.mode)
+    }
+
     /** 假环境：根目录可手动切换（模拟用户在首页换目录）。 */
     private class FakeEnvironment : BrowserEnvironment {
 
         override val root = MutableStateFlow<BrowserRootState?>(null)
+
+        /** 排序（2026-10-03）：假环境里可手动改，验证"改排序后列表跟着变"。 */
+        override val sort = MutableStateFlow(EntrySort())
+
+        override suspend fun setSort(sort: EntrySort) {
+            this.sort.value = sort
+        }
 
         override val thumbnails: ThumbnailRepository = ThumbnailRepository(
             cache = ThumbnailCache(rootDir = File(System.getProperty("java.io.tmpdir"), "mediagate-test-thumbs")),

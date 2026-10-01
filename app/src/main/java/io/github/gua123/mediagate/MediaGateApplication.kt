@@ -2,6 +2,7 @@ package io.github.gua123.mediagate
 
 import android.app.Application
 import io.github.gua123.mediagate.app.AppContainer
+import io.github.gua123.mediagate.app.CrashReporter
 import io.github.gua123.mediagate.app.AsrQueueController
 import io.github.gua123.mediagate.app.AsrRuntimeHost
 import io.github.gua123.mediagate.core.common.AppLog
@@ -81,9 +82,26 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoS
 
     override fun onCreate() {
         super.onCreate()
+        // 崩溃捕获要**最先装**：容器构造/数据库迁移之类早期崩溃也得留下报告（2026-10-03 真机闪退之后加的）
+        CrashReporter.install(this)
+        // 再补一刀：Java 处理器抓不到**原生崩溃**（MediaCodec/ffmpeg 的 .so 会让进程直接消失），
+        // 用系统记录的进程退出原因补上；放子线程，不给启动添延迟
+        Thread { runCatching { CrashReporter.captureLastExit(this) } }.start()
         container = AppContainer(this)
-        AppLog.i(TAG, "MediaGate 启动 version=0.1.0")
+        AppLog.i(TAG, "MediaGate 启动：" + versionText())
     }
+
+    /** 启动日志里带上真实版本（别再写死——之前写死的 0.1.0 在排查时很误导）。 */
+    private fun versionText(): String = runCatching {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        val code = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        "version=" + info.versionName + "(" + code + ")"
+    }.getOrDefault("version=未知")
 
     private companion object {
         const val TAG = "MediaGate"
