@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R2/R6 网络与凭据口径：本应用连的是用户在连接页自己配的服务器，局域网那台 WebDAV 就是明文
+  http://192.168.1.10:8080。
+
+  Android 9（API 28）起，targetSdk ≥ 28 的应用**默认禁止明文流量**：不显式放开的话，
+  OkHttp / HttpURLConnection 会直接抛
+  "CLEARTEXT communication to ... not permitted by network security policy"，
+  真机上 WebDAV（以及任何 http 地址）一律连不上。
+  这类问题 1264 个 JVM 用例一个都抓不到——单测跑在 JVM 上，不受系统网络策略约束，所以这里显式声明。
+
+  「要不要走明文」仍由两层把关：
+  ① 连接页的 per-连接开关 allowInsecureHttp（默认局域网允许，只走公网可关掉）；
+  ② WebDavConfig 在 scheme=http 且开关关闭时直接拒绝构造。
+  本文件只解决"系统层不让发"的问题，不改变上面两层口径。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
