@@ -54,6 +54,15 @@ enum class ConnectivityError(
     /** TLS/证书问题。 */
     TLS_FAILED("TLS_FAILED", "安全连接失败", "证书不受信任或 TLS 版本不匹配"),
 
+    /**
+     * 明文 http 被系统策略拦截（真机实测 2026-10-02：连接页显示
+     * `UnknownServiceException CLEARTEXT communication ... not permitted by network security policy`）。
+     *
+     * 根因是清单没放开明文（targetSdk ≥ 28 默认禁止），**不是**网络不通——所以必须单独一类，
+     * 免得界面把它说成「网络不可达」，把用户引去查网线和端口。
+     */
+    CLEARTEXT_BLOCKED("CLEARTEXT_BLOCKED", "明文流量被系统拦截", "在连接页打开「允许明文 http」，或改用 https"),
+
     /** 其他未分类错误（详情看 message）。 */
     UNKNOWN("UNKNOWN", "未知错误", "查看详情"),
     ;
@@ -83,6 +92,8 @@ enum class ConnectivityError(
             is IOException -> {
                 val text = (t.message ?: "").lowercase()
                 when {
+                    // OkHttp 在明文被系统拦时抛 UnknownServiceException，消息里必带 CLEARTEXT
+                    text.contains("cleartext") -> CLEARTEXT_BLOCKED
                     text.contains("refused") -> CONNECTION_REFUSED
                     text.contains("timed out") || text.contains("timeout") -> TIMEOUT
                     text.contains("unreachable") || text.contains("no route") -> NETWORK_UNREACHABLE
@@ -118,6 +129,8 @@ enum class ConnectivityError(
                 fromHttpStatus(code)?.let { return it }
             }
             return when {
+                // 顺序：明文被拦最先认（它的提示里常伴 http/https 字样，别被后面的规则抢走）
+                text.contains("明文") || text.contains("cleartext", true) -> CLEARTEXT_BLOCKED
                 text.contains("DNS") || text.contains("解析失败") -> DNS_FAILED
                 text.contains("拒绝") -> CONNECTION_REFUSED
                 text.contains("超时") || text.contains("timeout", true) -> TIMEOUT
