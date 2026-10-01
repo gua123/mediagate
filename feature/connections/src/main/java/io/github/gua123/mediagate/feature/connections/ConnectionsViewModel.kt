@@ -179,14 +179,20 @@ class ConnectionsViewModel(
             val result = try {
                 val record = DraftTestSupport.recordOf(draft)
                 // 与保存同一口径：新输入的密码优先，否则用已保存的密文（没存过就是 null）
-                val secret = draft.password.takeIf { it.isNotEmpty() }
-                    ?: withContext(io) { draft.id?.let { repository.revealSecret(it) } }
+                val typed = draft.password.takeIf { it.isNotEmpty() }
+                val secret = typed ?: withContext(io) { draft.id?.let { repository.revealSecret(it) } }
+                val source = when {
+                    typed != null -> PasswordSource.NEW_INPUT
+                    secret != null -> PasswordSource.STORED
+                    else -> PasswordSource.NONE
+                }
                 val tester = ConnectionTester(
                     handshakes = StorageConnectionHandshakes.forConnection(record, secret),
                     io = io,
                 )
                 DraftTestSupport.summarize(
                     tester.testAll(record.protocol ?: ProtocolKind.LOCAL, record.selectableAddresses()),
+                    source,
                 )
             } catch (e: CancellationException) {
                 throw e

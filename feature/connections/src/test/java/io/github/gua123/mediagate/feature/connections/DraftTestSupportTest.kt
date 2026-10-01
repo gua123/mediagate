@@ -59,7 +59,7 @@ class DraftTestSupportTest {
             ),
         )
 
-        assertTrue(summary, summary.startsWith("测试通过"))
+        assertTrue(summary, summary.contains("测试通过"))
         assertTrue("要带地址：$summary", summary.contains("192.168.1.10:2222"))
         assertTrue("要带耗时：$summary", summary.contains("56 ms"))
     }
@@ -72,7 +72,7 @@ class DraftTestSupportTest {
             ),
         )
 
-        assertTrue(summary, summary.startsWith("测试失败"))
+        assertTrue(summary, summary.contains("测试失败"))
         assertTrue("要摊开原因：$summary", summary.contains(ConnectivityError.AUTH_FAILED.display))
         assertTrue("要给出三段耗时：$summary", summary.contains("DNS 2 ms"))
     }
@@ -80,6 +80,25 @@ class DraftTestSupportTest {
     @Test
     fun `结果：一个地址都没填时如实说`() {
         assertEquals("没有可测试的地址：先填主机名", DraftTestSupport.summarize(emptyList()))
+    }
+
+    @Test
+    fun `结果要标明用的是哪份密码（真机自查的关键）`() {
+        val failed = listOf(result(address(1, "sftp://nas.local:2222"), ok = false, error = ConnectivityError.AUTH_FAILED))
+
+        assertTrue(
+            DraftTestSupport.summarize(failed, PasswordSource.NEW_INPUT).contains("本次新输入的密码"),
+        )
+        val stored = DraftTestSupport.summarize(failed, PasswordSource.STORED)
+        assertTrue("要说清是旧密码：$stored", stored.contains("已保存的密码"))
+        assertTrue(
+            "用旧密码失败时，要提示「重输一遍再测」这条自检路径：$stored",
+            stored.contains("重新输入一遍"),
+        )
+        assertTrue(
+            "新输入的密码失败时不必再提示重输：$failed",
+            !DraftTestSupport.summarize(failed, PasswordSource.NEW_INPUT).contains("重新输入一遍"),
+        )
     }
 
     private fun address(id: Long, display: String): SelectableAddress {

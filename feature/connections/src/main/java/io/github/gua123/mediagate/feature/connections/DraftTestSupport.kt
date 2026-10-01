@@ -2,6 +2,7 @@ package io.github.gua123.mediagate.feature.connections
 
 import io.github.gua123.mediagate.core.network.AddressLabel
 import io.github.gua123.mediagate.core.network.AddressTestResult
+import io.github.gua123.mediagate.core.network.ConnectivityError
 import io.github.gua123.mediagate.core.network.ProtocolKind
 
 /**
@@ -55,15 +56,39 @@ object DraftTestSupport {
      * 测试结果 → 一句话中文（编辑器里直接显示）。
      *
      * 取**第一个成功**的地址；全失败时把第一条的失败原因摊开——用户最需要知道的是"错在哪"。
+     *
+     * @param source 本次测试用的是哪份密码。**必须标明**：真机反馈过"账号密码都是对的却报认证失败"，
+     *   而"密码框留空 = 沿用已保存的旧密码"这条规则让用户很难意识到测的是旧密码——
+     *   标明来源之后，空着测一次、重输一遍再测一次，两次结果一比就知道问题在哪。
      */
-    fun summarize(results: List<AddressTestResult>): String {
+    fun summarize(results: List<AddressTestResult>, source: PasswordSource = PasswordSource.NONE): String {
         if (results.isEmpty()) return "没有可测试的地址：先填主机名"
+        val used = "〔使用：" + source.zhText + "〕"
         val ok = results.firstOrNull { it.ok }
         if (ok != null) {
-            return "测试通过：" + ok.address.display + "（" + ok.totalMs + " ms）"
+            return used + "测试通过：" + ok.address.display + "（" + ok.totalMs + " ms）"
         }
         val first = results.first()
         val detail = first.error?.display ?: first.message ?: first.notice ?: "原因未知"
-        return "测试失败：" + first.address.display + " — " + detail + "（" + first.timingLine + "）"
+        val base = used + "测试失败：" + first.address.display + " — " + detail + "（" + first.timingLine + "）"
+        // 认证失败时的自检提示：换一份密码再测，结论立刻分化
+        return if (first.error == ConnectivityError.AUTH_FAILED && source != PasswordSource.NEW_INPUT) {
+            base + "。试试在密码框里重新输入一遍密码再点「测试一下」：如果这次通过，说明存着的那份密码不对（留空=沿用旧密码）。"
+        } else {
+            base
+        }
     }
+}
+
+/** 本次测试用的是哪份密码（真机自查的关键提示，见 [DraftTestSupport.summarize]）。 */
+enum class PasswordSource(val zhText: String) {
+
+    /** 用户这次在密码框里新输入的明文。 */
+    NEW_INPUT("本次新输入的密码"),
+
+    /** 沿用已保存（Keystore 密文）的密码。 */
+    STORED("已保存的密码"),
+
+    /** 没有密码（公钥认证 / 匿名）。 */
+    NONE("没有密码"),
 }
