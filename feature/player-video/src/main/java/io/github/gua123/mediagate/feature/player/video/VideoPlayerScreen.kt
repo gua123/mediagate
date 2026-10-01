@@ -10,6 +10,24 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.ChipColors
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -138,6 +156,10 @@ fun VideoPlayerScreen(
 
     /** 字幕面板是否展开（界面本地状态：不进 ViewModel 状态机，R14 面板纯展示）。 */
     var subtitlePanelVisible by remember { mutableStateOf(false) }
+    // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
+    var playlistVisible by remember { mutableStateOf(false) }
+    // 离开播放页恢复"跟随系统"方向（见 ResetOrientationOnLeave 的说明）
+    ResetOrientationOnLeave()
 
     BackHandler(enabled = true) { onBack() }
 
@@ -221,10 +243,23 @@ fun VideoPlayerScreen(
                         // 打开面板时按需匹配同目录候选（含远端；R14）
                         if (subtitlePanelVisible) viewModel.openSubtitlePanel()
                     },
+                    onOpenPlaylist = { playlistVisible = true },
                 )
             }
 
-            // 4) 字幕面板（R14：轨道列表 + 样式 + 时间轴微调 + 写回）
+            // 4) 同文件夹列表（2026-10-03）：点一行直接跳过去
+            if (playlistVisible) {
+                PlaylistSheet(
+                    state = state,
+                    onPick = { index ->
+                        playlistVisible = false
+                        viewModel.openEpisodeAt(index)
+                    },
+                    onDismiss = { playlistVisible = false },
+                )
+            }
+
+            // 5) 字幕面板（R14：轨道列表 + 样式 + 时间轴微调 + 写回）
             if (subtitlePanelVisible) {
                 SubtitlePanel(
                     state = state,
@@ -257,6 +292,26 @@ private fun PipBadge(modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * 播放页芯片的统一配色（**2026-10-03 用户要求**："字体需要白色不然看不清"）。
+ *
+ * 播放页是黑底，Material3 默认芯片取主题的 onSurfaceVariant（灰），在手机上几乎看不清；
+ * 这里统一改成白字 + 半透明白底 + 白色描边，所有芯片都从这里取色，避免漏掉某一个。
+ */
+@Composable
+private fun playerChipColors(): ChipColors = AssistChipDefaults.assistChipColors(
+    labelColor = Color.White,
+    leadingIconContentColor = Color.White,
+    containerColor = Color.White.copy(alpha = 0.16f),
+)
+
+/** 芯片描边（同样是白色系）。 */
+@Composable
+private fun playerChipBorder(): BorderStroke = AssistChipDefaults.assistChipBorder(
+    enabled = true,
+    borderColor = Color.White.copy(alpha = 0.45f),
+)
+
 /** 控制层：顶栏（返回 / 标题 / 内核）＋ 底栏（进度、播放暂停、上下集、倍速、解码、缩放、字幕）。 */
 @Composable
 private fun Controls(
@@ -264,6 +319,7 @@ private fun Controls(
     viewModel: VideoPlayerViewModel,
     onBack: () -> Unit,
     onToggleSubtitlePanel: () -> Unit,
+    onOpenPlaylist: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -288,6 +344,8 @@ private fun Controls(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            // 旋转（2026-10-03 用户要求）：点一下在横屏/竖屏之间切换；退出播放页恢复"跟随系统"
+            RotateButton()
             EngineChip(state = state, onClick = viewModel::switchEngine)
         }
 
@@ -332,7 +390,12 @@ private fun Controls(
 
             ProgressRow(state = state, onSeek = viewModel::onSeekChange, onSeekFinished = viewModel::onSeekFinished)
             PlaybackRow(state = state, viewModel = viewModel)
-            ChipsRow(state = state, viewModel = viewModel, onToggleSubtitlePanel = onToggleSubtitlePanel)
+            ChipsRow(
+                state = state,
+                viewModel = viewModel,
+                onToggleSubtitlePanel = onToggleSubtitlePanel,
+                onOpenPlaylist = onOpenPlaylist,
+            )
 
             // 时间戳重建（R3/R11）：进度 + 结束提示
             if (state.timestampRepairRunning) {
@@ -378,6 +441,112 @@ private fun Controls(
                     )
                     TextButton(onClick = viewModel::dismissTimestampRepairNotice) {
                         Text(stringResource(R.string.video_repair_dismiss))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 旋转按钮（**2026-10-03 用户要求**："需要修改播放视频时的 ui 包括 旋转屏幕"）。
+ *
+ * 点一下在横屏/竖屏之间切换；离开播放页时由 [ResetOrientationOnLeave] 恢复"跟随系统"，
+ * 免得把整个 App 的方向锁死。
+ */
+@Composable
+private fun RotateButton() {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    IconButton(
+        onClick = {
+            val activity = context.findActivity() ?: return@IconButton
+            activity.requestedOrientation = if (landscape) {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+        },
+    ) {
+        Icon(
+            imageVector = Icons.Default.ScreenRotation,
+            contentDescription = stringResource(
+                if (landscape) R.string.video_rotate_to_portrait else R.string.video_rotate_to_landscape,
+            ),
+            tint = Color.White,
+        )
+    }
+}
+
+/** 离开播放页时把方向恢复成"跟随系统"（否则会一直锁在播放页最后选的那个方向）。 */
+@Composable
+private fun ResetOrientationOnLeave() {
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        onDispose {
+            context.findActivity()?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+}
+
+/** 从 Context 里找 Activity（Compose 里拿不到现成的，需要包一层 ContextWrapper）。 */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+/**
+ * 同文件夹列表面板（**2026-10-03 用户要求**："可以显示此播放文件夹内的其他文件，可以在播放时直接跳转"）。
+ *
+ * 数据就是播放页已有的上下集队列（[VideoPlayerUiState.siblingPaths]，进页面时列过一次目录），
+ * 点一行调 [VideoPlayerViewModel.openEpisodeAt] 直接切过去（复用同一个内核，不重建解码器）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistSheet(
+    state: VideoPlayerUiState,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.video_playlist_title, state.count),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (state.siblingPaths.isEmpty()) {
+                Text(stringResource(R.string.video_playlist_empty), style = MaterialTheme.typography.bodyMedium)
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                    itemsIndexed(state.siblingPaths) { index, path ->
+                        val selected = index == state.siblingIndex
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    text = VideoPlayerMath.fileNameOf(path),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                )
+                            },
+                            supportingContent = if (selected) {
+                                { Text(stringResource(R.string.video_playlist_current)) }
+                            } else {
+                                null
+                            },
+                            modifier = Modifier.clickable { onPick(index) },
+                        )
                     }
                 }
             }
@@ -458,6 +627,7 @@ private fun ChipsRow(
     state: VideoPlayerUiState,
     viewModel: VideoPlayerViewModel,
     onToggleSubtitlePanel: () -> Unit,
+    onOpenPlaylist: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -466,9 +636,25 @@ private fun ChipsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
+        AssistChip(
+            onClick = onOpenPlaylist,
+            label = { Text(stringResource(R.string.video_playlist)) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.List,
+                    contentDescription = stringResource(R.string.video_playlist_title, state.count),
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        )
         AssistChip(
             onClick = onToggleSubtitlePanel,
             label = { Text(stringResource(R.string.video_subtitle, subtitleChipLabel(state))) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Subtitles,
@@ -480,20 +666,28 @@ private fun ChipsRow(
         AssistChip(
             onClick = viewModel::cycleSpeed,
             label = { Text(stringResource(R.string.video_speed, state.speedLabel)) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
         )
         AssistChip(
             onClick = viewModel::cycleDecoderMode,
             label = { Text(stringResource(R.string.video_decoder, state.decoderLabel)) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
         )
         AssistChip(
             onClick = viewModel::cycleResizeMode,
             label = { Text(stringResource(R.string.video_resize, state.resizeLabel)) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
         )
         // 时间戳重建（R3/R11）：只有 TS 家族才显示这条出口
         if (state.canRepairTimestamps) {
             AssistChip(
                 onClick = viewModel::repairTimestamps,
                 label = { Text(stringResource(R.string.video_repair_timestamps)) },
+                colors = playerChipColors(),
+                border = playerChipBorder(),
                 leadingIcon = {
                     Icon(
                         imageVector = Icons.Default.Build,
@@ -520,6 +714,8 @@ private fun EngineChip(state: VideoPlayerUiState, onClick: () -> Unit) {
         onClick = onClick,
         enabled = !state.switching,
         label = { Text(stringResource(R.string.video_engine, state.engineLabel)) },
+        colors = playerChipColors(),
+        border = playerChipBorder(),
         leadingIcon = {
             Icon(
                 imageVector = Icons.Default.SwapHoriz,
