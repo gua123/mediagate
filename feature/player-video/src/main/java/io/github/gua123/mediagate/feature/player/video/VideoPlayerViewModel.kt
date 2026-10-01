@@ -874,6 +874,16 @@ class VideoPlayerViewModel(
         }
     }
 
+    /**
+     * 直接跳到队列里的第 [index] 个文件（**2026-10-03 用户要求**："播放时直接跳转同文件夹的其他文件"）。
+     *
+     * 界面上的"播放列表"面板点某一行时调它；越界或正在切内核时安全地什么都不做。
+     */
+    fun openEpisodeAt(index: Int) {
+        if (index == _state.value.siblingIndex) return
+        openEpisode(index)
+    }
+
     /** 切到队列里的另一集：复用同一个内核，只换媒体（不重建解码器）。 */
     private fun openEpisode(index: Int) {
         // 切换内核的过程中不换集：此时旧内核已释放、新内核还没建好，插进来会多造一个内核

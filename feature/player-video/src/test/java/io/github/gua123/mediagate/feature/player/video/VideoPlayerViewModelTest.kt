@@ -399,6 +399,46 @@ class VideoPlayerViewModelTest {
         assertEquals(VideoErrorKind.NOT_SUPPORTED, vm.state.value.errorKind)
     }
 
+    @Test
+    fun `播放列表可以直接跳到同文件夹的任意一条`() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/a.mp4")
+        settle()
+        // 队列口径：同目录的视频与音频都算一集（音频文件名沿用夹具里的 c.mp3）
+        assertEquals(listOf("Movies/a.mp4", "Movies/b.mp4", "Movies/c.mp3"), vm.state.value.siblingPaths)
+
+        // 跳到第 3 条（2026-10-03 用户要求：播放时直接跳转同文件夹的其他文件）
+        vm.openEpisodeAt(2)
+        settle()
+
+        assertEquals(2, vm.state.value.siblingIndex)
+        assertEquals("Movies/c.mp3", vm.state.value.path)
+
+        // 跳回第 2 条
+        vm.openEpisodeAt(1)
+        settle()
+        assertEquals("Movies/b.mp4", vm.state.value.path)
+    }
+
+    @Test
+    fun `跳转到越界下标或无变化时不动作`() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/a.mp4")
+        settle()
+        val engineBefore = env.created.size
+
+        vm.openEpisodeAt(99)
+        settle()
+        vm.openEpisodeAt(-1)
+        settle()
+        vm.openEpisodeAt(0) // 就是当前这条
+        settle()
+
+        assertEquals("下标越界/同一条都不该换媒体", "Movies/a.mp4", vm.state.value.path)
+        assertEquals(0, vm.state.value.siblingIndex)
+        assertEquals("也不该重建内核", engineBefore, env.created.size)
+    }
+
     // ------------------------------------------------------------------ 测试脚手架
 
     private fun TestScope.player(env: FakeVideoPlayerEnvironment, path: String): VideoPlayerViewModel {

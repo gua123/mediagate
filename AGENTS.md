@@ -124,7 +124,11 @@
   ③ 修：字幕服务加异常处理器 + 识别循环整体兜底（异常 → 任务记 ENGINE_UNAVAILABLE + 通知写原因）；
   播放页装载/会话绑定/字幕同步各自兜底（装载失败 → 错误卡片）。
   **根因仍待崩溃日志**（0.1.8 起自带采集）。
-  当前版本 **0.1.9 / versionCode 10**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.8）。
+- **M19 播放页 UI 改造（2026-10-03，0.1.11）**：用户要求「旋转屏幕 / 字体白色 / 显示同文件夹其他文件并直接跳转」→
+  ① `RotateButton` + `ResetOrientationOnLeave`（离开恢复跟随系统；Activity 已 configChanges，转屏不重建、播放不断）；
+  ② 抽 `playerChipColors()`/`playerChipBorder()` 统一入口，播放页所有芯片改白字+半透明白底+白描边（原先灰字看不清）；
+  ③ `openEpisodeAt(index)` + `PlaylistSheet`：底部面板列出同目录可播文件，点一行复用同一内核直接跳转。
+  当前版本 **0.1.11 / versionCode 12**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.10）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
