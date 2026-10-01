@@ -75,6 +75,7 @@ import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
+import io.github.gua123.mediagate.feature.browser.EntrySort
 import io.github.gua123.mediagate.feature.player.video.TsIndexInfo
 import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
 import io.github.gua123.mediagate.feature.update.SignatureCheck
@@ -289,6 +290,28 @@ class AppContainer(context: Context) :
         _remoteNotice.value = null
     }
 
+    // ------------------------------------------------------------ 崩溃诊断（2026-10-03）
+
+    /**
+     * 最近一次崩溃的报告全文；没有崩溃过返回 null。
+     *
+     * 设置页「诊断」卡片直接显示它——自用 sideload 拿不到 logcat，用户把这段粘给我就能定位。
+     */
+    fun readLatestCrash(): String? = runCatching {
+        CrashReporter.latest(appContext)?.readText(Charsets.UTF_8)
+    }.getOrNull()
+
+    /** 最近一次崩溃的时间（毫秒）；没有返回 null。 */
+    fun latestCrashTimeMs(): Long? = runCatching { CrashReporter.latest(appContext)?.lastModified() }.getOrNull()
+
+    /** 崩溃报告份数。 */
+    fun crashReportCount(): Int = runCatching { CrashReporter.reports(appContext).size }.getOrDefault(0)
+
+    /** 清空崩溃报告。 */
+    fun clearCrashes() {
+        CrashReporter.clear(appContext)
+    }
+
     private val _remoteRootLabel = MutableStateFlow<String?>(null)
 
     /**
@@ -354,6 +377,19 @@ class AppContainer(context: Context) :
      * 图片走「解码 + 按目标宽度重编码」（[ImageThumbnailExtractor]）；
      * [ImagePreviewPipeline] 把编码格式一起带上，缓存文件扩展名才与实际内容一致。
      */
+    /**
+     * 列表排序（2026-10-03 用户要求）：DataStore 持久化，冷启动即生效。
+     *
+     * 用 stateIn + Eagerly：浏览页可能在设置读出来之前就组合了，先给默认值（名称升序）不会闪空。
+     */
+    override val sort: StateFlow<EntrySort> =
+        settings.sort.stateIn(ioScope, SharingStarted.Eagerly, EntrySort())
+
+    /** 改排序并落盘。 */
+    override suspend fun setSort(sort: EntrySort) {
+        settings.setSort(sort)
+    }
+
     override val thumbnails: ThumbnailRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         val imagePreview = ImageThumbnailExtractor()
         ThumbnailRepository(

@@ -3,10 +3,13 @@ package io.github.gua123.mediagate.app
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import io.github.gua123.mediagate.feature.browser.EntrySort
+import io.github.gua123.mediagate.feature.browser.EntrySortMode
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 
 /** 根目录设置的 DataStore（App 私有，进程内单例由 [preferencesDataStore] 委托保证）。 */
@@ -32,6 +35,25 @@ data class RootConfig(
  * 数据存于 App 私有目录，卸载即清除；SAF 的持久化授权由系统在 `takePersistableUriPermission` 后保存。
  */
 class RootSettings(private val context: Context) {
+
+    /**
+     * 列表排序设置（**2026-10-03 用户要求**）：方式 + 升降序。
+     *
+     * 存字符串而不是 ordinal：将来加排序方式时旧数据不会错位。
+     */
+    val sort: Flow<EntrySort> = context.rootDataStore.data.map { preferences ->
+        val mode = runCatching { EntrySortMode.valueOf(preferences[KEY_SORT_MODE].orEmpty()) }.getOrNull()
+            ?: EntrySortMode.NAME
+        EntrySort(mode = mode, ascending = preferences[KEY_SORT_ASC] ?: true)
+    }
+
+    /** 保存排序设置。 */
+    suspend fun setSort(sort: EntrySort) {
+        context.rootDataStore.edit { preferences ->
+            preferences[KEY_SORT_MODE] = sort.mode.name
+            preferences[KEY_SORT_ASC] = sort.ascending
+        }
+    }
 
     /** 当前配置流；未选择根目录时发出 `null`。 */
     val config: Flow<RootConfig?> = context.rootDataStore.data.map { preferences ->
@@ -75,5 +97,9 @@ class RootSettings(private val context: Context) {
         val KEY_MODE = stringPreferencesKey("root_mode")
         val KEY_VALUE = stringPreferencesKey("root_value")
         val KEY_DISPLAY = stringPreferencesKey("root_display")
+
+        /** 列表排序（2026-10-03）：方式 + 升降序。 */
+        val KEY_SORT_MODE = stringPreferencesKey("list_sort_mode")
+        val KEY_SORT_ASC = booleanPreferencesKey("list_sort_ascending")
     }
 }

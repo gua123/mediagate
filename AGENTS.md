@@ -112,7 +112,12 @@
   → 编辑器给「选择目录（SAF）/ 使用内部存储 / 用已选的目录」；③ 界面上的「本地目录（绝对路径）」绑的是
   basePath，而 :app 读的是地址 host → 本地连接只留一个目录字段、隐藏根路径、校验不再管 basePath，
   并允许 `content://` 树 URI 与绝对路径两种形态。
-  当前版本 **0.1.7 / versionCode 8**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.6）。
+- **M17 崩溃可见 + 列表排序（2026-10-03，0.1.8）**：真机"一播 MP4 就闪退"但没有 logcat →
+  ① `CrashReporter` 抓 Java 崩溃（设备/版本 + 堆栈 + AppLog 环形缓冲最后 400 行，写 `filesDir/crashes/`）；
+  ② `ApplicationExitInfo`（反射访问，编译用 android.jar 里没这个方法）在下次启动补抓**原生崩溃/ANR**；
+  ③ 设置页「诊断与崩溃日志」卡片可看/复制/清空。另：浏览页新增**排序菜单**（名称/大小/修改时间/类型 + 升降序，
+  目录优先、未知值恒最后、DataStore 持久化）。
+  当前版本 **0.1.8 / versionCode 9**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.7）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
