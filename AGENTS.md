@@ -128,7 +128,14 @@
   ① `RotateButton` + `ResetOrientationOnLeave`（离开恢复跟随系统；Activity 已 configChanges，转屏不重建、播放不断）；
   ② 抽 `playerChipColors()`/`playerChipBorder()` 统一入口，播放页所有芯片改白字+半透明白底+白描边（原先灰字看不清）；
   ③ `openEpisodeAt(index)` + `PlaylistSheet`：底部面板列出同目录可播文件，点一行复用同一内核直接跳转。
-  当前版本 **0.1.11 / versionCode 12**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.10）。
+- **M20 字幕闪退根因（2026-10-03，0.1.12）**：用户回传诊断卡截图 → 栈是
+  `Service.startForeground → IActivityManager.setServiceForeground → Parcel.readException`，
+  崩在 `AsrForegroundService.onCreate`。根因＝服务是 `START_STICKY`，被系统在**后台**拉起后立刻转前台，
+  而 `mediaProcessing` 类型**不允许从后台进入前台**（Android 14/15+ 前台服务类型限制）→ 被拒 → 崩。
+  修：① `onStartCommand` 改 `START_NOT_STICKY`（队列状态在 Room，下次进 App 显示「已中断，可续跑」）；
+  ② `onCreate` 记 `foregroundReady`，失败即 `stopSelf()`；`onStartCommand` 见未前台化直接退场
+  （顺带避开"未按时 startForeground"这条崩溃路径）；③ `startService` 返回成败，失败把队列停在「已暂停」。
+  当前版本 **0.1.12 / versionCode 13**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.11）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

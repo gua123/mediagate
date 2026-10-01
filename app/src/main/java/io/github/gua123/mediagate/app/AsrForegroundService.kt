@@ -75,10 +75,24 @@ class AsrForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * 是否已经成功前台化。
+     *
+     * **2026-10-03 真机崩溃（诊断卡截图）的根因就在这一段**：栈是
+     * `Service.startForeground → IActivityManager.setServiceForeground → Parcel.readException`，
+     * 即 **AMS 拒绝了这次前台化**。典型场景：App 进程被杀后由 `START_STICKY` 在**后台**重新拉起服务，
+     * 而 `mediaProcessing` 这个前台服务类型**不允许从后台进入前台**（Android 14/15+ 的类型限制），
+     * 于是 `onCreate` 里那句 startForeground 直接抛异常 → 服务崩 → 整机闪退。
+     *
+     * 对策两条：① 前台化失败就**别硬跑**（没前台化的服务很快会被系统杀掉，还会触发
+     * "startForegroundService 没有按时 startForeground" 的另一条崩溃路径）；②
+     * `onStartCommand` 改返回 `START_NOT_STICKY`，**不再让系统把我们拉到后台重启**——
+     * 队列状态在 Room 里，用户下次进 App 会看到「已中断，可续跑」，点一下就能继续。
+     */
+    private var foregroundReady = false
+
     override fun onCreate() {
         super.onCreate()
-        // 前台化失败（渠道/类型/权限，或系统限制）不该让 App 消失：如实记日志并退出服务，
-        // 任务留在队列里（下次进来能续跑）。2026-10-03 真机"开始生成字幕就闪退"的另一个嫌疑点。
         try {
             createChannel()
             ServiceCompat.startForeground(
@@ -87,13 +101,20 @@ class AsrForegroundService : Service() {
                 buildNotification(null, 0, false),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING,
             )
+            foregroundReady = true
         } catch (t: Throwable) {
-            AppLog.e(TAG, "字幕服务前台化失败，退出服务", t)
+            AppLog.e(TAG, "字幕服务前台化被系统拒绝（多半是后台启动），退出服务，任务留待用户在前台续跑", t)
             stopSelf()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 没前台化成功就直接退场：既不能跑（会被杀），也不该跑（会触发 FGS 超时崩溃）
+        if (!foregroundReady) {
+            AppLog.w(TAG, "服务未能前台化，忽略本次启动请求（任务已留在队列里）")
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val host = application as? AsrRuntimeHost
         if (host == null) {
             AppLog.w(TAG, "应用没有实现 AsrRuntimeHost，字幕服务无法取依赖")
@@ -110,7 +131,9 @@ class AsrForegroundService : Service() {
         }
         refreshNotification(host)
         startWorker(host)
-        return START_STICKY
+        // 刻意不用 START_STICKY（2026-10-03 崩溃根因）：被系统在后台拉起时无法前台化 → 闪退。
+        // 队列状态已落库，用户下次进 App 能看到「已中断」并一键续跑。
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {

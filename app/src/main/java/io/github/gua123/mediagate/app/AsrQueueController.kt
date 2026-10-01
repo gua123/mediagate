@@ -196,11 +196,23 @@ class AsrQueueController(
     val hasWork: Boolean
         get() = _snapshot.value.items.any { it.state == AsrItemState.QUEUED || it.state.isActive }
 
-    /** 拉起前台服务（R19：后台生成）。 */
-    fun startService(context: Context) {
-        runCatching {
-            ContextCompat.startForegroundService(context, Intent(context, AsrForegroundService::class.java).setAction(AsrForegroundService.ACTION_START))
-        }.onFailure { AppLog.w(TAG, "拉起字幕前台服务失败", it) }
+    /**
+     * 拉起前台服务（R19：后台生成）；返回是否拉起成功。
+     *
+     * **2026-10-03 真机崩溃之后的口径**：字幕识别**只在能合法前台化时跑**。
+     * 系统不允许时（典型是 App 在后台、而 `mediaProcessing` 类型的前台服务不允许从后台启动），
+     * 这里如实返回 false 并把队列停到「已暂停」——而不是让用户看着一个永远不动的"运行中"。
+     */
+    fun startService(context: Context): Boolean {
+        val started = runCatching {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, AsrForegroundService::class.java).setAction(AsrForegroundService.ACTION_START),
+            )
+        }.onFailure { AppLog.w(TAG, "拉起字幕前台服务失败（系统可能不允许此时启动前台服务）", it) }
+            .isSuccess
+        if (!started) pause()
+        return started
     }
 
     /** 通知前台服务停手（队列已空/已取消）。 */
