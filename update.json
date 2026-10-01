@@ -1,8 +1,8 @@
 {
-  "versionCode": 4,
-  "versionName": "0.1.3",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.3/mediagate-0.1.3.apk",
-  "sizeBytes": 74343141,
-  "sha256": "8192114d6a78241a5e3bb7f7ab0b1869ec8407cecdcf8a3944514f1947c69b7a",
-  "notes": "## mediagate 0.1.3\n\n小版本，收掉两处\"用起来别扭\"的地方。\n\n### 改进\n- **连接页也能管本地目录了**：新增「本地目录」卡片（当前模式 + 路径 + 「选择目录」/\n  「使用内部存储」或「开启全部文件访问」/「清除」）。此前只有首页能选本地目录，\n  于是在连接页想换成手机里的目录时没有入口，得绕回首页。\n- **首页根目录卡片说清楚\"现在用的是谁\"**：远端连接生效时，卡片顶部直接写\n  「正在使用远端连接：xxx」，本地那项改称「备用本地目录」并说明\"清除它不会断开远端\"。\n  此前远端生效时卡片仍按本地口径显示，容易误以为在看本地目录。\n\n### 说明\n- 包名与 0.1.1/0.1.2 相同，可直接覆盖安装。\n- 剩余未做项都是\"设计取舍\"或\"要真机才能验\"的（R4 不承诺毫秒级拖拽、ASS 仅基础样式、\n  Media3 无字幕延迟 API 改用 Compose 覆盖层等），详见 docs/验收记录-M2-M8.md 第 5 节。"
+  "versionCode": 5,
+  "versionName": "0.1.4",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.4/mediagate-0.1.4.apk",
+  "sizeBytes": 74343145,
+  "sha256": "80008c33a942a3145236a506d58f70a71295e340ab8de0f184f53fcd6473d4b5",
+  "notes": "## mediagate 0.1.4\n\n一个\"看起来是网络问题、其实是缓存\"的修复。\n\n### 修复\n- **刚发新版却提示「已是最新」**：raw.githubusercontent.com 由 CDN 提供（`cache-control: max-age=300`），\n  发版后老清单还会被端上一段时间——实测发 0.1.3 后 6 分钟仍返回 0.1.2；\n  加 `?ts=` 查询参数或 `Cache-Control: no-cache` 请求头**都绕不过**（缓存按路径命中）。\n  现在 App **读两条不同缓存键的 raw 路径**（`main/update.json` 与 `refs/heads/main/update.json`），\n  取 versionCode 更高的那份：发布后至少有一条是新的；两者都读不到时才报错（报主地址的原因）。\n  已经确认有新版本就不会再打第二次网络；主地址连不上时备用地址还能顶上。\n\n### 说明\n- 包名不变，可直接覆盖安装。\n- 这一版没有功能变化，纯粹为了让「检查更新」在发版后立刻可靠。"
 }
