@@ -357,7 +357,13 @@ object AsrQueue {
 
     /** 继续：恢复成「有活就 RUNNING」的状态，由调用方接着 [startNext]。 */
     fun resume(queue: AsrQueueSnapshot): AsrQueueSnapshot = when (queue.state) {
-        AsrQueueState.STOPPED -> queue
+        // 「取消全部」之后队列是 STOPPED：以前这里原样返回，而入队按钮也被 STOPPED 拦着，
+        // 用户就**彻底没有出路**（2026-10-03 真机截图：勾了 1 项但「加入队列并开始」是灰的）。
+        // 现在把它当"空转"复活——被取消的那些仍是终态、不会被跑；用户随后可以重新入队或重试失败项。
+        AsrQueueState.STOPPED -> queue.copy(
+            state = if (queue.activeItems.isEmpty()) AsrQueueState.IDLE else AsrQueueState.RUNNING,
+        )
+
         AsrQueueState.PAUSED -> queue.copy(state = if (queue.activeItems.isEmpty()) AsrQueueState.IDLE else AsrQueueState.RUNNING)
         else -> queue
     }
@@ -407,21 +413,35 @@ object AsrQueue {
      * [AsrItemState.INTERRUPTED] 保留已识别进度（**续跑**）；[AsrItemState.FAILED] 与
      * [AsrItemState.CANCELLED] 清零进度（重头识别，避免拿着半截 PCM 的错位进度）。
      */
-    fun retry(queue: AsrQueueSnapshot, id: Long): AsrQueueSnapshot = update(queue, id) { item ->
-        if (!item.state.isRetryable) {
-            item
+    fun retry(queue: AsrQueueSnapshot, id: Long): AsrQueueSnapshot = reviveIfStopped(
+        update(queue, id) { item ->
+            if (!item.state.isRetryable) {
+                item
+            } else {
+                val keepProgress = item.state == AsrItemState.INTERRUPTED
+                item.copy(
+                    state = AsrItemState.QUEUED,
+                    progress = if (keepProgress) item.progress else AsrProgress.EMPTY,
+                    failure = null,
+                    errorMessage = null,
+                    skipReason = null,
+                    retryCount = item.retryCount + 1,
+                )
+            }
+        },
+    )
+
+    /**
+     * 队列被「取消全部」停掉（[AsrQueueState.STOPPED]）之后，只要又出现排队中的任务就复活成空转。
+     *
+     * 与 [enqueue] 同一口径：STOPPED 只表示"这一批被取消了"，不该变成一道再也出不去的门。
+     */
+    private fun reviveIfStopped(queue: AsrQueueSnapshot): AsrQueueSnapshot =
+        if (queue.state == AsrQueueState.STOPPED && queue.items.any { it.state == AsrItemState.QUEUED }) {
+            queue.copy(state = AsrQueueState.IDLE)
         } else {
-            val keepProgress = item.state == AsrItemState.INTERRUPTED
-            item.copy(
-                state = AsrItemState.QUEUED,
-                progress = if (keepProgress) item.progress else AsrProgress.EMPTY,
-                failure = null,
-                errorMessage = null,
-                skipReason = null,
-                retryCount = item.retryCount + 1,
-            )
+            queue
         }
-    }
 
     /**
      * 一键重试全部失败项（**R19**）。

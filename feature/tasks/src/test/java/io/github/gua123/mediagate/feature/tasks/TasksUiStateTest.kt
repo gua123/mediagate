@@ -268,7 +268,24 @@ class TasksUiStateTest {
 
         assertFalse(selected.copy(entries = listOf(entry("a.mkv"))).canEnqueue)
         assertFalse(selected.copy(installedModelIds = emptyList()).canEnqueue)
-        assertFalse(selected.copy(queue = AsrQueueSnapshot(state = AsrQueueState.STOPPED)).canEnqueue)
+        // 队列被「取消全部」停掉不该拦住入队（入队本身会复活它）——2026-10-03 真机"勾了 1 项却点不动"
+        assertTrue(selected.copy(queue = AsrQueueSnapshot(state = AsrQueueState.STOPPED)).canEnqueue)
+    }
+
+    @Test
+    fun enqueueHint_explainsWhyTheButtonIsDisabled() {
+        val ready = TasksUiState(
+            entries = listOf(entry("a.mkv", selected = true)),
+            installedModelIds = listOf("small"),
+            selectedModelId = "small",
+        )
+        assertNull("能点的时候不该有提示", ready.enqueueHint)
+
+        val nothingSelected = ready.copy(entries = listOf(entry("a.mkv")))
+        assertEquals("先勾选要生成字幕的视频（也可以点「全选视频」）", nothingSelected.enqueueHint)
+
+        val modelMissing = ready.copy(installedModelIds = emptyList())
+        assertTrue("模型没装要给出下载指引", modelMissing.enqueueHint.orEmpty().contains("语音识别模型"))
     }
 
     // ---------------------------------------------------------------- 入队计划
