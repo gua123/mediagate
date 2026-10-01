@@ -57,7 +57,11 @@
   同日第二个真机专属缺陷：清单缺 `android:networkSecurityConfig`，targetSdk 36 下**明文 http 被系统默认拦死**
   → 局域网 WebDAV（http://192.168.1.10:8080）在真机全挂（提交 `0af4e6a`：新增
   `res/xml/network_security_config.xml` + `CleartextPolicyTest` 回归护栏）。
-- **当前基线**：全项目 **1274 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`，
-  含本次新增 10 例：:feature:connections +8、:app +2）；release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
+  同日第三项：按用户要求「界面语言直接用中文，不要中英双语」做了错误提示统一——新增 `:core:common` 的
+  `ErrorText`（含汉字原样保留 → 按异常类型/英文关键词归类 → 兜底中文），把连接页、:app 远端提示、WebDAV/SFTP/FTP
+  后端、LibVLC、字幕任务、TS 扫描、whisper 引擎等处会露出的库英文 message 全部收口（提交 `e021c6c`）。
+- **当前基线**：全项目 **1279 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest`；
+  本轮真机修复新增 15 例：:feature:connections +8、:app +2、:core:common +5）；
+  release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
