@@ -54,7 +54,10 @@
   `browsable` 也只放行这两种）。现已接进「设为当前连接 → 浏览/播放」：新增 `ConnectionBackends` 纯函数装配 +
   `AppContainer` 的 `selectAddress`/`installRemoteRoot`（WEBDAV / SFTP / FTP 同一条流程 + 中文失败提示），
   并清掉全部「M5 接入」陈旧文案（协议选择器 / 卡片 / 设置页 / core:network 提示）。
-- **当前基线**：全项目 **1272 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`，
-  含本次新增 8 例）；release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
+  同日第二个真机专属缺陷：清单缺 `android:networkSecurityConfig`，targetSdk 36 下**明文 http 被系统默认拦死**
+  → 局域网 WebDAV（http://192.168.1.10:8080）在真机全挂（提交 `0af4e6a`：新增
+  `res/xml/network_security_config.xml` + `CleartextPolicyTest` 回归护栏）。
+- **当前基线**：全项目 **1274 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`，
+  含本次新增 10 例：:feature:connections +8、:app +2）；release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
