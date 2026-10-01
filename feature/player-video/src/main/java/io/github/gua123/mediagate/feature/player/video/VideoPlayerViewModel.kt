@@ -792,20 +792,33 @@ class VideoPlayerViewModel(
         observe(created)
         val view = created.videoView()
         _videoOutput.value = view
-        created.setDecoderMode(mode)
-        created.setMedia(ref)
-        created.prepare()
-        created.play()
+        // 内核装载与起播整体兜底（2026-10-03 真机"一播放就闪退"）：
+        // 内核/解码器在真机上抛出的异常（MediaCodec 初始化失败、容器不支持…）不该让 App 直接消失，
+        // 统一降级成播放页的错误卡片 + 中文原因。
+        try {
+            created.setDecoderMode(mode)
+            created.setMedia(ref)
+            created.prepare()
+            created.play()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "装载媒体失败：$path", t)
+            runCatching { created.release() }
+            _state.update { it.reduce(VideoPlayerEvent.Failed(VideoErrorKind.UNKNOWN, t.message, canFallback = environment.proxyBaseUrl != null)) }
+            return
+        }
         _state.update { it.reduce(VideoPlayerEvent.EngineAttached(created.kind, mode)) }
-        // R18：会话（通知栏/锁屏）跟着当前这条视频走
-        bindSession(created, ref, view)
+        // R18：会话（通知栏/锁屏）跟着当前这条视频走；会话起不来不该影响播放本身
+        runCatching { bindSession(created, ref, view) }
+            .onFailure { AppLog.w(TAG, "绑定播放会话失败", it) }
         msSinceSave = 0L
         wasPlaying = true
         endedSaved = false
         startTicker()
         applyResume(ref, created)
         // R14：开着字幕就自动匹配同目录候选（本地与远端同一套逻辑）
-        syncSubtitle()
+        runCatching { syncSubtitle() }.onFailure { AppLog.w(TAG, "同步字幕候选失败", it) }
         // R3/R4：TS 索引在后台准备（判定有没有 PCR + 供拖拽预取）；失败不影响播放
         prepareTsIndex(path)
     }

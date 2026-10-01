@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,6 +27,7 @@ import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.media.asr.AsrFailureKind
 import io.github.gua123.mediagate.media.asr.AsrItem
+import io.github.gua123.mediagate.media.asr.AsrItemState
 import io.github.gua123.mediagate.media.asr.AsrOutput
 import io.github.gua123.mediagate.media.asr.AsrOutputFormat
 import io.github.gua123.mediagate.media.asr.AsrQueueState
@@ -54,7 +56,20 @@ import io.github.gua123.mediagate.media.asr.WhisperAsrEngine
  */
 class AsrForegroundService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // 为什么要自己兜异常（2026-10-03 真机"开始生成字幕就闪退"）：
+    // 识别链路上有 JNI（whisper）、ffmpeg-kit 解码与文件写入，任何一处抛出未被捕获的异常，
+    // 都会顺着"没有 CoroutineExceptionHandler 的 scope"冒到线程默认处理器 → **整机闪退**。
+    // 这里把它降级成"这条任务失败 + 通知里写原因"，用户至少能看到发生了什么。
+    private val crashGuard = CoroutineExceptionHandler { _, error ->
+        AppLog.e(TAG, "字幕服务出现未捕获异常", error)
+        runCatching {
+            NotificationManagerCompat.from(this)
+                .notify(NOTIFICATION_ID, buildNotification("字幕服务异常：" + (error.message ?: error.javaClass.simpleName), 0, false))
+        }
+        runCatching { stopSelf() }
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + crashGuard)
 
     private var worker: Job? = null
 
@@ -102,26 +117,42 @@ class AsrForegroundService : Service() {
     private fun startWorker(host: AsrRuntimeHost) {
         if (worker?.isActive == true) return
         worker = scope.launch {
-            val controller = host.asrController
-            runCatching { controller.restore() }
-            while (isActive) {
-                val snapshot = controller.snapshot.value
-                if (snapshot.state == AsrQueueState.STOPPED || snapshot.state == AsrQueueState.PAUSED) break
-                val started = controller.start()
-                if (started.isEmpty()) {
-                    if (!controller.hasWork) break
-                    refreshNotification(host)
-                    delay(IDLE_POLL_MS)
-                    continue
+            try {
+                val controller = host.asrController
+                runCatching { controller.restore() }
+                while (isActive) {
+                    val snapshot = controller.snapshot.value
+                    if (snapshot.state == AsrQueueState.STOPPED || snapshot.state == AsrQueueState.PAUSED) break
+                    val started = controller.start()
+                    if (started.isEmpty()) {
+                        if (!controller.hasWork) break
+                        refreshNotification(host)
+                        delay(IDLE_POLL_MS)
+                        continue
+                    }
+                    for (item in started) {
+                        runCatching { process(host, item) }
+                            .onFailure { error -> controller.fail(item.id, error) }
+                        refreshNotification(host)
+                    }
                 }
-                for (item in started) {
-                    runCatching { process(host, item) }
-                        .onFailure { error -> controller.fail(item.id, error) }
-                    refreshNotification(host)
+                refreshNotification(host)
+                stopSelf()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                // 兜底：引擎/解码/写文件的异常都不该让 App 消失（真机"一开始就闪退"往往就在这一类）
+                AppLog.e(TAG, "字幕识别循环异常中止", t)
+                val controller = host.asrController
+                runCatching {
+                    val reason = t.message ?: t.javaClass.simpleName
+                    controller.snapshot.value.items
+                        .filter { it.state == AsrItemState.QUEUED || it.state.isActive }
+                        .forEach { controller.fail(it.id, AsrFailureKind.ENGINE_UNAVAILABLE, reason) }
                 }
+                runCatching { refreshNotification(host) }
+                stopSelf()
             }
-            refreshNotification(host)
-            stopSelf()
         }
     }
 
