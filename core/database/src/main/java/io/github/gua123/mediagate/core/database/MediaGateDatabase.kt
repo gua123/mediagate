@@ -217,6 +217,55 @@ data class AsrTaskEntity(
     val createdAt: Long = 0L,
 )
 
+/**
+ * 已知的 SFTP 主机密钥指纹（**R2 / plan 4.9** 的 TOFU 落库）。
+ *
+ * 为什么必须落库：指纹只存在内存里的话，App 一重启"变更检测"就等于没做——
+ * 一个被换掉的密钥会被当成"第一次见到的主机"按 TOFU 放行，中间人攻击照样成立。
+ *
+ * @param sha256 SHA-256 指纹的 **Base64**（与 OpenSSH 展示口径一致；不是十六进制）。
+ * @param md5 老工具链习惯的 MD5 指纹（冒号分隔小写十六进制），一并存下来便于界面核对。
+ * @param addedAt 首次记录的时间（毫秒）。
+ */
+@Entity(
+    tableName = "sftp_host_key",
+    primaryKeys = ["host", "port", "keyType", "sha256"],
+)
+data class SftpHostKeyEntity(
+    val host: String,
+    val port: Int,
+    val keyType: String,
+    val sha256: String,
+    val md5: String = "",
+    val addedAt: Long = 0L,
+)
+
+/**
+ * 主机密钥指纹的读写（**R2**）。
+ *
+ * 刻意**不用 suspend**：调用方是 JSch 的主机密钥校验回调（连接的 IO 线程），
+ * 那里是同步上下文；Room 禁止的是主线程访问，这里不在主线程。
+ */
+@Dao
+interface HostKeyDao {
+
+    @Query("SELECT * FROM sftp_host_key")
+    fun loadAll(): List<SftpHostKeyEntity>
+
+    /** 界面用：已信任的指纹列表（设置页展示，用户可逐条忘掉）。 */
+    @Query("SELECT * FROM sftp_host_key ORDER BY host, port, keyType")
+    fun observeAll(): Flow<List<SftpHostKeyEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insert(entity: SftpHostKeyEntity)
+
+    @Query("DELETE FROM sftp_host_key WHERE host = :host AND port = :port")
+    fun delete(host: String, port: Int)
+
+    @Query("SELECT COUNT(*) FROM sftp_host_key")
+    fun count(): Int
+}
+
 @Dao
 interface AsrDao {
 
@@ -299,8 +348,9 @@ interface AsrDao {
         NetworkRuleEntity::class,
         AsrBatchEntity::class,
         AsrTaskEntity::class,
+        SftpHostKeyEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class MediaGateDatabase : RoomDatabase() {
@@ -308,6 +358,9 @@ abstract class MediaGateDatabase : RoomDatabase() {
 
     /** 批量字幕任务中心（M7-B / R19）。 */
     abstract fun asrDao(): AsrDao
+
+    /** SFTP 主机密钥指纹（R2：TOFU 要真的落盘）。 */
+    abstract fun hostKeyDao(): HostKeyDao
 
     companion object {
         const val NAME = "mediagate.db"
@@ -384,7 +437,31 @@ abstract class MediaGateDatabase : RoomDatabase() {
             "CREATE INDEX IF NOT EXISTS `index_asr_task_queueOrder` ON `asr_task` (`queueOrder`)",
         )
 
+        /**
+         * v3 → v4：新增 SFTP 主机密钥指纹表（**R2**：TOFU 落库）。
+         *
+         * 纯加法迁移，不碰既有表；DDL 必须与 Room 导出的 4.json 一字不差
+         * （离线校验见 MigrationSqlTest）。
+         */
+        val MIGRATION_3_4: Migration = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_3_4_SQL.forEach { db.execSQL(it) }
+            }
+        }
+
+        /** v3 → v4 的全部 DDL。 */
+        val MIGRATION_3_4_SQL: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `sftp_host_key` (" +
+                "`host` TEXT NOT NULL, " +
+                "`port` INTEGER NOT NULL, " +
+                "`keyType` TEXT NOT NULL, " +
+                "`sha256` TEXT NOT NULL, " +
+                "`md5` TEXT NOT NULL, " +
+                "`addedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`host`, `port`, `keyType`, `sha256`))",
+        )
+
         /** 全部迁移（:app 建库时统一 addMigrations）。 */
-        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        val MIGRATIONS: Array<Migration> get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
     }
 }

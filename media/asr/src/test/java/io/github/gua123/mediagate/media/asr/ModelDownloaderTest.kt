@@ -372,19 +372,36 @@ class WhisperModelTest {
     }
 
     @Test
-    fun downloadUrl_appliesMirrorPrefix() {
+    fun downloadUrl_replacesHostWithMirror() {
         val model = WhisperModel.SMALL
-        assertEquals("https://gh-proxy.com/" + model.url, model.downloadUrl(WhisperModel.DEFAULT_MIRROR))
+        // 镜像 = 替换主机（2026-10-03 起的口径；老的前缀式镜像已 404）
+        assertEquals(
+            "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            model.downloadUrl(WhisperModel.DEFAULT_MIRROR),
+        )
+        assertEquals(
+            "https://other.example/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            model.downloadUrl("https://other.example/"),
+        )
         assertEquals(model.url, model.downloadUrl(null))
         assertEquals(model.url, model.downloadUrl(""))
+        assertEquals(model.url, model.downloadUrl("   "))
     }
 
     @Test
     fun withChecksum_normalizesAndFlags() {
-        assertFalse(WhisperModel.SMALL.hasChecksum)
-        val checked = WhisperModel.SMALL.withChecksum("ABCDEF")
-        assertTrue(checked.hasChecksum)
-        assertEquals("abcdef", checked.sha256)
+        // 2026-10-03 起官方三档都已回填 SHA-256（从官方仓库下载后逐份计算，字节数与 sizeBytes 一致）
+        assertTrue(WhisperModel.SMALL.hasChecksum)
+        WhisperModel.ALL.forEach { model ->
+            assertTrue(model.id + " 缺少官方 sha256", model.hasChecksum)
+            assertEquals(64, model.sha256?.length)
+        }
+        // 手工换一份校验和：小写化
+        val swapped = WhisperModel.SMALL.withChecksum("ABCDEF")
+        assertTrue(swapped.hasChecksum)
+        assertEquals("abcdef", swapped.sha256)
+        // 清空 = 退回"只核大小"
+        assertFalse(WhisperModel.SMALL.withChecksum(null).hasChecksum)
     }
 
     @Test
