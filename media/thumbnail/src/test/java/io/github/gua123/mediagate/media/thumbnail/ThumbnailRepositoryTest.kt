@@ -311,6 +311,82 @@ class ThumbnailRepositoryTest {
     }
 
     @Test
+    fun `出过的缩略图会被记下给通知栏封面用`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(3) })
+        val repo = ThumbnailRepository(cache = cache, primary = primary)
+        val video = RemoteEntry(name = "a.mp4", path = "/dir/a.mp4", size = 1_000L, mtime = 1L)
+        val backend = FakeBackend()
+
+        assertNull("没生成过就没有封面", repo.recentThumbnail("/dir/a.mp4"))
+        assertArrayEquals(bytes(3), repo.thumbnail(video, backend)!!)
+        assertArrayEquals("生成过之后要记下来", bytes(3), repo.recentThumbnail("/dir/a.mp4"))
+
+        // 走缓存命中的路径也要记（换一个仓库实例模拟"重启后读磁盘缓存"）
+        val second = ThumbnailRepository(cache = cache, primary = primary)
+        assertNull(second.recentThumbnail("/dir/a.mp4"))
+        assertArrayEquals(bytes(3), second.thumbnail(video, backend)!!)
+        assertArrayEquals(bytes(3), second.recentThumbnail("/dir/a.mp4"))
+        assertEquals("第二次是缓存命中，不该再抽帧", 1, primary.calls.get())
+    }
+
+    @Test
+    fun `最近缩略图不会为了封面去抽帧`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(3) })
+        val repo = ThumbnailRepository(cache = cache, primary = primary)
+        val backend = FakeBackend()
+
+        assertNull(repo.recentThumbnail("/dir/never-seen.mp4"))
+        assertEquals("只读内存，不碰远端", 0, primary.calls.get())
+        assertEquals(0, backend.openCount.get())
+    }
+
+    @Test
+    fun `音频没有内嵌封面时用同目录 cover 兜底`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(1) })
+        val artwork = FakeExtractor() // 内嵌封面：没有
+        val image = FakeExtractor(responder = { _, _ -> bytes(9) })
+        val repo = ThumbnailRepository(
+            cache = cache,
+            primary = primary,
+            audioArtwork = artwork,
+            imagePreview = ImagePreviewPipeline(extractor = image, format = ThumbnailImageFormat.JPEG),
+        )
+        val song = RemoteEntry(name = "song.flac", path = "/music/song.flac", size = 5_000L, mtime = 7L)
+        val cover = RemoteEntry(name = "cover.jpg", path = "/music/cover.jpg", size = 800L, mtime = 7L)
+        val backend = FakeBackend(entries = mapOf("/music" to listOf(song, cover)))
+
+        assertArrayEquals(bytes(9), repo.thumbnail(song, backend)!!)
+        assertEquals("封面只试一次", 1, artwork.calls.get())
+        assertEquals("同目录封面走图片流水线", 1, image.calls.get())
+        assertEquals("音频本身 + 封面各读一次", 2, backend.openCount.get())
+        assertEquals("抽帧分支不适用于音频", 0, primary.calls.get())
+    }
+
+    @Test
+    fun `同目录没有 cover 时仍然落负缓存`() = runTest {
+        val cache = newCache()
+        val primary = FakeExtractor(responder = { _, _ -> bytes(1) })
+        val artwork = FakeExtractor()
+        val image = FakeExtractor(responder = { _, _ -> bytes(9) })
+        val repo = ThumbnailRepository(
+            cache = cache,
+            primary = primary,
+            audioArtwork = artwork,
+            imagePreview = ImagePreviewPipeline(extractor = image, format = ThumbnailImageFormat.JPEG),
+        )
+        val song = RemoteEntry(name = "song.flac", path = "/music/song.flac", size = 5_000L, mtime = 7L)
+        val booklet = RemoteEntry(name = "booklet.jpg", path = "/music/booklet.jpg", size = 800L, mtime = 7L)
+        val backend = FakeBackend(entries = mapOf("/music" to listOf(song, booklet)))
+
+        assertNull(repo.thumbnail(song, backend))
+        assertEquals("非通行基名的图片不该被当封面", 0, image.calls.get())
+        assertTrue(cache.isNegative(repo.keyFor(song, backend)))
+    }
+
+    @Test
     fun `图片走图片流水线并复用缓存`() = runTest {
         val cache = newCache()
         val primary = FakeExtractor(responder = { _, _ -> bytes(1) })

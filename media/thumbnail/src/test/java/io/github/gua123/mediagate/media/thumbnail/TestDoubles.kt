@@ -46,12 +46,14 @@ internal class FakeBackend(
     override val caps: Caps = Caps(randomAccess = true, maxParallelReads = 8, writable = true),
     private val payload: ByteArray = ByteArray(4096) { it.toByte() },
     private val failOpenRead: Boolean = false,
+    /** 目录内容（同目录封面兜底要用 list：`/music` → 该目录下的条目）。 */
+    private val entries: Map<String, List<RemoteEntry>> = emptyMap(),
 ) : StorageBackend {
 
     /** openRead 被调用的次数（验证「缓存命中不碰远端」）。 */
     val openCount = AtomicInteger()
 
-    override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+    override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = entries[dir].orEmpty()
 
     override suspend fun stat(path: String): RemoteEntry =
         RemoteEntry(name = path.substringAfterLast('/'), path = path, size = payload.size.toLong(), mtime = 1L)

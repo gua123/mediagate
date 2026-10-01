@@ -71,6 +71,12 @@ class ThumbnailRepository(
     /** 普通后端限流器（本地/WebDAV：多连接可并行）。 */
     private val fastLimiter = Semaphore(parallelism.coerceAtLeast(1))
 
+    /** 最近出过的缩略图（LRU）：通知栏/锁屏封面用，见 [recentThumbnail]。 */
+    private val recent = object : LinkedHashMap<String, ByteArray>(ARTWORK_CACHE_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean =
+            size > ARTWORK_CACHE_ENTRIES
+    }
+
     /** 单会话后端限流器（SFTP/FTP：并发高了会互相拖慢甚至被服务端掐掉）。 */
     private val slowLimiter = Semaphore(slowParallelism.coerceAtLeast(1))
 
@@ -100,8 +106,27 @@ class ThumbnailRepository(
      * 给图片路径（Coil Fetcher 自己解码、自己回写）复用同一个缓存用：先看有没有，
      * 没有就自己解码，然后 [ThumbnailCache.put] 回来。
      */
-    suspend fun cached(entry: RemoteEntry, backend: StorageBackend): ByteArray? =
-        cache.get(keyFor(entry, backend))
+    suspend fun cached(entry: RemoteEntry, backend: StorageBackend): ByteArray? {
+        val bytes = cache.get(keyFor(entry, backend)) ?: return null
+        remember(entry.path, bytes)
+        return bytes
+    }
+
+    /**
+     * 最近出过的缩略图（按后端内路径），给**通知栏 / 锁屏封面**用（R18）。
+     *
+     * 为什么要这一层：会话侧只有路径（没有 size/mtime），拿不到缩略图缓存 key；
+     * 而"用户刚在列表里看到过封面，切到后台通知栏却一片空白"是很明显的观感缺口。
+     * 这里只记**已经生成过**的图（[ARTWORK_CACHE_ENTRIES] 条，LRU），
+     * **绝不为了封面去抽帧**——那会在播放页启动路径上多打一次远端。
+     */
+    fun recentThumbnail(path: String): ByteArray? = synchronized(recent) { recent[path] }
+
+    /** 记一笔最近出过的缩略图（LRU）。 */
+    private fun remember(path: String, bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        synchronized(recent) { recent[path] = bytes }
+    }
 
     /**
      * 取缩略图字节（按 [entry] 的媒体类型自动分流：视频抽帧 / 音频内嵌封面 / 图片缩略图）。
@@ -120,12 +145,18 @@ class ThumbnailRepository(
         val key = keyFor(entry, backend)
 
         // 快路径：两级缓存命中就不必抢并发许可
-        cache.get(key)?.let { return it }
+        cache.get(key)?.let {
+            remember(entry.path, it)
+            return it
+        }
         if (cache.isNegative(key)) return null
 
         return limiterFor(backend).withPermit {
             // 等许可期间可能已经有别的协程把同一个 key 填好了，拿许可后再确认一次
-            cache.get(key)?.let { return@withPermit it }
+            cache.get(key)?.let {
+                remember(entry.path, it)
+                return@withPermit it
+            }
             if (cache.isNegative(key)) return@withPermit null
 
             val bytes = runCatchingExtract(entry, backend, positionRatio)
@@ -141,12 +172,50 @@ class ThumbnailRepository(
                     // 缓存写不进去不影响本次结果
                     AppLog.w(TAG, "写缩略图缓存失败：${entry.path}", t)
                 }
+                remember(entry.path, bytes)
                 bytes
             }
         }
     }
 
     // ------------------------------------------------------------ 抽帧策略
+
+    /**
+     * 同目录封面兜底（**R5**）：在音频所在目录里找 `cover.jpg` / `folder.jpg` 这类图片，
+     * 用图片缩略图流水线出字节。
+     *
+     * 边界：
+     * - 没接线图片流水线（[imagePreview] 为 null）就直接放弃——不做"原图直接返回"，
+     *   那会把几 MB 的原图塞进列表；
+     * - 列目录失败（无权限 / 网络）不抛给调用方：封面是锦上添花，失败就按"没有封面"处理；
+     * - 缓存 key 仍然只跟音频文件走，所以换了同目录封面后要等缓存过期才会刷新（可接受）。
+     */
+    private suspend fun runCatchingSiblingCover(entry: RemoteEntry, backend: StorageBackend): ByteArray? {
+        val pipeline = imagePreview ?: return null
+        return try {
+            withContext(io) {
+                val dir = entry.path.substringBeforeLast('/', "")
+                val cover = SiblingCover.pick(backend.list(dir))
+                if (cover == null) {
+                    null
+                } else {
+                    val stream = backend.openRead(cover.path)
+                    stream.use { rangeStream ->
+                        val coverSource = rangeStream.asRandomAccessSource(
+                            knownSize = if (cover.size > 0) cover.size else rangeStream.length,
+                        )
+                        val bytes = runExtractor(pipeline.extractor, "同目录封面", coverSource, cover.mimeType, ANY_FRAME_MS)
+                        if (bytes == null || bytes.isEmpty()) null else bytes
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "读同目录封面失败：${entry.path}", t)
+            null
+        }
+    }
 
     private suspend fun runCatchingExtract(
         entry: RemoteEntry,
@@ -182,15 +251,18 @@ class ThumbnailRepository(
                 knownSize = if (entry.size > 0) entry.size else rangeStream.length,
             )
             when (pipelineFor(entry)) {
-                // 音频（M1-F）：只走内嵌封面。抽帧分支不适用于音频，失败即失败，交给负缓存。
+                // 音频（M1-F）：先内嵌封面，没有再找同目录的 cover.jpg / folder.jpg（R5 兜底）。
+                // 抽帧分支不适用于音频，两条都失败就交给负缓存。
                 ThumbnailPipeline.AUDIO_ARTWORK -> {
-                    val extractor = audioArtwork ?: return null
-                    val bytes = runExtractor(extractor, "音频内嵌封面", source, entry.mimeType, ANY_FRAME_MS)
-                    if (bytes == null || bytes.isEmpty()) {
-                        AppLog.w(TAG, "音频没有可用的内嵌封面：${entry.path}")
-                        null
+                    val embedded = audioArtwork?.let {
+                        runExtractor(it, "音频内嵌封面", source, entry.mimeType, ANY_FRAME_MS)
+                    }
+                    if (embedded != null && embedded.isNotEmpty()) {
+                        embedded
                     } else {
-                        bytes
+                        val sibling = runCatchingSiblingCover(entry, backend)
+                        if (sibling == null) AppLog.w(TAG, "音频既没有内嵌封面，同目录也没有 cover/folder 图片：${entry.path}")
+                        sibling
                     }
                 }
 
@@ -327,6 +399,9 @@ class ThumbnailRepository(
 
         /** 列表缩略图默认宽度（像素）。 */
         const val DEFAULT_TARGET_WIDTH = 256
+
+        /** 最近缩略图（通知栏/锁屏封面）保留条数。 */
+        const val ARTWORK_CACHE_ENTRIES = 64
 
         /** 默认并发上限（plan 4.4）。 */
         const val DEFAULT_PARALLELISM = 3

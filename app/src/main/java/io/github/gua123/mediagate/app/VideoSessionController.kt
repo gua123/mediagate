@@ -19,6 +19,7 @@ import io.github.gua123.mediagate.feature.player.video.VideoSession
 import io.github.gua123.mediagate.media.playback.VideoPlaybackService
 import io.github.gua123.mediagate.media.playback.VideoSessionHost
 import io.github.gua123.mediagate.media.playback.VideoSessionSource
+import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
 
 /**
  * 视频后台播放的**宿主实现**（**R18 视频侧** + **R19 让路**）。
@@ -40,7 +41,11 @@ import io.github.gua123.mediagate.media.playback.VideoSessionSource
  * 线程约定：全部在主线程（Media3 的控制器与内核都要求）。
  */
 @UnstableApi
-class VideoSessionController(private val context: Context) : VideoPlaybackHost, VideoSessionHost {
+class VideoSessionController(
+    private val context: Context,
+    /** 缩略图仓库（取通知栏封面用，R18）；null = 不提供封面。 */
+    private val thumbnailRepository: ThumbnailRepository? = null,
+) : VideoPlaybackHost, VideoSessionHost {
 
     private val appContext: Context = context.applicationContext
 
@@ -154,6 +159,9 @@ class VideoSessionController(private val context: Context) : VideoPlaybackHost, 
         override val positionMs: Long get() = runCatching { session.engine.positionMs() }.getOrDefault(0L)
 
         override val durationMs: Long get() = runCatching { session.engine.durationMs() }.getOrDefault(0L)
+
+        /** 通知栏/锁屏封面（R18）：用列表里已经生成过的缩略图，不额外抽帧。 */
+        override val artwork: ByteArray? get() = thumbnailRepository?.recentThumbnail(session.path)
 
         override fun play() {
             runCatching { session.engine.play() }.onFailure { AppLog.w(TAG, "会话播放失败", it) }

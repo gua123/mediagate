@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
+import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
 import io.github.gua123.mediagate.feature.player.audio.AudioPlaybackSnapshot
 import io.github.gua123.mediagate.feature.player.audio.AudioRepeatMode
 import io.github.gua123.mediagate.feature.player.audio.AudioTrack
@@ -50,6 +51,8 @@ import io.github.gua123.mediagate.media.playback.MediaSourceFactory
 class AudioSessionController(
     private val context: Context,
     private val backendFlow: StateFlow<StorageBackend?>,
+    /** 缩略图仓库（取通知栏封面用，R18）；null = 不提供封面。 */
+    private val thumbnailRepository: ThumbnailRepository? = null,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -87,7 +90,15 @@ class AudioSessionController(
      */
     suspend fun play(paths: List<String>, startIndex: Int) {
         val backend = backendFlow.value ?: throw StorageException.AccessDenied("尚未选择媒体根目录")
-        val items = paths.map { MediaSourceFactory.mediaItem(path = it, backend = backend) }
+        // 通知栏/锁屏封面（R18）：取"最近出过的缩略图"——列表里滚过的条目通常已经有图，
+        // 这里**不为了封面去抽帧**（那会在起播路径上多打一次远端）
+        val items = paths.map {
+            MediaSourceFactory.mediaItem(
+                path = it,
+                backend = backend,
+                artwork = thumbnailRepository?.recentThumbnail(it),
+            )
+        }
         val target = startIndex.coerceIn(0, (items.size - 1).coerceAtLeast(0))
         withContext(Dispatchers.Main.immediate) {
             val controller = awaitController()

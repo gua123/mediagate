@@ -365,7 +365,7 @@ class AppContainer(context: Context) :
      * 懒加载：只有真的进音频播放页（或起播）才去 bind 后台服务，冷启动不碰它。
      */
     private val audioSession: AudioSessionController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        AudioSessionController(appContext, audioBackend)
+        AudioSessionController(appContext, audioBackend, thumbnails)
     }
 
     /**
@@ -482,7 +482,7 @@ class AppContainer(context: Context) :
      * 视频会话控制器（R18 视频侧 / R19 让路）：把播放页借出的内核包成 MediaSession 的会话源，
      * 并在起播时连上 :media:playback 的 `VideoPlaybackService`（通知栏 / 锁屏可控）。
      */
-    val videoSession: VideoSessionController = VideoSessionController(appContext)
+    val videoSession: VideoSessionController = VideoSessionController(appContext, thumbnails)
 
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {
