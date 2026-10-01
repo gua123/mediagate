@@ -164,10 +164,24 @@ data class VideoPlayerUiState(
     val subtitleOffsetMs: Long = 0L,
     /** 字幕显示样式（R14：字号 / 颜色 / 描边 / 底部边距 / 加粗斜体）。 */
     val subtitleStyle: SubtitleStyle = SubtitleStyle(),
+    /** 时间戳重建（R3/R11）是否正在跑。 */
+    val timestampRepairRunning: Boolean = false,
+    /** 重建进度 0..100（ffmpeg 报不出总时长时保持 0，界面显示不确定进度）。 */
+    val timestampRepairPercent: Int = 0,
+    /** 重建的一次性提示（成功/失败的中文说明）；用户确认后清掉。 */
+    val timestampRepairNotice: String? = null,
 ) {
 
     /** 队列里有多少集。 */
     val count: Int get() = siblingPaths.size
+
+    /**
+     * 能不能给「修复时间戳」入口：TS 家族的容器、当前没在重建、也没在切内核。
+     *
+     * 口径与 R3/R11 一致——只有时间戳容易坏的 TS 才需要这条出口。
+     */
+    val canRepairTimestamps: Boolean
+        get() = VideoPlayerMath.isTimestampRepairable(path) && !timestampRepairRunning && !switching
 
     /** 当前集号（从 1 开始）；队列为空时为 0。 */
     val position: Int get() = if (siblingPaths.isEmpty()) 0 else siblingIndex + 1
@@ -376,6 +390,21 @@ sealed interface VideoPlayerEvent {
 
     /** 卸载当前字幕轨（回到「无字幕」，候选列表保留）。 */
     data object SubtitleCleared : VideoPlayerEvent
+
+    /** 时间戳重建（R3/R11）开始。 */
+    data object TimestampRepairStarted : VideoPlayerEvent
+
+    /** 重建进度（0..100）。 */
+    data class TimestampRepairProgress(val percent: Int) : VideoPlayerEvent
+
+    /** 重建结束（成功或失败都归位，只看 [TimestampRepairNoticeRaised] 的文案）。 */
+    data object TimestampRepairFinished : VideoPlayerEvent
+
+    /** 重建的一次性提示（中文）。 */
+    data class TimestampRepairNoticeRaised(val text: String) : VideoPlayerEvent
+
+    /** 关掉重建提示。 */
+    data object TimestampRepairNoticeCleared : VideoPlayerEvent
 }
 
 /**
@@ -588,6 +617,30 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
 
     // 卸载轨道但保留候选列表：用户还能在面板里再选一条
     VideoPlayerEvent.SubtitleCleared -> withoutSubtitleTrack()
+
+    // 时间戳重建（R3/R11）：跑起来时清掉上一次的提示，结束时把进度收掉
+    VideoPlayerEvent.TimestampRepairStarted -> copy(
+        timestampRepairRunning = true,
+        timestampRepairPercent = 0,
+        timestampRepairNotice = null,
+    )
+
+    is VideoPlayerEvent.TimestampRepairProgress -> copy(
+        timestampRepairPercent = event.percent.coerceIn(0, 100),
+    )
+
+    VideoPlayerEvent.TimestampRepairFinished -> copy(
+        timestampRepairRunning = false,
+        timestampRepairPercent = 0,
+    )
+
+    is VideoPlayerEvent.TimestampRepairNoticeRaised -> copy(
+        timestampRepairRunning = false,
+        timestampRepairPercent = 0,
+        timestampRepairNotice = event.text,
+    )
+
+    VideoPlayerEvent.TimestampRepairNoticeCleared -> copy(timestampRepairNotice = null)
 }
 
 /**

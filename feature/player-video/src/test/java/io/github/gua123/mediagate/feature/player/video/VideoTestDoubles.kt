@@ -407,6 +407,30 @@ internal class FakeVideoPlayerEnvironment(
         failSiblings[dir]?.let { throw it }
         return VideoPlayerMath.playableEntries(entries[dir].orEmpty())
     }
+
+    // ---- 时间戳重建（R3/R11）：结果与进度由测试摆布 ----
+
+    /** 修复请求记录（按调用顺序）。 */
+    val repairCalls = mutableListOf<String>()
+
+    /** 修复结果注入（默认成功，指向修复根目录里的文件名）。 */
+    var repairResult: TimestampRepairOutcome = TimestampRepairOutcome.Repaired("Show.repaired.mp4")
+
+    /** 修复进度回调序列。 */
+    var repairProgress: List<Int> = listOf(0, 42, 100)
+
+    /** exitRepairRoot 调用次数。 */
+    var exitRepairCalls = 0
+
+    override suspend fun repairTimestamps(path: String, onProgress: (Int) -> Unit): TimestampRepairOutcome {
+        repairCalls += path
+        repairProgress.forEach(onProgress)
+        return repairResult
+    }
+
+    override fun exitRepairRoot() {
+        exitRepairCalls++
+    }
 }
 
 /**

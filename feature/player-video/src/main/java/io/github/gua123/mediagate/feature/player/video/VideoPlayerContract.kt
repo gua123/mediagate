@@ -126,6 +126,41 @@ interface VideoPlayerEnvironment {
      * @throws io.github.gua123.mediagate.data.storage.api.StorageException 列目录失败（无权限 / 不存在 / 网络…）。
      */
     suspend fun siblings(path: String): List<RemoteEntry>
+
+    /**
+     * 时间戳重建（**R3 / R11**）：把 [path] 这条视频用 FFmpeg 重写一份时间戳正常的副本。
+     *
+     * 为什么放在宿主：重建要「当前后端的随机读 + FFmpeg 会话 + 一个播放器能读到的落点」，
+     * 这三样都只有 :app 拿得到。实现负责把产物接到**视频专用的"修复根目录"后端**上，
+     * 于是调用方只要 reload([TimestampRepairOutcome.Repaired.path]) 就能播修好的版本。
+     *
+     * 默认实现返回失败：JVM 单测与没有宿主的场景不会因为少实现一个方法而编译不过。
+     *
+     * @param onProgress 0..100（ffmpeg 报不出总时长时可能一直是 0）。
+     */
+    suspend fun repairTimestamps(path: String, onProgress: (Int) -> Unit): TimestampRepairOutcome =
+        TimestampRepairOutcome.Failed("当前环境不支持时间戳重建")
+
+    /**
+     * 退出"修复根目录"，把视频后端切回正常的当前根目录。
+     *
+     * 播放页销毁时调用（离开播放页就恢复原状），避免用户回到浏览页时看到修复缓存目录。
+     */
+    fun exitRepairRoot() = Unit
+}
+
+/** 时间戳重建的结果（**R3/R11**）。 */
+sealed interface TimestampRepairOutcome {
+
+    /**
+     * 重建成功。
+     *
+     * @param path **修复根目录内**的相对路径（宿主已经把视频后端切到那个根，直接 reload 即可）。
+     */
+    data class Repaired(val path: String) : TimestampRepairOutcome
+
+    /** 重建失败（中文原因，直接展示）。 */
+    data class Failed(val message: String) : TimestampRepairOutcome
 }
 
 /**

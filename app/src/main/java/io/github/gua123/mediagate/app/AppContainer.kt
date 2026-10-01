@@ -74,6 +74,7 @@ import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
+import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
 import io.github.gua123.mediagate.feature.update.SignatureCheck
 import io.github.gua123.mediagate.feature.update.UpdateEnvironment
 import io.github.gua123.mediagate.feature.update.UpdateManifest
@@ -93,6 +94,9 @@ import io.github.gua123.mediagate.media.asr.PlaybackYieldGate
 import io.github.gua123.mediagate.media.asr.WhisperAsrEngine
 import io.github.gua123.mediagate.media.asr.WhisperModel
 import io.github.gua123.mediagate.media.ffmpeg.FfmpegKitRunner
+import io.github.gua123.mediagate.media.ffmpeg.FfmpegProgress
+import io.github.gua123.mediagate.media.ffmpeg.TimestampRepair
+import io.github.gua123.mediagate.media.ffmpeg.TimestampRepairResult
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
 import io.github.gua123.mediagate.media.engine.PlayerEngine
@@ -107,6 +111,8 @@ import io.github.gua123.mediagate.media.thumbnail.MediaMetadataRetrieverFrameExt
 import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailCache
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
+import io.github.gua123.mediagate.media.tsext.openRandomAccessSource
+import kotlinx.coroutines.CancellationException
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
@@ -431,6 +437,24 @@ class AppContainer(context: Context) :
      */
     val videoPlayerEnvironment: VideoPlayerEnvironment = VideoPlayerHost()
 
+    // ------------------------------------------------------------ 时间戳重建（R3/R11）
+
+    /** 修复产物目录（cacheDir 下，系统可回收）；只在播放修复版期间被视频后端指向。 */
+    private val timestampRepairDir: File get() = File(appContext.cacheDir, TS_REPAIR_DIR)
+
+    /**
+     * 视频专用的"修复根目录"后端（**只影响视频播放页**）。
+     *
+     * 时间戳重建的产物落在 App 缓存里，不属于任何用户根目录；如果把全局 [publishRoot] 切过去，
+     * 浏览页/音频/图片都会跟着看到缓存目录。所以这里单独给视频一条覆盖流：置位时播放页读到的是
+     * 修复目录，退出播放页（[VideoPlayerHost.exitRepairRoot]）立刻恢复。
+     */
+    private val _videoRepairRoot = MutableStateFlow<BrowserRootState?>(null)
+
+    private val videoBackend: StateFlow<StorageBackend?> =
+        combine(audioBackend, _videoRepairRoot) { normal, repaired -> repaired?.backend ?: normal }
+            .stateIn(ioScope, SharingStarted.Eagerly, null)
+
     /**
      * 视频会话控制器（R18 视频侧 / R19 让路）：把播放页借出的内核包成 MediaSession 的会话源，
      * 并在起播时连上 :media:playback 的 `VideoPlaybackService`（通知栏 / 锁屏可控）。
@@ -446,9 +470,59 @@ class AppContainer(context: Context) :
         /** 视频后台播放宿主（R18/R19）：会话 + 让路。 */
         override val playback: VideoPlaybackHost get() = videoSession
 
-        override val backend: StateFlow<StorageBackend?> get() = audioBackend
+        override val backend: StateFlow<StorageBackend?> get() = videoBackend
 
         override val preferences: VideoPlayerPreferences get() = videoPreferences
+
+        /**
+         * 时间戳重建（R3/R11）：当前后端随机读 → FFmpeg `-fflags +genpts -c copy` 重写 → 落缓存，
+         * 然后把**视频后端**切到修复目录，播放页 reload 文件名即可续播修复版。
+         */
+        override suspend fun repairTimestamps(path: String, onProgress: (Int) -> Unit): TimestampRepairOutcome {
+            val backend = videoBackend.value ?: return TimestampRepairOutcome.Failed("还没有选择媒体根目录")
+            val dir = timestampRepairDir
+            if (!dir.exists()) dir.mkdirs()
+            val outFile = File(dir, repairedFileNameOf(path))
+            return try {
+                val repair = TimestampRepair(FfmpegKitRunner(), File(appContext.cacheDir, TS_REPAIR_WORK_DIR))
+                val source = backend.openRandomAccessSource(path)
+                val result = source.use {
+                    repair.repairToFile(it, outFile, onProgress = { progress -> onProgress(percentOf(progress)) })
+                }
+                when (result) {
+                    is TimestampRepairResult.Success -> {
+                        _videoRepairRoot.value = BrowserRootState(
+                            mode = RootModeKind.NONE,
+                            label = appContext.getString(R.string.root_label_timestamp_repair),
+                            displayPath = dir.absolutePath,
+                            backend = LocalBackends.file(dir),
+                        )
+                        AppLog.i(TAG, "时间戳重建完成：" + outFile.name)
+                        TimestampRepairOutcome.Repaired(outFile.name)
+                    }
+
+                    is TimestampRepairResult.Failure -> {
+                        runCatching { outFile.delete() }
+                        TimestampRepairOutcome.Failed(result.message)
+                    }
+                }
+            } catch (e: CancellationException) {
+                runCatching { outFile.delete() }
+                throw e
+            } catch (t: Throwable) {
+                runCatching { outFile.delete() }
+                AppLog.w(TAG, "时间戳重建失败：" + path, t)
+                TimestampRepairOutcome.Failed(ErrorText.of(t, "时间戳重建失败"))
+            }
+        }
+
+        /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
+        override fun exitRepairRoot() {
+            val previous = _videoRepairRoot.value ?: return
+            _videoRepairRoot.value = null
+            // 修复产物留在缓存里由系统回收；这里只把后端收掉，避免文件句柄悬着
+            runCatching { previous.backend.close() }
+        }
 
         /** 字幕能力（M7-A，R14）：同目录匹配 / 读取解析 / 写回与本地兜底。 */
         override val subtitles: SubtitleHost get() = subtitleHost
@@ -1190,6 +1264,16 @@ class AppContainer(context: Context) :
      */
     private fun friendlyReason(t: Throwable): String = ErrorText.of(t, "配置或网络有问题")
 
+    /** 修复产物的文件名：Movie.ts → Movie.repaired.mp4（重建命令固定输出 MP4）。 */
+    private fun repairedFileNameOf(path: String): String {
+        val name = path.substringAfterLast('/')
+        val base = name.substringBeforeLast('.', name).ifEmpty { "repaired" }
+        return base + ".repaired.mp4"
+    }
+
+    /** ffmpeg 进度 → 0..100（报不出总时长时给 0，界面显示不确定进度）。 */
+    private fun percentOf(progress: FfmpegProgress): Int = progress.percent.coerceAtLeast(0)
+
     /** 本地连接 → 写回根目录配置（R12：content:// 走 SAF，绝对路径走全盘模式）。 */
     private suspend fun applyLocalConnectionRoot(record: ConnectionRecord) {
         val path = record.addresses.firstOrNull()?.host?.trim().orEmpty()
@@ -1370,6 +1454,10 @@ class AppContainer(context: Context) :
 
         /** ASR 中间件（16 kHz 单声道 PCM 临时文件）目录；跑完即删。 */
         const val ASR_WORK_DIR = "asr"
+
+        /** 时间戳重建（R3/R11）产物目录（cacheDir 下）与 ffmpeg 中间文件目录。 */
+        const val TS_REPAIR_DIR = "ts-repair"
+        const val TS_REPAIR_WORK_DIR = "ts-repair-work"
 
         /** 应用内更新（R20）：下载好的 APK 落在 filesDir/updates（已通过 FileProvider 暴露给安装器）。 */
         const val UPDATE_DIR = "updates"

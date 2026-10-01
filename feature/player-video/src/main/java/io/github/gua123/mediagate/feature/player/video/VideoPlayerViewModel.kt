@@ -102,6 +102,7 @@ class VideoPlayerViewModel(
     private var discoverJob: Job? = null
     private var subtitleTickJob: Job? = null
     private var writeBackJob: Job? = null
+    private var repairJob: Job? = null
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
@@ -510,6 +511,56 @@ class VideoPlayerViewModel(
         }
     }
 
+    /**
+     * 时间戳重建（**R3 / R11**）：把当前这条 TS 重写一份时间戳正常的副本再播。
+     *
+     * 为什么要有这条出口：无 PCR / 时间戳错乱的 TS 会让播放器跳帧、拖不动甚至起不来，
+     * 而 FFmpeg 的 `-fflags +genpts -c copy` 能把它救回来（plan 4.3 第 2 条）。
+     *
+     * 行为：跑的时候界面显示进度（ffmpeg 报不出总时长就是不确定进度）；成功后**自动换成
+     * 修复后的版本续播**（宿主已把视频后端切到修复根目录），失败给一句中文说明。
+     */
+    fun repairTimestamps() {
+        val current = _state.value
+        if (current.timestampRepairRunning) return
+        if (!VideoPlayerMath.isTimestampRepairable(current.path)) return
+        val path = current.path
+        repairJob?.cancel()
+        _state.update { it.reduce(VideoPlayerEvent.TimestampRepairStarted) }
+        repairJob = viewModelScope.launch {
+            val outcome = try {
+                withContext(io) {
+                    environment.repairTimestamps(path) { percent ->
+                        _state.update { state -> state.reduce(VideoPlayerEvent.TimestampRepairProgress(percent)) }
+                    }
+                }
+            } catch (e: CancellationException) {
+                _state.update { it.reduce(VideoPlayerEvent.TimestampRepairFinished) }
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "时间戳重建失败：$path", t)
+                TimestampRepairOutcome.Failed("时间戳重建失败：" + (t.message ?: t.javaClass.simpleName))
+            }
+            when (outcome) {
+                is TimestampRepairOutcome.Repaired -> {
+                    _state.update { it.reduce(VideoPlayerEvent.TimestampRepairFinished) }
+                    _state.update { it.reduce(VideoPlayerEvent.TimestampRepairNoticeRaised(REPAIR_DONE_MESSAGE)) }
+                    // 宿主已经把视频后端切到修复根目录，这里按新路径重来一遍
+                    reload(outcome.path)
+                }
+
+                is TimestampRepairOutcome.Failed -> _state.update {
+                    it.reduce(VideoPlayerEvent.TimestampRepairNoticeRaised(outcome.message))
+                }
+            }
+        }
+    }
+
+    /** 关掉时间戳重建提示。 */
+    fun dismissTimestampRepairNotice() {
+        _state.update { it.reduce(VideoPlayerEvent.TimestampRepairNoticeCleared) }
+    }
+
     /** 清掉字幕提示（用户看过之后）。 */
     fun clearSubtitleNotice() {
         _state.update { it.reduce(VideoPlayerEvent.SubtitleNoticeCleared) }
@@ -645,6 +696,9 @@ class VideoPlayerViewModel(
         discoverJob?.cancel()
         subtitleTickJob?.cancel()
         writeBackJob?.cancel()
+        repairJob?.cancel()
+        // 离开播放页就把视频后端切回正常根目录（否则浏览页会看到修复缓存目录）
+        environment.exitRepairRoot()
         releaseEngine()
         if (ref == null || position <= 0L) return
         // 播完后退出时记成总时长：下次进入按「已看完」从头开始（与 EngineSwitchPlanner 的位置口径一致）
@@ -1001,5 +1055,8 @@ class VideoPlayerViewModel(
 
         /** 字幕文件读出来了却没有可用条目时的中文提示（R14：不静默丢弃）。 */
         const val EMPTY_SUBTITLE_MESSAGE = "字幕文件里没有可显示的条目"
+
+        /** 时间戳重建成功后的中文说明（R3/R11）。 */
+        const val REPAIR_DONE_MESSAGE = "时间戳已重建，正在播放修复后的版本"
     }
 }
