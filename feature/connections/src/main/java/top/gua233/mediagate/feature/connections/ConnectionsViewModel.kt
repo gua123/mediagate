@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.network.ConnectionTester
 import io.github.gua123.mediagate.core.network.ProbeCache
 import io.github.gua123.mediagate.core.network.ProbeClock
@@ -302,8 +303,8 @@ class ConnectionsViewModel(
         record.id.toString() + "#" + record.protocolId + "#" +
             record.addresses.joinToString(",") { it.id.toString() + ":" + it.host + ":" + it.port }
 
-    /** 异常 → 中文提示（R16：不把英文堆栈甩给用户）。 */
-    private fun friendly(t: Throwable): String = t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+    /** 异常 → 中文提示（R16：不把英文堆栈或库的英文 message 甩给用户，见 [ErrorText]）。 */
+    private fun friendly(t: Throwable): String = ErrorText.of(t, "详情见诊断日志")
 }
 
 /** 新建草稿（R8）：按协议给默认的传输方案与端口。 */

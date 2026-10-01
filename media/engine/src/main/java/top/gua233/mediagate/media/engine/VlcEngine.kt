@@ -13,6 +13,7 @@ import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.interfaces.IMedia
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.proxy.MediaUriCodec
 
@@ -127,7 +128,7 @@ class VlcEngine(
             player.media = vlcMedia
         } catch (t: IllegalStateException) {
             // 极端情况下（MediaPlayer 已释放）不要崩在播放页，上报成引擎错误由上层提示
-            _state.value = EngineState.Error("LibVLC 装载媒体失败：" + (t.message ?: "未知原因"), t)
+            _state.value = EngineState.Error("LibVLC 装载媒体失败：" + ErrorText.of(t, "未知原因"), t)
             vlcMedia.release()
             return
         }

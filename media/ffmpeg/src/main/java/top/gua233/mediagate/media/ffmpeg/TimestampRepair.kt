@@ -174,8 +174,8 @@ class TimestampRepair(
                 FfmpegOutcome.SUCCESS -> TimestampRepairResult.Success(target.outputFile, target.playUrl, result)
                 FfmpegOutcome.CANCELLED -> TimestampRepairResult.Failure("时间戳重建已取消", result = result)
                 FfmpegOutcome.FAILED -> TimestampRepairResult.Failure(
-                    message = "时间戳重建失败：${FfmpegOutput.describeReturnCode(result.returnCode)}" +
-                        result.output.trim().takeIf { it.isNotEmpty() }?.let { "；$it" }.orEmpty(),
+                    // R16：界面只给中文（ffmpeg 的英文 stderr 不进提示，仍在 result.output 里可查）
+                    message = "时间戳重建失败：" + FfmpegOutput.describeReturnCode(result.returnCode),
                     result = result,
                 )
             }

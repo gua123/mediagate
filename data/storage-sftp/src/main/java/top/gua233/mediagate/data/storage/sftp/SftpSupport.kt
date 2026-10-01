@@ -6,6 +6,7 @@ import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.JSchUnknownHostKeyException
 import com.jcraft.jsch.SftpException
 import com.jcraft.jsch.SocketFactory
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.data.storage.api.Page
 import io.github.gua123.mediagate.data.storage.api.StorageException
@@ -144,9 +145,9 @@ internal fun mapJschFailure(
                 cause is SocketTimeoutException ->
                     StorageException.Network("SFTP 连接或读取超时（" + config.connectTimeoutMs + " ms）", e)
                 cause is SocketException ->
-                    StorageException.Network("SFTP 网络错误：" + (cause.message ?: cause.javaClass.simpleName), e)
+                    StorageException.Network("SFTP 网络错误：" + ErrorText.of(cause, "详情见诊断日志"), e)
                 e is JSchException ->
-                    StorageException.Network("SFTP 连接失败（" + context + "）：" + (e.message ?: e.javaClass.simpleName), e)
+                    StorageException.Network("SFTP 连接失败（" + context + "）：" + ErrorText.of(e, "详情见诊断日志"), e)
                 else -> StorageException.Unknown("SFTP 操作失败（" + context + "）：" + describeThrowable(e), e)
             }
         }
@@ -205,9 +206,14 @@ internal fun deepCause(t: Throwable): Throwable {
     return current
 }
 
-/** 异常摘要：类型 + 消息（**不含凭据**，可进日志/报告）。 */
-internal fun describeThrowable(t: Throwable): String =
-    t.javaClass.simpleName + (t.message?.takeIf { it.isNotBlank() }?.let { ": " + it } ?: "")
+/**
+ * 异常摘要（**不含凭据**，可进日志/报告）。
+ *
+ * R16：一律经 [ErrorText] 转成中文一句话——底层库的 message 是英文，直接拼进 StorageException 就会
+ * 在浏览页/连接页露出「SFTP 网络错误：java.net.SocketException Connection reset」这类夹生句。
+ * 认不出的英文退回「详情见诊断日志」，原始异常仍在 AppLog 里。
+ */
+internal fun describeThrowable(t: Throwable): String = ErrorText.of(t, "详情见诊断日志")
 
 private const val MAX_CAUSE_DEPTH = 16
 

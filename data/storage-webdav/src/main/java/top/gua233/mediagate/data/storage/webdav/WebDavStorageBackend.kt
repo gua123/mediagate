@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -184,8 +185,9 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 is UnknownHostException -> "DNS 解析失败（${config.host}）"
                 is SocketTimeoutException, is java.io.InterruptedIOException ->
                     "连接或读取超时（${config.connectTimeoutMs} ms / ${config.readTimeoutMs} ms）"
-                is IOException -> "网络不可达：${t.javaClass.simpleName} ${t.message.orEmpty()}"
-                else -> "未知错误：${t.javaClass.simpleName} ${t.message.orEmpty()}"
+                // R16：界面只给中文；异常的原始英文留在 AppLog 的 probe 异常日志里
+                is IOException -> "网络不可达：" + ErrorText.of(t, "详情见诊断日志")
+                else -> "未知错误：" + ErrorText.of(t, "详情见诊断日志")
             }
             AppLog.w(TAG, "probe 异常：${config.requestBaseUrl} → $message", t)
             // DNS 失败时监听器收不到 dnsEnd：把整段耗时算进 DNS，保证三段相加 ≈ 总耗时

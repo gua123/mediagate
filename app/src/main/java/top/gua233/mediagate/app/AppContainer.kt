@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.crypto.CredentialCipher
 import io.github.gua123.mediagate.core.crypto.KeystoreCredentialCipher
 import io.github.gua123.mediagate.core.database.MediaGateDatabase
@@ -1037,9 +1038,12 @@ class AppContainer(context: Context) :
         next?.let { ioScope.launch { logProbe(it) } }
     }
 
-    /** 后端构造失败 → 给用户看的中文原因（R16：不把异常类名甩到界面上）。 */
-    private fun friendlyReason(t: Throwable): String =
-        t.message?.takeIf { it.isNotBlank() } ?: t.javaClass.simpleName
+    /**
+     * 后端构造失败 → 给用户看的中文原因（R16：不把异常类名或库的英文 message 甩到界面上）。
+     *
+     * 我们自己抛的配置类错误本来就是中文（如「还没有保存密码…」），[ErrorText] 会原样保留。
+     */
+    private fun friendlyReason(t: Throwable): String = ErrorText.of(t, "配置或网络有问题")
 
     /** 本地连接 → 写回根目录配置（R12：content:// 走 SAF，绝对路径走全盘模式）。 */
     private suspend fun applyLocalConnectionRoot(record: ConnectionRecord) {

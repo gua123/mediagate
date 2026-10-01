@@ -7,6 +7,7 @@ import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -235,7 +236,8 @@ class FtpStorageBackend(val config: FtpConfig) : StorageBackend {
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            report(false, "FTP 未知错误：" + t.javaClass.simpleName + " " + t.message.orEmpty(), dnsMs, connectMs, elapsedMs(started))
+            // R16：界面只给中文；原始异常留给 AppLog
+            report(false, "FTP 未知错误：" + ErrorText.of(t, "详情见诊断日志"), dnsMs, connectMs, elapsedMs(started))
         } finally {
             runCatching { client.disconnect() }
         }

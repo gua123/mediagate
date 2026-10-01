@@ -1,5 +1,7 @@
 package io.github.gua123.mediagate.media.tsext
 
+import io.github.gua123.mediagate.core.common.ErrorText
+
 /**
  * 一次扫描的统计（R3/R4，诊断与单测断言用）。
  *
@@ -55,7 +57,7 @@ sealed class TsScanError(val message: String) {
 
     /** 读取数据源失败（远端断开等）。 */
     class ReadFailed(val cause: Throwable) :
-        TsScanError("读取失败：${cause.message ?: cause.javaClass.simpleName}")
+        TsScanError("读取失败：" + ErrorText.of(cause, "详情见诊断日志"))
 }
 
 /**

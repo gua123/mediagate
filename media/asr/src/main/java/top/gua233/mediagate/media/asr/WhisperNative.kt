@@ -1,5 +1,7 @@
 package io.github.gua123.mediagate.media.asr
 
+import io.github.gua123.mediagate.core.common.ErrorText
+
 /**
  * whisper.cpp 的 JNI 桥（**M7-B**：R14 音转字幕 / R19 批量字幕任务中心）。
  *
@@ -93,7 +95,12 @@ object WhisperNative {
 
     /** 不可用的中文原因；可用时为 null。 */
     fun unavailableReason(): String? =
-        if (isAvailable()) null else "本地识别引擎不可用（" + (loadFailure?.message ?: "native 库与代码版本不配套") + "）"
+        if (isAvailable()) {
+            null
+        } else {
+            val reason = loadFailure?.let { ErrorText.of(it, "native 库与代码版本不配套") } ?: "native 库与代码版本不配套"
+            "本地识别引擎不可用（" + reason + "）"
+        }
 
     /** 底层 whisper.cpp 版本号；不可用时返回「未知」。 */
     fun version(): String = runCatching { nativeVersion() }.getOrDefault("未知")
