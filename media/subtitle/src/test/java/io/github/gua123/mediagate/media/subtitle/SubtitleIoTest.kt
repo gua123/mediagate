@@ -41,12 +41,29 @@ class SubtitleIoTest {
     }
 
     @Test
-    fun onlySrtAndVttAreWritable() {
+    fun onlySrtAndVttAndTxtAreWritable() {
         assertTrue(SubtitleFormat.SRT.writable)
         assertTrue(SubtitleFormat.VTT.writable)
+        assertTrue("纯文本稿也是可另存的产出（R14）", SubtitleFormat.TXT.writable)
         assertFalse(SubtitleFormat.ASS.writable)
         assertFalse(SubtitleFormat.SSA.writable)
+        // 扩展名清单不含 txt：它只是导出目标，不能反过来被当成外挂字幕
         assertEquals(listOf("srt", "vtt", "ass", "ssa"), SubtitleFormat.EXTENSIONS)
+        assertEquals(4, SubtitleFormat.SOURCE_FORMATS.size)
+        assertFalse(SubtitleFormat.isSubtitleFile("台词.txt"))
+    }
+
+    @Test
+    fun plainTextKeepsOnlyDialogLines() {
+        val cues = listOf(
+            SubtitleCue(startMs = 0, endMs = 1_000, text = "第一句"),
+            SubtitleCue(startMs = 1_000, endMs = 2_000, text = "第一句"), // 相邻重复：ASR 分段重叠常见
+            SubtitleCue(startMs = 2_000, endMs = 3_000, text = "  "),        // 空文本：丢掉
+            SubtitleCue(startMs = 3_000, endMs = 4_000, text = "第二句"),
+        )
+        assertEquals("第一句\n第二句", SubtitleWriter.serializeTxt(cues))
+        // 经由统一入口也能拿到同样的结果
+        assertEquals("第一句\n第二句", SubtitleWriter.serialize(cues, SubtitleFormat.TXT))
     }
 
     @Test

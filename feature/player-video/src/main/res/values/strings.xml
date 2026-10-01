@@ -63,6 +63,7 @@
     <string name="video_subtitle_offset_value">延迟 %1$s 秒</string>
     <string name="video_subtitle_write_back">写回 %1$s</string>
     <string name="video_subtitle_save_as_vtt">另存为 VTT</string>
+    <string name="video_subtitle_save_as_txt">另存为纯文本</string>
     <string name="video_subtitle_notice_dismiss">知道了</string>
     <string name="video_subtitle_notice_load_failed">字幕加载失败：%1$s</string>
     <string name="video_subtitle_notice_load_failed_brief">字幕加载失败，可在下面手动选一条</string>

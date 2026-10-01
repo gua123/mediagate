@@ -781,6 +781,13 @@ private fun SubtitlePanel(
                         Text(stringResource(R.string.video_subtitle_save_as_vtt))
                     }
                 }
+                // 纯文本稿（R14：只导出台词，没有时间轴）
+                TextButton(
+                    onClick = { viewModel.writeBackSubtitle(SubtitleFormat.TXT) },
+                    enabled = state.canWriteBackSubtitle,
+                ) {
+                    Text(stringResource(R.string.video_subtitle_save_as_txt))
+                }
             }
         }
     }

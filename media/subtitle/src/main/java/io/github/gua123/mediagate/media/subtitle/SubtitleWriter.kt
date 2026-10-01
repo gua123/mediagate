@@ -30,8 +30,26 @@ object SubtitleWriter {
     fun serialize(cues: List<SubtitleCue>, format: SubtitleFormat): String = when (format) {
         SubtitleFormat.SRT -> serializeSrt(cues)
         SubtitleFormat.VTT -> serializeVtt(cues)
+        SubtitleFormat.TXT -> serializeTxt(cues)
         SubtitleFormat.ASS, SubtitleFormat.SSA ->
-            throw IllegalArgumentException("暂不支持写回 " + format.label + "，请另存为 SRT 或 VTT")
+            throw IllegalArgumentException("暂不支持写回 " + format.label + "，请另存为 SRT / VTT / 纯文本")
+    }
+
+    /**
+     * 纯文本序列化（**plan 4.7 B 的第三种产出**）：只留台词，一行一条，没有序号与时间轴。
+     *
+     * 坏数据（空文本）丢掉、按起始时间排序；去重相邻重复行（ASR 分段重叠时很常见），
+     * 让导出的稿件可以直接拿去用。
+     */
+    fun serializeTxt(cues: List<SubtitleCue>): String {
+        val lines = ArrayList<String>()
+        for (cue in ordered(cues)) {
+            val text = cue.text.trim()
+            if (text.isEmpty()) continue
+            if (lines.lastOrNull() == text) continue
+            lines += text
+        }
+        return lines.joinToString("\n")
     }
 
     /** SRT 序列化：序号 + `HH:MM:SS,mmm --> HH:MM:SS,mmm` + 文本 + 空行。 */

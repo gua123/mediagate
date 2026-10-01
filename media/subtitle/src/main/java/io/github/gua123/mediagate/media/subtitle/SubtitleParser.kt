@@ -62,6 +62,8 @@ object SubtitleParser {
             SubtitleFormat.SRT -> parseTimedBlocks(lines, SubtitleFormat.SRT, vtt = false)
             SubtitleFormat.VTT -> parseTimedBlocks(lines, SubtitleFormat.VTT, vtt = true)
             SubtitleFormat.ASS, SubtitleFormat.SSA -> parseAss(lines, format)
+            // 纯文本稿不是字幕源（[SubtitleFormat.SOURCE_FORMATS] 里没有它）；真被传进来就如实返回空
+            SubtitleFormat.TXT -> SubtitleParseResult(format = format, cues = emptyList())
         }
     }
 

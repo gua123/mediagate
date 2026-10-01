@@ -27,21 +27,37 @@ enum class SubtitleFormat(
 
     /** SubStation Alpha（.ssa，基础样式）。 */
     SSA("ssa", "SSA", "text/x-ssa"),
+
+    /**
+     * 纯文本稿（.txt）：**只导出台词文本**，没有时间轴，因此**不是可加载的字幕源**。
+     *
+     * 它只作为"另存为"的目标格式存在（plan 4.7 B 里 ASR 的第三种产出）；字幕定位与解析都
+     * 不认它（见 [SOURCE_FORMATS]），否则视频目录里一个无关的 .txt 会被当成字幕候选。
+     */
+    TXT("txt", "纯文本", "text/plain"),
     ;
 
-    /** 是否为可写回（另存）的文本格式（R14 只要求 SRT / VTT）。 */
-    val writable: Boolean get() = this == SRT || this == VTT
+    /** 是否为可写回（另存）的格式（R14 要求 SRT / VTT，另加纯文本稿）。 */
+    val writable: Boolean get() = this == SRT || this == VTT || this == TXT
 
     companion object {
 
-        /** 全部受支持扩展名（小写）。 */
-        val EXTENSIONS: List<String> = entries.map { it.extension }
+        /**
+         * 可当外挂字幕**加载**的格式（不含 [TXT]——它只是导出目标，不能反过来被当成字幕）。
+         *
+         * 顺序即"同名多份字幕"的偏好顺序（SRT 兼容性最好）。
+         */
+        val SOURCE_FORMATS: List<SubtitleFormat> = entries.filter { it != TXT }
+
+        /** 全部受支持的字幕扩展名（小写；不含 txt）。 */
+        val EXTENSIONS: List<String> = SOURCE_FORMATS.map { it.extension }
 
         /** 按扩展名（大小写不敏感、允许带点）取格式；不认识返回 null。 */
         fun fromExtension(extension: String): SubtitleFormat? {
             val normalized = extension.removePrefix(".").trim().lowercase()
             if (normalized.isEmpty()) return null
-            return entries.firstOrNull { it.extension == normalized }
+            // 只认"可加载的字幕源"：.txt 是导出格式，不参与定位
+            return SOURCE_FORMATS.firstOrNull { it.extension == normalized }
         }
 
         /** 按文件名（或路径末段）取格式；不认识返回 null。 */
