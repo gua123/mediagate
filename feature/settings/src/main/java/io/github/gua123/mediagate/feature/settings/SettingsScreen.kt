@@ -2,6 +2,7 @@ package io.github.gua123.mediagate.feature.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,6 +56,11 @@ fun SettingsScreen(
     keepAlive: KeepAliveGuide = KeepAliveGuide(),
     onKeepAliveAction: (KeepAliveAction) -> Unit = {},
     onKeepAliveConfirm: (KeepAliveItemKind, Boolean) -> Unit = { _, _ -> },
+    /**
+     * 追加区块（由 :app 注入，例如「应用更新」R20 与「语音识别模型」R14）——
+     * 让 :feature:settings 不必反向依赖那些模块，插槽里的内容仍遵守"组合函数零 IO"。
+     */
+    extraSections: @Composable ColumnScope.() -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -145,6 +151,8 @@ fun SettingsScreen(
                     }
                 }
             }
+            extraSections()
+
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

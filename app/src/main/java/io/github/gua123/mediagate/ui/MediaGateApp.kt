@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -62,10 +63,14 @@ import io.github.gua123.mediagate.feature.player.audio.LocalAudioPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
+import io.github.gua123.mediagate.core.download.FileDownloader
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
 import io.github.gua123.mediagate.feature.settings.SettingsNote
 import io.github.gua123.mediagate.feature.settings.SettingsScreen
+import io.github.gua123.mediagate.feature.update.UpdateChecker
+import io.github.gua123.mediagate.feature.update.UpdateSection
+import io.github.gua123.mediagate.feature.update.UpdateViewModel
 import io.github.gua123.mediagate.feature.tasks.LocalTasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksScreen
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
@@ -311,6 +316,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(TopLevelDestination.SETTINGS.navRoute) {
                     SettingsRoute(
                         container = container,
+                        onNotice = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                         onOpenConnections = { navController.switchTopLevel(TopLevelDestination.CONNECTIONS) },
                         onRequestNotification = ::ensureNotificationPermission,
                     )
@@ -357,9 +363,25 @@ private fun SettingsRoute(
     container: AppContainer,
     onOpenConnections: () -> Unit,
     onRequestNotification: () -> Unit,
+    onNotice: (String) -> Unit = {},
 ) {
     val connection by container.settingsConnection.collectAsStateWithLifecycle()
     val keepAlive by container.keepAlive.guide.collectAsStateWithLifecycle()
+
+    // 应用内更新（R20）：状态机在 :feature:update，宿主能力由 AppContainer 提供
+    val updateViewModel: UpdateViewModel = viewModel {
+        UpdateViewModel(
+            environment = container.updateEnvironment,
+            checker = UpdateChecker(container.updateTransport),
+            downloader = FileDownloader(container.updateTransport),
+        )
+    }
+    val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(updateState.notice) {
+        val notice = updateState.notice ?: return@LaunchedEffect
+        onNotice(notice)
+        updateViewModel.dismissNotice()
+    }
     val notes = listOf(
         SettingsNote(
             title = stringResource(R.string.settings_note_order_title),
@@ -392,6 +414,17 @@ private fun SettingsRoute(
         },
         onKeepAliveConfirm = { kind: KeepAliveItemKind, confirmed: Boolean ->
             container.keepAlive.setConfirmed(kind, confirmed)
+        },
+        extraSections = {
+            // 应用内更新（R20）：检查 → 下载（断点续传）→ 签名校验 → 系统安装器
+            UpdateSection(
+                state = updateState,
+                onCheck = updateViewModel::check,
+                onDownload = updateViewModel::download,
+                onCancel = updateViewModel::cancelDownload,
+                onInstall = updateViewModel::install,
+                onOpenReleases = updateViewModel::openReleasesPage,
+            )
         },
     )
 }

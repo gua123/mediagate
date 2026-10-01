@@ -1,21 +1,23 @@
 package io.github.gua123.mediagate.feature.update
 
+import io.github.gua123.mediagate.core.download.HttpRequest
+import io.github.gua123.mediagate.core.download.HttpStream
+import io.github.gua123.mediagate.core.download.HttpTransport
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import io.github.gua123.mediagate.core.download.HttpRequest
-import io.github.gua123.mediagate.core.download.HttpStream
-import io.github.gua123.mediagate.core.download.HttpTransport
 import java.io.ByteArrayInputStream
 import java.io.IOException
 
 /**
- * [UpdateManifest] 与 [UpdateChecker] 的 JVM 单测（**R20**）。
+ * [UpdateManifest] 与 [UpdateChecker] 的 JVM 单测（**R20**，公开仓库口径）。
  *
  * 覆盖：清单解析（含转义中文、缺字段、坏 SHA）、版本比较（只认 versionCode）、
- * 检查更新的五类失败（缺 token / 无权限 / 连不上 GitHub / HTTP 错误 / 清单坏）。
+ * 检查更新的四类失败（连不上 GitHub / 清单不存在 / HTTP 错误 / 清单不合法），
+ * 以及"公开源不带任何凭据"这条口径。
  */
 class UpdateCheckerTest {
 
@@ -23,7 +25,7 @@ class UpdateCheckerTest {
         {
           "versionCode": 2,
           "versionName": "0.1.1",
-          "apkUrl": "https://api.github.com/repos/gua123/mediagate-releases/releases/assets/1",
+          "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.1/mediagate-0.1.1.apk",
           "sizeBytes": 74186113,
           "sha256": "f6b330dea2b1217e322dbd4291d319f9ae84d0f98298320a548da093225661f2",
           "notes": "SFTP/FTP 接线修复；\n明文 http 放开"
@@ -56,62 +58,63 @@ class UpdateCheckerTest {
     }
 
     @Test
-    fun `有新版时返回 Available 并带上 token`() = runTest {
-        val transport = FakeTransport(200, json)
+    fun `公开源默认指向 raw 清单且不带任何凭据`() {
         val source = UpdateSource()
-        val token = "github_pat_test"
+        assertTrue(
+            "默认清单要指向公开仓库的 raw 地址：${source.manifestUrl}",
+            source.manifestUrl.startsWith("https://raw.githubusercontent.com/gua123/mediagate/"),
+        )
+        assertTrue(source.manifestUrl.endsWith("update.json"))
+        val request = source.manifestRequest()
+        assertTrue("公开源不应带 Authorization：${request.headers}", request.headers.keys.none { it.equals("Authorization", true) })
+        assertTrue(UpdateSource.RELEASES_PAGE.contains("/releases"))
+    }
 
-        val result = UpdateChecker(transport, io = kotlinx.coroutines.Dispatchers.Unconfined)
-            .check(source, currentVersionCode = 1L, token = token)
+    @Test
+    fun `有新版时返回 Available 并原样透传清单`() = runTest {
+        val transport = FakeTransport(200, json)
+        val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
 
         assertTrue("应是 Available：$result", result is UpdateCheckResult.Available)
-        assertEquals(2L, (result as UpdateCheckResult.Available).manifest.versionCode)
-        assertEquals("Bearer $token", transport.lastRequest!!.headers["Authorization"])
-        assertEquals("application/vnd.github.raw+json", transport.lastRequest!!.headers["Accept"])
+        val manifest = (result as UpdateCheckResult.Available).manifest
+        assertEquals(2L, manifest.versionCode)
+        assertEquals("0.1.1", manifest.versionName)
+        assertEquals(74186113L, manifest.sizeBytes)
+        assertEquals(transport.lastRequest!!.url, UpdateSource.DEFAULT_MANIFEST_URL)
     }
 
     @Test
     fun `同版本或更旧时返回已是最新`() = runTest {
-        val checker = UpdateChecker(FakeTransport(200, json), io = kotlinx.coroutines.Dispatchers.Unconfined)
-        val result = checker.check(UpdateSource(), currentVersionCode = 2L, token = "t")
-        assertTrue(result is UpdateCheckResult.UpToDate)
+        val checker = UpdateChecker(FakeTransport(200, json), Dispatchers.Unconfined)
+        assertTrue(checker.check(UpdateSource(), currentVersionCode = 2L) is UpdateCheckResult.UpToDate)
+        assertTrue(checker.check(UpdateSource(), currentVersionCode = 9L) is UpdateCheckResult.UpToDate)
     }
 
     @Test
-    fun `没配 token 时明确要求先配置`() = runTest {
-        val checker = UpdateChecker(FakeTransport(200, json), io = kotlinx.coroutines.Dispatchers.Unconfined)
-        val result = checker.check(UpdateSource(), currentVersionCode = 1L, token = "  ")
-        assertEquals(UpdateFailure.NEEDS_TOKEN, (result as UpdateCheckResult.Failed).kind)
-        assertTrue(result.display.contains("token"))
-    }
+    fun `清单不存在与连不上 GitHub 分别给不同提示`() = runTest {
+        val missing = UpdateChecker(FakeTransport(404, ""), Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
+        assertEquals(UpdateFailure.MISSING, (missing as UpdateCheckResult.Failed).kind)
 
-    @Test
-    fun `私有仓库无权限（404）与网络不通分别给不同提示`() = runTest {
-        val io = kotlinx.coroutines.Dispatchers.Unconfined
-        val unauthorized = UpdateChecker(FakeTransport(404, ""), io).check(UpdateSource(), 1L, "bad")
-        assertEquals(UpdateFailure.UNAUTHORIZED, (unauthorized as UpdateCheckResult.Failed).kind)
-
-        val offline = UpdateChecker(FakeTransport(200, json, failWith = IOException("UnknownHostException: api.github.com")), io)
-            .check(UpdateSource(), 1L, "t")
+        val offline = UpdateChecker(
+            FakeTransport(200, json, failWith = IOException("UnknownHostException: raw.githubusercontent.com")),
+            Dispatchers.Unconfined,
+        ).check(UpdateSource(), currentVersionCode = 1L)
         assertEquals(UpdateFailure.GITHUB_UNREACHABLE, (offline as UpdateCheckResult.Failed).kind)
         assertTrue("必须点明需要能访问 GitHub：${offline.display}", offline.display.contains("GitHub"))
     }
 
     @Test
-    fun `服务器 500 与坏清单各有分类`() = runTest {
-        val io = kotlinx.coroutines.Dispatchers.Unconfined
-        val http = UpdateChecker(FakeTransport(500, ""), io).check(UpdateSource(), 1L, "t")
+    fun `服务器错误与坏清单一各有分类`() = runTest {
+        val http = UpdateChecker(FakeTransport(500, ""), Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
         assertEquals(UpdateFailure.HTTP, (http as UpdateCheckResult.Failed).kind)
+        assertTrue(http.display.contains("500"))
 
-        val bad = UpdateChecker(FakeTransport(200, "{}"), io).check(UpdateSource(), 1L, "t")
+        val bad = UpdateChecker(FakeTransport(200, "{}"), Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
         assertEquals(UpdateFailure.BAD_MANIFEST, (bad as UpdateCheckResult.Failed).kind)
-    }
-
-    @Test
-    fun `公开源可以不要求 token`() = runTest {
-        val result = UpdateChecker(FakeTransport(200, json), kotlinx.coroutines.Dispatchers.Unconfined)
-            .check(UpdateSource(requiresToken = false), 1L, token = null)
-        assertTrue(result is UpdateCheckResult.Available)
     }
 }
 

@@ -15,6 +15,12 @@
     <!-- 澎湃 OS 保活引导（R18）：申请「省电策略无限制」需要用系统弹窗（设置页里也提供跳转入口） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+      应用内更新（R20）：下载完 APK 后要交给**系统安装器**。
+      Android 不允许静默安装，这一步必然有系统确认页；首次还会要求用户允许本应用「安装未知应用」。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- 本地媒体（R1/R12）：媒体库入口可选，全盘访问在设置页引导 -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -84,6 +90,20 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="false" />
+
+        <!--
+          应用内更新（R20）：把下载到 filesDir/updates 的 APK 通过 content:// 交给系统安装器
+          （Android 7 起禁止 file:// 直接外传）。authorities 用 applicationId 前缀，debug 包也不会冲突。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!--
           批量字幕任务中心（M7-B / R19）：前台服务 + 通知进度（可暂停/取消）。
