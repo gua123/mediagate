@@ -35,6 +35,7 @@ import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
 import io.github.gua123.mediagate.core.network.NetworkContext
 import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.core.network.SelectableAddress
+import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.ftp.FtpStorageBackend
@@ -1265,7 +1266,12 @@ class AppContainer(context: Context) :
                 mode = RootModeKind.NONE,
                 label = record.name + " · " + address.label.zhText,
                 displayPath = displayPath,
-                backend = build(),
+                // 降级链第二级（plan 4.1）：远端一律套一层分段缓存——不支持随机读的协议（无 Range 的
+                // WebDAV、无 REST 的 FTP）因此也能被拖拽 seek；支持随机读的也省掉重复过网
+                backend = SegmentedCacheBackend(
+                    delegate = build(),
+                    rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
+                ),
             )
         }.onFailure { t ->
             AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + address.display, t)
@@ -1479,6 +1485,12 @@ class AppContainer(context: Context) :
         const val ASR_WORK_DIR = "asr"
 
         /** 时间戳重建（R3/R11）产物目录（cacheDir 下）与 ffmpeg 中间文件目录。 */
+        /** 远端随机读的分段缓存（plan 4.1 降级链第二级）。 */
+        const val SEGMENT_CACHE_DIR = "segments"
+
+        /** TS 索引缓存目录（R4）：与 :media:tsext 的 TsIndexStore 配套。 */
+        const val TS_INDEX_DIR = "ts-index"
+
         const val TS_REPAIR_DIR = "ts-repair"
         const val TS_REPAIR_WORK_DIR = "ts-repair-work"
 

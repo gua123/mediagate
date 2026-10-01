@@ -28,4 +28,8 @@ dependencies {
     // RemoteEntry / Caps / ProbeReport 出现在 StorageBackend 的公开签名里，需传递给上层
     api(project(":core:model"))
     api(libs.kotlinx.coroutines.android)
+
+    // JVM 单测（SegmentedCacheBackend 的降级链：临时目录读写 + 协程测试作用域）
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
