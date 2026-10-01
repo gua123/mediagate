@@ -439,6 +439,29 @@ class VideoPlayerViewModelTest {
         assertEquals("也不该重建内核", engineBefore, env.created.size)
     }
 
+    @Test
+    fun `切换内核时新内核初始化失败要落到错误态而不是崩掉`() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/a.mp4")
+        settle()
+        val old = env.last!!
+
+        // 让下一个建出来的内核在 setMedia 时抛异常——模拟真机上点右上角「内核」切到 LibVLC 挂掉
+        //（2026-10-03 真机反馈："点右上角内核还会闪退"）
+        env.failSetMediaNext = IllegalStateException("libvlc 初始化失败")
+
+        vm.switchEngine()
+        settle()
+
+        assertEquals(VideoPlayerStatus.ERROR, vm.state.value.status)
+        assertTrue(
+            "错误详情要带上原因：" + vm.state.value.errorDetail,
+            vm.state.value.errorDetail.orEmpty().contains("libvlc"),
+        )
+        assertTrue("旧内核应已释放", old.released)
+        assertFalse("不该还显示在播放", vm.state.value.playing)
+    }
+
     // ------------------------------------------------------------------ 测试脚手架
 
     private fun TestScope.player(env: FakeVideoPlayerEnvironment, path: String): VideoPlayerViewModel {
