@@ -47,6 +47,8 @@
     <string name="diagnostics_clear">清空</string>
     <string name="diagnostics_close">关闭</string>
     <!-- 2026-10-03 用户要求：错误报告要能复制文字或另存为文件（否则只能截图） -->
+    <string name="diagnostics_last_exit">上次进程退出：%1$s</string>
+    <string name="diagnostics_breadcrumbs">最后走到哪一步（面包屑）：</string>
     <string name="diagnostics_copy">复制全文</string>
     <string name="diagnostics_copied">已复制，可以粘贴发送了</string>
     <string name="diagnostics_save">另存为文件</string>

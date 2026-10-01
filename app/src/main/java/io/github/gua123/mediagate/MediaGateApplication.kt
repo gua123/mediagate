@@ -6,6 +6,7 @@ import io.github.gua123.mediagate.app.CrashReporter
 import io.github.gua123.mediagate.app.AsrQueueController
 import io.github.gua123.mediagate.app.AsrRuntimeHost
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.media.asr.AsrEngine
 import io.github.gua123.mediagate.media.asr.AsrItem
@@ -87,6 +88,9 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoS
         // 再补一刀：Java 处理器抓不到**原生崩溃**（MediaCodec/ffmpeg 的 .so 会让进程直接消失），
         // 用系统记录的进程退出原因补上；放子线程，不给启动添延迟
         Thread { runCatching { CrashReporter.captureLastExit(this) } }.start()
+        // 面包屑落盘（原生崩溃时内存日志会没，只有它留得下）
+        Breadcrumbs.sink = { text -> CrashReporter.breadcrumb(this, text) }
+        Breadcrumbs.mark("应用启动（versionName " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() + "）")
         container = AppContainer(this)
         AppLog.i(TAG, "MediaGate 启动：" + versionText())
     }

@@ -48,17 +48,19 @@ object CrashReporter {
      * ApplicationExitInfo 由系统记录，能拿到 REASON_CRASH_NATIVE 与它的 native 堆栈（API 31+ 的 traceInputStream），
      * 不需要 root、不需要 adb。
      *
-     * 只在"上次退出原因是崩溃/原生崩溃/ANR"时落一份报告，其余（正常退出、被系统回收）不动。
+     * **2026-10-03 放宽口径**：用户反馈"点内核闪退却没捕捉到日志"——原来的过滤只认
+     * 崩溃/原生崩溃/ANR，而 LibVLC 那种"要么原生崩、要么被系统按低内存/未知原因杀掉"的情形会落到别的 reason 上，
+     * 于是什么都没有。现在**只要不是"主动退出/用户强行停止"，一律落一份报告**（含 reason 名与描述），
+     * 并且把磁盘上的[面包屑][breadcrumb]一起带上——原生崩溃时内存里的日志随进程消失，只有面包屑留在盘上，
+     * 它能告诉我们"最后走到哪一步"（例如"创建 LibVLC 内核（未返回）"）。
      */
     fun captureLastExit(context: Context) {
         runCatching {
             val manager = context.getSystemService(ActivityManager::class.java) ?: return
             val info = historicalExits(manager).firstOrNull { processNameOf(it) == context.packageName } ?: return
             val reason = reasonOf(info)
-            val interesting = reason == ApplicationExitInfo.REASON_CRASH ||
-                reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
-                reason == ApplicationExitInfo.REASON_ANR
-            if (!interesting) return
+            // 只跳过"正常的主动退出"——其余（崩溃/原生崩溃/ANR/低内存/被系统杀/未知）都值得留证据
+            if (reason == ApplicationExitInfo.REASON_EXIT_SELF) return
             val stamp = timestampOf(info)
             val target = File(dir(context), "exit-" + stamp + "-" + reasonName(reason) + ".txt")
             if (target.exists()) return
@@ -71,6 +73,7 @@ object CrashReporter {
                     description = descriptionOf(info),
                     timestampMs = stamp,
                     trace = traceOf(info),
+                    breadcrumbs = readBreadcrumbs(context),
                     logLines = AppLog.snapshot(),
                 ),
                 Charsets.UTF_8,
@@ -125,6 +128,7 @@ object CrashReporter {
         description: String?,
         timestampMs: Long,
         trace: String?,
+        breadcrumbs: List<String> = emptyList(),
         logLines: List<String>,
     ): String {
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(timestampMs))
@@ -139,6 +143,12 @@ object CrashReporter {
         if (!description.isNullOrBlank()) builder.append("系统描述：").append(description).append('\n')
         builder.append('\n').append("== 系统记录的堆栈/轨迹 ==\n")
         builder.append(trace?.takeIf { it.isNotBlank() } ?: "（这次拿不到轨迹：可能是 Java 崩溃已由崩溃处理器记录，或系统未提供）\n")
+        builder.append('\n').append("== 最后走到哪一步（面包屑，写盘，原生崩溃也留得下）==\n")
+        if (breadcrumbs.isEmpty()) {
+            builder.append("（没有面包屑：可能崩在很早期，或这次启动还没写）\n")
+        } else {
+            breadcrumbs.forEach { builder.append(it).append('\n') }
+        }
         builder.append('\n').append("== 上次进程的日志（本机内存缓冲，可能为空）==\n")
         if (logLines.isEmpty()) {
             builder.append("（没有日志：进程被原生崩溃直接带走了）\n")
@@ -153,10 +163,63 @@ object CrashReporter {
         ApplicationExitInfo.REASON_CRASH -> "Java 崩溃（ApplicationExitInfo）"
         ApplicationExitInfo.REASON_CRASH_NATIVE -> "原生崩溃（native crash，例如 MediaCodec / ffmpeg / VLC 的 .so）"
         ApplicationExitInfo.REASON_ANR -> "无响应（ANR）"
-        ApplicationExitInfo.REASON_LOW_MEMORY -> "内存不足被系统杀掉"
+        ApplicationExitInfo.REASON_LOW_MEMORY -> "内存不足被系统杀掉（加载大库/大模型时常见）"
         ApplicationExitInfo.REASON_EXIT_SELF -> "主动退出"
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "被用户强行停止"
+        ApplicationExitInfo.REASON_SIGNALED -> "被信号杀掉（可能是原生崩溃）"
+        ApplicationExitInfo.REASON_UNKNOWN -> "未知原因（系统没给细节，多为被回收）"
         else -> "原因码 " + reason
     }
+
+    // ------------------------------------------------------------ 面包屑（原生崩溃也留得下）
+
+    private const val BREADCRUMB_FILE = "breadcrumbs.txt"
+
+    /** 最多留几行面包屑（够回溯"最后几步"就行）。 */
+    const val MAX_BREADCRUMBS: Int = 40
+
+    private val breadcrumbLock = Any()
+
+    /**
+     * 记一条面包屑（**2026-10-03**：用户报"点内核闪退但没日志"之后加的）。
+     *
+     * 内存里的 [AppLog] 环形缓冲会随进程一起消失——原生崩溃（例如 LibVLC 的 .so）恰好就是这种情况。
+     * 面包屑是**同步写到磁盘**的一行小字，写在关键步骤之前，于是"最后走到哪一步"能留下来。
+     * 调用点要少而关键（建内核、装载、起播、切内核…），别拿它当日志用。
+     */
+    fun breadcrumb(context: Context, text: String) {
+        runCatching {
+            synchronized(breadcrumbLock) {
+                val file = File(dir(context), BREADCRUMB_FILE)
+                file.parentFile?.let { if (!it.exists()) it.mkdirs() }
+                val stamp = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
+                val lines = if (file.exists()) file.readLines() else emptyList()
+                val next = (lines + (stamp + " " + text)).takeLast(MAX_BREADCRUMBS)
+                file.writeText(next.joinToString("\n") + "\n", Charsets.UTF_8)
+            }
+        }
+    }
+
+    /** 读面包屑（旧 → 新）。 */
+    fun readBreadcrumbs(context: Context, limit: Int = 20): List<String> = runCatching {
+        val file = File(dir(context), BREADCRUMB_FILE)
+        if (!file.exists()) emptyList() else file.readLines().takeLast(limit)
+    }.getOrDefault(emptyList())
+
+    /**
+     * 上次进程退出的摘要（诊断卡用；**打开设置页时现读**，不必等下次崩溃才写文件）。
+     *
+     * @return 形如 `低内存被杀（…） · 10-02 07:13`；拿不到（或上次是正常退出）返回 null。
+     */
+    fun lastExitSummary(context: Context): String? = runCatching {
+        val manager = context.getSystemService(ActivityManager::class.java) ?: return null
+        val info = historicalExits(manager).firstOrNull { processNameOf(it) == context.packageName } ?: return null
+        val reason = reasonOf(info)
+        if (reason == ApplicationExitInfo.REASON_EXIT_SELF) return null
+        val time = SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(timestampOf(info)))
+        val desc = descriptionOf(info)?.takeIf { it.isNotBlank() }?.let { "（" + it.take(80) + "）" }.orEmpty()
+        exitReasonZh(reason) + desc + " · " + time
+    }.getOrNull()
 
     /** 最近一份崩溃报告；没有返回 null。 */
     fun latest(context: Context): File? =
