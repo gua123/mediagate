@@ -601,15 +601,8 @@ private fun ProtocolPicker(current: ProtocolKind, onPick: (ProtocolKind) -> Unit
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 ProtocolKind.entries.forEach { kind ->
                     DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (kind == ProtocolKind.LOCAL || kind == ProtocolKind.WEBDAV) {
-                                    kind.zhText
-                                } else {
-                                    kind.zhText + stringResource(R.string.connections_protocol_pending)
-                                },
-                            )
-                        },
+                        // 四种协议（本地 / WebDAV / SFTP / FTP）的后端都已接进 App，不再标注"待接入"
+                        text = { Text(kind.zhText) },
                         onClick = { expanded = false; onPick(kind) },
                     )
                 }

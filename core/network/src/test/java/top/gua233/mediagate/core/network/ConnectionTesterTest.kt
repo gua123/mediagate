@@ -94,7 +94,7 @@ class ConnectionTesterTest {
     }
 
     @Test
-    fun `SFTP 本轮没有后端：TCP 通就算通但带如实提示`() = runBlocking {
+    fun `没有握手实现时 TCP 通也算通但带如实提示`() = runBlocking {
         val okConnector = FakeConnector(mapOf(host to FakeConnector.Behaviour.ok()))
         val tester = tester(okConnector, ProtocolKind.SFTP, null)
         assertFalse(tester.supportsHandshake(ProtocolKind.SFTP))
@@ -102,7 +102,7 @@ class ConnectionTesterTest {
         assertTrue("TCP 通即视为本轮可用", result.ok)
         assertTrue(result.handshakeSkipped)
         assertEquals(0L, result.handshakeMs)
-        assertTrue("必须如实说明只测了 TCP", result.notice!!.contains("M5"))
+        assertTrue("必须如实说明只测了 TCP", result.notice!!.contains("暂无协议握手实现"))
         assertTrue(result.timingLine.contains("握手未测"))
     }
 

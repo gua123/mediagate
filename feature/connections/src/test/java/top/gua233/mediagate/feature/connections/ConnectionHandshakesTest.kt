@@ -114,12 +114,12 @@ class ConnectionHandshakesTest {
             ok = true,
             dnsMs = 3L,
             connectMs = 5L,
-            notice = "SFTP 后端尚未接入（M5）：本次只验证到 DNS/TCP 两段，未做协议握手",
+            notice = "SFTP 暂无协议握手实现：本次只验证到 DNS/TCP 两段，未做协议握手",
             handshakeSkipped = true,
         ).toUi()
         assertTrue(ui.handshakeSkipped)
         assertEquals("TCP 可达（未做协议握手）", ui.statusText)
-        assertTrue(ui.notice!!.contains("M5"))
+        assertTrue(ui.notice!!.contains("暂无协议握手实现"))
     }
 
     private fun record(protocol: ProtocolKind) = ConnectionRecord(

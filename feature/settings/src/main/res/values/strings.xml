@@ -10,7 +10,7 @@
     <string name="settings_current_value">%1$s（%2$s）</string>
     <string name="settings_current_primary">当前网络首选地址：%1$s</string>
     <string name="settings_current_none">还没有指定连接：正在使用首页选择的本地根目录。到连接页新建一个并「设为当前连接」，即可浏览 WebDAV 等远端媒体。</string>
-    <string name="settings_current_not_browsable">该协议的后端将在 M5 接入：现在只能测试连通性。</string>
+    <string name="settings_current_not_browsable">当前连接的协议标识认不出：浏览与播放会退回本地根目录，请到连接页重新选协议。</string>
     <string name="settings_open_connections">去连接管理页</string>
 
     <string name="settings_network_policy">网络切换策略</string>

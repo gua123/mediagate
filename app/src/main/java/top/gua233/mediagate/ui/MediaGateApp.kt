@@ -130,6 +130,15 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val unsupportedHint = stringResource(R.string.open_unsupported)
 
+    // R2/R8：远端连接切不过去（没存密码 / 配置不合法 / 当前网络没有可用地址）时给一句话，
+    // 而不是让用户以为"已经切到 SFTP 了、只是目录没跟着变"
+    val remoteNotice by container.remoteNotice.collectAsStateWithLifecycle()
+    LaunchedEffect(remoteNotice) {
+        val text = remoteNotice ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(text)
+        container.dismissRemoteNotice()
+    }
+
     // 全屏页（R1）：图片查看器占满整屏；音频/视频播放页是播放场景，同样不给底部导航让位
     val fullScreenDestination = currentDestination?.route == ViewerRoutes.ROUTE ||
         currentDestination?.route == AudioPlayerRoutes.ROUTE ||

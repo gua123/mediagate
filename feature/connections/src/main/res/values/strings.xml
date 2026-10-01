@@ -19,7 +19,7 @@
     <string name="connections_empty">还没有连接：点右下角「+」新建一个，支持本地目录 / WebDAV / SFTP / FTP。</string>
     <string name="connections_no_address">还没有配置地址</string>
     <string name="connections_card_meta">%1$s · %2$d 个地址 · %3$s</string>
-    <string name="connections_not_browsable">%1$s 后端将在 M5 接入：现在只能测试连通性，暂时不能浏览与播放。</string>
+    <string name="connections_not_browsable">%1$s：数据库里的协议标识认不出，暂时不能浏览与播放（请编辑该连接重新选协议，或删除它）。</string>
     <string name="connections_result_cached">结果来自 60 秒缓存（点「重新测试」可强制重测）</string>
 
     <string name="connections_delete_title">删除连接</string>
@@ -37,7 +37,6 @@
     <string name="connections_editor_edit">编辑连接</string>
     <string name="connections_field_name">名称</string>
     <string name="connections_field_protocol">协议</string>
-    <string name="connections_protocol_pending">（M5 接入）</string>
     <string name="connections_field_base_path">WebDAV 根路径（例如 /media）</string>
     <string name="connections_field_local_path">本地目录（绝对路径）</string>
     <string name="connections_section_addresses">地址（局域网 + 公网可各配一个）</string>
