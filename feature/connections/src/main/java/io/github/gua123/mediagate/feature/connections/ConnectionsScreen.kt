@@ -102,6 +102,13 @@ fun ConnectionsScreen(
     onUseAllFilesRoot: () -> Unit = {},
     onRequestAllFilesAccess: () -> Unit = {},
     onClearRoot: () -> Unit = {},
+    /**
+     * 为**本地连接**挑一个目录（拉起系统 SAF 选择器，结果以 URI 字符串回调）。
+     *
+     * 为什么要回调：选择器要 Activity 的 ActivityResultLauncher，只能由 :app 提供；
+     * 而结果要写进编辑器草稿（不是全局根目录），所以用"结果回调"而不是直接返回。
+     */
+    onPickLocalDirectory: ((String) -> Unit) -> Unit = {},
 ) {
     val environment = LocalConnectionsEnvironment.current
     val viewModel: ConnectionsViewModel = viewModel { ConnectionsViewModel(environment) }
@@ -125,6 +132,9 @@ fun ConnectionsScreen(
             onAddRule = viewModel::addRule,
             onRemoveRule = viewModel::removeRule,
             onTestDraft = viewModel::testDraft,
+            localRoot = localRoot,
+            onRequestAllFilesAccess = onRequestAllFilesAccess,
+            onPickLocalDirectory = onPickLocalDirectory,
             onSave = viewModel::save,
             onCancel = viewModel::closeEditor,
             modifier = modifier,
@@ -162,10 +172,13 @@ fun ConnectionsScreen(
                 item {
                     LocalRootCard(
                         localRoot = localRoot,
+                        remoteActive = state.currentConnectionId != null,
                         onPickSafDirectory = onPickSafDirectory,
                         onUseAllFilesRoot = onUseAllFilesRoot,
                         onRequestAllFilesAccess = onRequestAllFilesAccess,
                         onClearRoot = onClearRoot,
+                        // 改用本地目录 = 取消当前连接（本页 ViewModel 直接落库）
+                        onUseLocalRoot = viewModel::clearCurrent,
                     )
                 }
                 state.summary?.let { summary ->
@@ -246,10 +259,12 @@ private fun NetworkCard(state: ConnectionsUiState) {
 @Composable
 private fun LocalRootCard(
     localRoot: LocalRootUi,
+    remoteActive: Boolean,
     onPickSafDirectory: () -> Unit,
     onUseAllFilesRoot: () -> Unit,
     onRequestAllFilesAccess: () -> Unit,
     onClearRoot: () -> Unit,
+    onUseLocalRoot: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -306,6 +321,19 @@ private fun LocalRootCard(
                     TextButton(onClick = onClearRoot) {
                         Text(stringResource(R.string.connections_local_clear))
                     }
+                }
+            }
+            if (remoteActive) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.connections_local_current_remote),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                // 远端优先是既有口径；没有这个按钮，用户根本回不到本地目录（2026-10-03 真机反馈）
+                Button(onClick = onUseLocalRoot, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.connections_local_use_local))
                 }
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -541,6 +569,9 @@ private fun ConnectionEditorScreen(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    localRoot: LocalRootUi = LocalRootUi(),
+    onRequestAllFilesAccess: () -> Unit = {},
+    onPickLocalDirectory: ((String) -> Unit) -> Unit = {},
 ) {
     val draft = state.editor ?: return
     val errors = state.editorErrors
@@ -583,26 +614,20 @@ private fun ConnectionEditorScreen(
             Spacer(modifier = Modifier.height(12.dp))
             ProtocolPicker(current = draft.protocol, onPick = onProtocolChange)
 
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedTextField(
-                value = draft.basePath,
-                onValueChange = { onDraftChange(draft.copy(basePath = it)) },
-                label = {
-                    Text(
-                        stringResource(
-                            if (draft.protocol == ProtocolKind.LOCAL) {
-                                R.string.connections_field_local_path
-                            } else {
-                                R.string.connections_field_base_path
-                            },
-                        ),
-                    )
-                },
-                isError = errors.errorOf(FormField.BASE_PATH) != null,
-                supportingText = errors.errorOf(FormField.BASE_PATH)?.let { { Text(it) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // 根路径字段：LOCAL 不显示——本地连接的目录**只有一个来源**（下面地址里的"本地目录"），
+            // 以前这里还摆一个"本地目录（绝对路径）"（其实是 basePath），用户填了却不生效（真机反馈）
+            if (draft.protocol != ProtocolKind.LOCAL) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = draft.basePath,
+                    onValueChange = { onDraftChange(draft.copy(basePath = it)) },
+                    label = { Text(stringResource(R.string.connections_field_base_path)) },
+                    isError = errors.errorOf(FormField.BASE_PATH) != null,
+                    supportingText = errors.errorOf(FormField.BASE_PATH)?.let { { Text(it) } },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(stringResource(R.string.connections_section_addresses), style = MaterialTheme.typography.titleSmall)
@@ -619,6 +644,9 @@ private fun ConnectionEditorScreen(
                     onChange = { onAddressChange(index, it) },
                     onRemove = { onRemoveAddress(index) },
                     removable = draft.addresses.size > 1,
+                    localRoot = localRoot,
+                    onRequestAllFilesAccess = onRequestAllFilesAccess,
+                    onPickLocalDirectory = onPickLocalDirectory,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -788,6 +816,10 @@ private fun AddressEditor(
     onChange: (AddressDraft) -> Unit,
     onRemove: () -> Unit,
     removable: Boolean,
+    /** 已选的本地根目录（LOCAL 时给"用已选的目录"用）。 */
+    localRoot: LocalRootUi = LocalRootUi(),
+    onRequestAllFilesAccess: () -> Unit = {},
+    onPickLocalDirectory: ((String) -> Unit) -> Unit = {},
 ) {
     var labelOpen by remember { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -844,15 +876,49 @@ private fun AddressEditor(
                     )
                 }
             } else {
+                // LOCAL：目录不再要求手写——「选择目录」走系统 SAF 授权，「使用内部存储」一键填全盘路径
                 OutlinedTextField(
                     value = address.host,
                     onValueChange = { onChange(address.copy(host = it)) },
-                    label = { Text(stringResource(R.string.connections_field_address_path)) },
+                    label = { Text(stringResource(R.string.connections_field_local_path)) },
                     isError = errors[FormField.HOST] != null,
                     supportingText = errors[FormField.HOST]?.let { { Text(it) } },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onPickLocalDirectory { uri -> onChange(address.copy(host = uri)) } }) {
+                        Text(stringResource(R.string.connections_local_pick))
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (localRoot.allFilesGranted) {
+                                onChange(address.copy(host = INTERNAL_STORAGE_PATH))
+                            } else {
+                                onRequestAllFilesAccess()
+                            }
+                        },
+                    ) {
+                        Text(stringResource(R.string.connections_local_internal))
+                    }
+                    if (localRoot.value.isNotEmpty() && localRoot.value != address.host) {
+                        TextButton(onClick = { onChange(address.copy(host = localRoot.value)) }) {
+                            Text(stringResource(R.string.connections_local_use_existing))
+                        }
+                    }
+                }
+                if (!localRoot.allFilesGranted) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.connections_local_need_all_files),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = onRequestAllFilesAccess) {
+                        Text(stringResource(R.string.connections_local_grant))
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedTextField(
@@ -871,6 +937,9 @@ private fun AddressEditor(
         }
     }
 }
+
+/** 内部存储的标准路径（「使用内部存储」一键填它，配合「所有文件访问」权限使用）。 */
+private const val INTERNAL_STORAGE_PATH = "/storage/emulated/0"
 
 /** 选路规则区（R7）：列出已有规则 + 通过对话框新增。 */
 @Composable

@@ -27,11 +27,13 @@ enum class LocalRootMode {
  * @param mode 当前模式。
  * @param displayPath 展示路径（SAF 是目录名，全盘是挂载路径）；未选择时为空。
  * @param allFilesGranted 是否已拿到「所有文件访问」权限。
+ * @param value 底层值：SAF 是树 URI（content 开头），全盘是绝对路径。编辑本地连接时可以一键沿用。
  */
 data class LocalRootUi(
     val mode: LocalRootMode = LocalRootMode.NONE,
     val displayPath: String = "",
     val allFilesGranted: Boolean = false,
+    val value: String = "",
 ) {
 
     /** 是否已经选好本地根目录。 */

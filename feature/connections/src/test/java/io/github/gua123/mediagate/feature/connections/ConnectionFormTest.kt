@@ -199,6 +199,30 @@ class ConnectionFormTest {
     }
 
     @Test
+    fun `本地连接的目录只有一处来源：地址里的路径（不再要求手写）`() {
+        val saf = ConnectionDraft(
+            name = "手机目录",
+            protocol = ProtocolKind.LOCAL,
+            basePath = "/",
+            addresses = listOf(AddressDraft(scheme = "file", host = "content://com.android.externalstorage.documents/tree/primary%3AMovies")),
+        )
+        assertTrue("SAF 授权的目录是合法的：${ConnectionFormValidator.validate(saf).globalErrors}", ConnectionFormValidator.validate(saf).valid)
+
+        val path = saf.copy(addresses = listOf(AddressDraft(scheme = "file", host = "/storage/emulated/0/Movies")))
+        assertTrue("全盘访问下的绝对路径也合法", ConnectionFormValidator.validate(path).valid)
+
+        val relative = saf.copy(addresses = listOf(AddressDraft(scheme = "file", host = "Movies")))
+        assertTrue(
+            "相对路径要说清两种合法形态：${ConnectionFormValidator.validate(relative).addressErrors}",
+            ConnectionFormValidator.validate(relative).addressErrors.single()[FormField.HOST].orEmpty().contains("选择目录"),
+        )
+
+        // 以前会拦在这里：basePath 对 LOCAL 无意义（真机上就是它让人以为"填了目录"）
+        val weirdBase = saf.copy(basePath = "随便写的")
+        assertTrue("LOCAL 不该再校验 basePath", ConnectionFormValidator.validate(weirdBase).valid)
+    }
+
+    @Test
     fun `密码与账号里的全角字符会被点名（输入法把密码写成全角，圆点显示看不出来）`() {
         val base = ConnectionDraft(
             name = "home",
