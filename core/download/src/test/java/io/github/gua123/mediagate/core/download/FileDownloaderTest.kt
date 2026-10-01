@@ -165,6 +165,25 @@ class FileDownloaderTest {
     }
 
     @Test
+    fun `自定义请求头会透传到每一段请求`() = runTest {
+        val file = target()
+        val transport = FakeTransport(payload)
+
+        FileDownloader(transport).download(
+            url = "https://example.test/a.apk",
+            target = file,
+            expectedBytes = payload.size.toLong(),
+            headers = mapOf("Accept" to "application/octet-stream", "X-Test" to "1"),
+        )
+
+        assertTrue(transport.requests.isNotEmpty())
+        transport.requests.forEach { request ->
+            assertEquals("application/octet-stream", request.headers["Accept"])
+            assertEquals("1", request.headers["X-Test"])
+        }
+    }
+
+    @Test
     fun `Content-Range 解析与 Range 头生成`() {
         assertEquals(100L, HttpUrlConnectionTransport.parseContentRangeStart("bytes 100-999/1000"))
         assertNull(HttpUrlConnectionTransport.parseContentRangeStart(null))

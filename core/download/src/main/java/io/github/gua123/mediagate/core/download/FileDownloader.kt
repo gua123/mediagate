@@ -27,6 +27,7 @@ class FileDownloader(private val transport: HttpTransport) {
      *
      * @param expectedBytes 期望字节数；null 或 <= 0 表示"不知道大小"（此时不校验长度，只按流读完）。
      * @param expectedSha256 期望的 SHA-256（小写十六进制）；null/空白表示不校验。
+     * @param headers 额外请求头（续传时 Range 由下载器自己加）。
      * @param onProgress 进度回调（在下载协程里同步调用，别做重活）。
      * @throws DownloadException 分类失败。
      * @throws kotlinx.coroutines.CancellationException 用户取消（.part 保留，下次可续）。
@@ -36,6 +37,7 @@ class FileDownloader(private val transport: HttpTransport) {
         target: File,
         expectedBytes: Long? = null,
         expectedSha256: String? = null,
+        headers: Map<String, String> = emptyMap(),
         onProgress: (DownloadProgress) -> Unit = {},
     ): File {
         target.parentFile?.mkdirs()
@@ -46,7 +48,7 @@ class FileDownloader(private val transport: HttpTransport) {
         onProgress(DownloadProgress(received, total, received))
 
         if (total <= 0L || received < total) {
-            val request = HttpRequest(url, rangeStart = received.takeIf { it > 0L })
+            val request = HttpRequest(url, rangeStart = received.takeIf { it > 0L }, headers = headers)
             val stream = try {
                 transport.open(request)
             } catch (e: IOException) {

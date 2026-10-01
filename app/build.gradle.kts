@@ -130,6 +130,8 @@ dependencies {
     implementation(project(":feature:connections"))
     implementation(project(":feature:settings"))
     implementation(project(":feature:tasks"))
+    // R20：应用内更新的状态机与设置页区块
+    implementation(project(":feature:update"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.core.ktx)

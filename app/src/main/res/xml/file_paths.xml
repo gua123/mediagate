@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用内更新（R20）：只暴露 filesDir/updates 这一个目录给系统安装器。
+  刻意不给 external-path 之类的宽路径——更新包是我们自己下的，放在应用私有目录最安全。
+-->
+<paths>
+    <files-path name="updates" path="updates/" />
+</paths>

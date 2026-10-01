@@ -12,65 +12,45 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 /**
- * 更新源（**R20**）——默认指向**私有**仓库 gua123/mediagate-releases 的 `update.json`。
+ * 更新源（**R20**）——指向**公开**仓库里的静态清单。
  *
- * 私有仓库为什么走"内容 API + 只读 token"而不是 releases 直链：
- * - release 资产直链对私有仓库要带 token 走 API 资产端点（`Accept: application/octet-stream`）；
- * - 清单文件用内容 API 的 raw 端点最省事，且可以只给 Contents: Read 的最小权限。
+ * 为什么是公开仓库 + raw 清单：
+ * - 源码仓库本身就是公开的，更新清单与 APK 跟着一起公开最省事，**App 端不需要任何凭据**；
+ * - 私有仓库那套（只读 token + Keystore 加密存储 + 权限失败分类）只在"必须保密"时才值得，
+ *   2026-10-02 与用户确认后按公开方案定稿；
+ * - 清单走 raw.githubusercontent.com、APK 走 Release 资产：两者都匿名可取、不吃 GitHub API 限额
+ *   （API 匿名限额 60 次/小时/IP，共享出口很容易用尽）。
  *
- * @param manifestUrl 清单地址。
- * @param manifestHeaders 拉清单的额外请求头。
- * @param apkHeaders 下载 APK 的额外请求头（私有仓库要 `Accept: application/octet-stream`）。
- * @param requiresToken 是否必须配只读 token（私有仓库为 true；将来换公开源可以设 false）。
+ * @param manifestUrl 清单地址（raw）。
+ * @param apkHeaders 下载 APK 的额外请求头（公开资产直连即可，保留字段便于将来换源）。
  */
 data class UpdateSource(
     val manifestUrl: String = DEFAULT_MANIFEST_URL,
-    val manifestHeaders: Map<String, String> = GITHUB_JSON_HEADERS,
-    val apkHeaders: Map<String, String> = GITHUB_ASSET_HEADERS,
-    val requiresToken: Boolean = true,
+    val apkHeaders: Map<String, String> = mapOf("Accept" to "application/octet-stream"),
 ) {
 
-    /** 带上只读 token 的清单请求；[token] 为空时不加 Authorization。 */
-    fun manifestRequest(token: String?): HttpRequest =
-        HttpRequest(manifestUrl, headers = withAuth(manifestHeaders, token))
-
-    /** 带上只读 token 的 APK 请求头（Range 由下载器按续传位置补）。 */
-    fun apkHeadersWith(token: String?): Map<String, String> = withAuth(apkHeaders, token)
-
-    private fun withAuth(base: Map<String, String>, token: String?): Map<String, String> =
-        if (token.isNullOrBlank()) base else base + ("Authorization" to "Bearer " + token.trim())
+    /** 清单请求（公开源不带任何凭据）。 */
+    fun manifestRequest(): HttpRequest = HttpRequest(manifestUrl)
 
     companion object {
 
-        /** 默认清单地址（私有仓库 + 只读 token）。 */
+        /** 默认清单地址（公开仓库 main 分支里的 update.json）。 */
         const val DEFAULT_MANIFEST_URL: String =
-            "https://api.github.com/repos/gua123/mediagate-releases/contents/update.json"
+            "https://raw.githubusercontent.com/gua123/mediagate/main/update.json"
 
-        /** GitHub 内容 API 的 raw 响应。 */
-        val GITHUB_JSON_HEADERS: Map<String, String> = mapOf(
-            "Accept" to "application/vnd.github.raw+json",
-            "X-GitHub-Api-Version" to "2022-11-28",
-        )
-
-        /** GitHub 资产 API 的二进制响应（私有仓库下载 APK 必须带）。 */
-        val GITHUB_ASSET_HEADERS: Map<String, String> = mapOf(
-            "Accept" to "application/octet-stream",
-            "X-GitHub-Api-Version" to "2022-11-28",
-        )
+        /** 发布页（设置页里给用户的"手动下载"出口）。 */
+        const val RELEASES_PAGE: String = "https://github.com/gua123/mediagate/releases"
     }
 }
 
 /** 检查更新的失败分类（中文，界面直接显示）。 */
 enum class UpdateFailure(val zhText: String) {
 
-    /** 没配只读 token（私有仓库必需）。 */
-    NEEDS_TOKEN("还没有配置 GitHub 只读 token：请在设置页填入"),
-
-    /** token 无效 / 权限不足 / 仓库或文件不存在（私有仓库无权限时 GitHub 回 404）。 */
-    UNAUTHORIZED("token 无效或权限不足（需要该仓库的 Contents: Read）"),
-
     /** 连不上 GitHub。 */
     GITHUB_UNREACHABLE("连不上 GitHub：检查更新需要能访问 GitHub（可能需要代理）"),
+
+    /** GitHub 上没有这份清单（还没发过版 / 分支名不对）。 */
+    MISSING("还没找到更新清单（仓库里还没有 update.json）"),
 
     /** 其它 HTTP 错误。 */
     HTTP("服务器返回错误"),
@@ -97,10 +77,10 @@ sealed interface UpdateCheckResult {
 }
 
 /**
- * 检查更新（**R20**）：拉 `update.json` → 解析 → 比 versionCode。
+ * 检查更新（**R20**）：拉 update.json → 解析 → 比 versionCode。
  *
  * 不做任何 UI 与落盘；失败一律给中文分类——"连不上 GitHub"是最常见的一种，
- * 必须与"token 不对"分开说，否则用户会去改 token 而其实只是没代理。
+ * 必须与"清单不存在 / 格式不对"分开说，否则用户会去查网络而其实只是还没发版。
  *
  * @param transport HTTP 传输（真机是 [io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport]，
  *   单测灌假实现）。
@@ -114,16 +94,12 @@ class UpdateChecker(
     suspend fun check(
         source: UpdateSource,
         currentVersionCode: Long,
-        token: String?,
     ): UpdateCheckResult = withContext(io) {
-        if (source.requiresToken && token.isNullOrBlank()) {
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.NEEDS_TOKEN)
-        }
         val body = try {
-            transport.open(source.manifestRequest(token)).use { stream -> readBody(stream) }
-        } catch (e: UnauthorizedException) {
-            AppLog.w(TAG, "检查更新失败：没权限（HTTP " + e.code + "）")
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.UNAUTHORIZED, "HTTP " + e.code)
+            transport.open(source.manifestRequest()).use { stream -> readBody(stream) }
+        } catch (e: MissingException) {
+            AppLog.w(TAG, "检查更新：GitHub 上没有 update.json")
+            return@withContext UpdateCheckResult.Failed(UpdateFailure.MISSING)
         } catch (e: HttpCodeException) {
             AppLog.w(TAG, "检查更新失败：HTTP " + e.code)
             return@withContext UpdateCheckResult.Failed(UpdateFailure.HTTP, "HTTP " + e.code)
@@ -147,8 +123,7 @@ class UpdateChecker(
     private fun readBody(stream: HttpStream): String? {
         when (stream.code) {
             200 -> Unit
-            // 私有仓库无权限时 GitHub 对内容 API 回 404（不透露存在性），所以三个码一起当"没权限"
-            401, 403, 404 -> throw UnauthorizedException(stream.code)
+            404 -> throw MissingException()
             else -> throw HttpCodeException(stream.code)
         }
         val output = ByteArrayOutputStream()
@@ -163,8 +138,8 @@ class UpdateChecker(
         return output.toString(Charsets.UTF_8.name())
     }
 
-    /** 内部信号：没权限（转成 [UpdateFailure.UNAUTHORIZED]）。 */
-    private class UnauthorizedException(val code: Int) : IOException("unauthorized " + code)
+    /** 内部信号：清单不存在（转成 [UpdateFailure.MISSING]）。 */
+    private class MissingException : IOException("update.json not found")
 
     /** 内部信号：其它 HTTP 错误。 */
     private class HttpCodeException(val code: Int) : IOException("http " + code)

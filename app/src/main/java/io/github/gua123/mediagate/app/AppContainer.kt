@@ -3,10 +3,13 @@ package io.github.gua123.mediagate.app
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
 import android.view.SurfaceView
+import androidx.core.content.FileProvider
 import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,11 +73,16 @@ import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
+import io.github.gua123.mediagate.feature.update.SignatureCheck
+import io.github.gua123.mediagate.feature.update.UpdateEnvironment
+import io.github.gua123.mediagate.feature.update.UpdateManifest
+import io.github.gua123.mediagate.feature.update.UpdateSource
 import io.github.gua123.mediagate.media.asr.AsrEngine
 import io.github.gua123.mediagate.media.asr.AsrItem
 import io.github.gua123.mediagate.media.asr.AsrYieldSettings
 import io.github.gua123.mediagate.media.asr.FileModelStore
 import io.github.gua123.mediagate.media.asr.FfmpegPcmProvider
+import io.github.gua123.mediagate.core.download.HttpTransport
 import io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport
 import io.github.gua123.mediagate.media.asr.ModelDownloader
 import io.github.gua123.mediagate.media.asr.ModelManager
@@ -99,6 +107,7 @@ import io.github.gua123.mediagate.media.thumbnail.ThumbnailCache
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * 手写 DI 容器（不引 Hilt）——`:app` 的应用级单例，由 [io.github.gua123.mediagate.MediaGateApplication]
@@ -746,6 +755,99 @@ class AppContainer(context: Context) :
         }.stateIn(ioScope, SharingStarted.Eagerly, null)
     }
 
+    // ------------------------------------------------------------ 应用内更新（R20）
+
+    /**
+     * 更新功能要的宿主能力（**R20**）：版本号、下载目录、签名校验、系统安装器、发布页。
+     *
+     * 为什么收在 :app：只有它拿得到 PackageManager 与 FileProvider；:feature:update 只认接口，
+     * 于是状态机能在 JVM 单测里跑全（检查 → 下载 → 签名校验 → 待安装）。
+     */
+    val updateEnvironment: UpdateEnvironment = UpdateHost()
+
+    /** 更新下载用的 HTTP 传输（与 ASR 模型下载同一套 HttpURLConnection 实现）。 */
+    val updateTransport: HttpTransport by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        HttpUrlConnectionTransport(userAgent = "mediagate-android-update")
+    }
+
+    private inner class UpdateHost : UpdateEnvironment {
+
+        override val currentVersionName: String
+            get() = runCatching {
+                appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+            }.getOrNull().orEmpty()
+
+        override val currentVersionCode: Long
+            get() = runCatching {
+                appContext.packageManager.getPackageInfo(appContext.packageName, 0).longVersionCode
+            }.getOrDefault(0L)
+
+        override fun downloadTarget(manifest: UpdateManifest): File {
+            val dir = File(appContext.filesDir, UPDATE_DIR)
+            if (!dir.exists()) dir.mkdirs()
+            return File(dir, "mediagate-" + manifest.versionName + ".apk")
+        }
+
+        override fun verifySignature(apk: File): SignatureCheck {
+            val expected = signerSha256(installedPackageInfo()) ?: return SignatureCheck.Unknown
+            val actual = signerSha256(archivePackageInfo(apk))
+            return when {
+                actual == null -> SignatureCheck.Mismatch(expected, null)
+                actual.equals(expected, ignoreCase = true) -> SignatureCheck.Match
+                else -> SignatureCheck.Mismatch(expected, actual)
+            }
+        }
+
+        override fun installApk(apk: File): Boolean = runCatching {
+            // content:// + 临时读权限：Android 7 起 file:// 不允许外传给安装器
+            val uri = FileProvider.getUriForFile(appContext, appContext.packageName + UPDATE_AUTHORITY_SUFFIX, apk)
+            appContext.startActivity(
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, APK_MIME)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+            true
+        }.getOrElse { t ->
+            // 常见原因：没给「安装未知应用」权限、或系统没有安装器 Activity
+            AppLog.w(TAG, "调起系统安装器失败", t)
+            false
+        }
+
+        override fun openReleasesPage(): Boolean = runCatching {
+            appContext.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(UpdateSource.RELEASES_PAGE))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        }.getOrElse { t ->
+            AppLog.w(TAG, "打开发布页失败", t)
+            false
+        }
+    }
+
+    /** 安装包签名证书的 SHA-256（小写十六进制）；读不出返回 null。 */
+    private fun signerSha256(info: PackageInfo?): String? {
+        val signing = info?.signingInfo ?: return null
+        val signers = if (signing.hasMultipleSigners()) {
+            signing.apkContentsSigners
+        } else {
+            signing.signingCertificateHistory
+        }
+        val cert = signers?.firstOrNull() ?: return null
+        return MessageDigest.getInstance("SHA-256")
+            .digest(cert.toByteArray())
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }
+
+    private fun installedPackageInfo(): PackageInfo? = runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+    }.getOrNull()
+
+    private fun archivePackageInfo(apk: File): PackageInfo? = runCatching {
+        appContext.packageManager.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+    }.getOrNull()
+
     // ---- AsrRuntimeHost：前台服务与队列要的东西 ----
 
     override val asrFallbackDir: File get() = File(appContext.filesDir, SUBTITLE_FALLBACK_DIR)
@@ -1225,5 +1327,14 @@ class AppContainer(context: Context) :
 
         /** ASR 中间件（16 kHz 单声道 PCM 临时文件）目录；跑完即删。 */
         const val ASR_WORK_DIR = "asr"
+
+        /** 应用内更新（R20）：下载好的 APK 落在 filesDir/updates（已通过 FileProvider 暴露给安装器）。 */
+        const val UPDATE_DIR = "updates"
+
+        /** FileProvider authorities 后缀（applicationId + 它，debug 包也不会冲突）。 */
+        const val UPDATE_AUTHORITY_SUFFIX = ".updates"
+
+        /** APK 的 MIME（系统安装器只认它）。 */
+        const val APK_MIME = "application/vnd.android.package-archive"
     }
 }
