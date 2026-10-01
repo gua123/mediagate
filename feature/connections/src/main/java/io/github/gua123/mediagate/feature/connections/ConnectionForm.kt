@@ -17,6 +17,9 @@ enum class FormField {
     PORT,
     SCHEME,
     PASSWORD,
+
+    /** 账号（用户名的错误提示挂在它下面）。 */
+    USERNAME,
 }
 
 /** 编辑器里的一个地址草稿（**R7** 多地址；端口用字符串以便校验"不是数字"）。 */
@@ -209,6 +212,8 @@ object ConnectionFormValidator {
             global[FormField.ADDRESSES] = "至少需要一个地址"
         }
 
+        validateCredentialFields(draft, global)
+
         val addressErrors = draft.addresses.map { validateAddress(draft, it) }
         return ConnectionFormResult(global, addressErrors)
     }
@@ -252,11 +257,32 @@ object ConnectionFormValidator {
             errors[FormField.SCHEME] = "已禁止明文 http：请改用 https，或打开「允许明文 http」"
         }
 
-        if (draft.password.length > MAX_PASSWORD_LENGTH) {
-            errors[FormField.PASSWORD] = "密码过长（最多 " + MAX_PASSWORD_LENGTH + " 个字符）"
-        }
         return errors
     }
+
+    /**
+     * 账号 / 密码的输入法护栏（**全局错误**，与具体地址无关）。
+     *
+     * 2026-10-03 真机教训：中文输入法会把 `Qwe980221` 写成全角 `Ｑｗｅ９８０２２１`，
+     * 而密码框是圆点显示——用户看着"填对了"，服务器却一律拒绝认证。
+     * 这里**只提示、绝不擅自改写密码**（对方服务器可能真的接受全角密码）。
+     */
+    private fun validateCredentialFields(draft: ConnectionDraft, global: MutableMap<FormField, String>) {
+        if (draft.password.length > MAX_PASSWORD_LENGTH) {
+            global[FormField.PASSWORD] = "密码过长（最多 " + MAX_PASSWORD_LENGTH + " 个字符）"
+        }
+        if (hasFullWidth(draft.password)) {
+            global[FormField.PASSWORD] = "密码里含全角字符，可能是输入法自动转换的：请切到英文输入法重新输入"
+        } else if (draft.password != draft.password.trim()) {
+            global[FormField.PASSWORD] = "密码首尾有空格：如果不是有意的，请删掉"
+        }
+        if (hasFullWidth(draft.username)) {
+            global[FormField.USERNAME] = "账号里含全角字符，请切到英文输入法重新输入"
+        }
+    }
+
+    /** 是否含全角字符（全角 ASCII 区 U+FF01–U+FF5E 与全角空格 U+3000）。 */
+    fun hasFullWidth(text: String): Boolean = text.any { it.code in 0xFF01..0xFF5E || it.code == 0x3000 }
 
     /** 密码长度上限（Keystore 能加密任意长度，这里只是挡住明显的误粘贴）。 */
     const val MAX_PASSWORD_LENGTH = 512

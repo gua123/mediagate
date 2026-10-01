@@ -11,6 +11,9 @@
     <!-- 本地目录（R12）：连接页里也能选/切/清本地根目录 -->
     <!-- 编辑器里的「测试一下」（R8）：用草稿测，保存前就能知道密码/端口对不对 -->
     <string name="connections_test_now">测试一下</string>
+    <!-- 密码看一眼（全角/空格一眼可见，2026-10-03 真机教训） -->
+    <string name="connections_password_show">显示</string>
+    <string name="connections_password_hide">隐藏</string>
     <string name="connections_testing">正在测试…</string>
 
     <string name="connections_local_title">本地目录</string>

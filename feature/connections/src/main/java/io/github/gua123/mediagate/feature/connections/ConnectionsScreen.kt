@@ -58,7 +58,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -631,10 +635,18 @@ private fun ConnectionEditorScreen(
                 value = draft.username,
                 onValueChange = { onDraftChange(draft.copy(username = it)) },
                 label = { Text(stringResource(R.string.connections_field_username)) },
+                // 账号也不该被输入法自动大写/纠错（真机上出现过全角账号）
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    capitalization = KeyboardCapitalization.None,
+                ),
+                isError = errors.errorOf(FormField.USERNAME) != null,
+                supportingText = errors.errorOf(FormField.USERNAME)?.let { message -> { Text(message) } },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(8.dp))
+            var passwordVisible by remember { mutableStateOf(false) }
             OutlinedTextField(
                 value = draft.password,
                 onValueChange = { onDraftChange(draft.copy(password = it)) },
@@ -650,7 +662,27 @@ private fun ConnectionEditorScreen(
                         ),
                     )
                 },
-                visualTransformation = PasswordVisualTransformation(),
+                // 关掉自动大写与纠错：中文输入法会把密码写成全角，而圆点显示看不出来（真机教训）
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    autoCorrectEnabled = false,
+                    capitalization = KeyboardCapitalization.None,
+                ),
+                visualTransformation = if (passwordVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                trailingIcon = {
+                    // 「看一眼」开关：全角字符、首尾空格这类问题，肉眼一看就能发现
+                    TextButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Text(
+                            stringResource(
+                                if (passwordVisible) R.string.connections_password_hide else R.string.connections_password_show,
+                            ),
+                        )
+                    }
+                },
                 isError = errors.errorOf(FormField.PASSWORD) != null,
                 supportingText = {
                     Text(

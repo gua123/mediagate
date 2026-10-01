@@ -141,7 +141,8 @@ class ConnectionFormTest {
         val result = ConnectionFormValidator.validate(
             draft().copy(password = "p".repeat(ConnectionFormValidator.MAX_PASSWORD_LENGTH + 1)),
         )
-        assertTrue(result.addressErrors.single()[FormField.PASSWORD]!!.contains("过长"))
+        // 账号/密码是"与地址无关"的字段，错误挂在全局（改动前它挂在第 0 个地址上）
+        assertTrue(result.globalErrors[FormField.PASSWORD]!!.contains("过长"))
     }
 
     @Test
@@ -195,6 +196,37 @@ class ConnectionFormTest {
         assertEquals(setOf("ftp", "ftps"), ProtocolDefaults.allowedSchemes(ProtocolKind.FTP))
         assertFalse(ProtocolDefaults.needsHostAndPort(ProtocolKind.LOCAL))
         assertTrue(ProtocolDefaults.needsHostAndPort(ProtocolKind.WEBDAV))
+    }
+
+    @Test
+    fun `密码与账号里的全角字符会被点名（输入法把密码写成全角，圆点显示看不出来）`() {
+        val base = ConnectionDraft(
+            name = "home",
+            protocol = ProtocolKind.SFTP,
+            username = "hml",
+            password = "Qwe980221",
+            addresses = listOf(AddressDraft(scheme = "sftp", host = "nas.local", port = "2222")),
+        )
+        assertTrue("正常密码不该报错", ConnectionFormValidator.validate(base).valid)
+
+        val passwordErrors = ConnectionFormValidator.validate(base.copy(password = "Ｑｗｅ９８０２２１"))
+        assertFalse(passwordErrors.valid)
+        assertTrue(
+            "要指出是全角：${passwordErrors.errorOf(FormField.PASSWORD)}",
+            passwordErrors.errorOf(FormField.PASSWORD).orEmpty().contains("全角"),
+        )
+
+        val userErrors = ConnectionFormValidator.validate(base.copy(username = "ｈｍｌ"))
+        assertTrue(
+            "账号也要点名：${userErrors.errorOf(FormField.USERNAME)}",
+            userErrors.errorOf(FormField.USERNAME).orEmpty().contains("全角"),
+        )
+
+        val spaced = ConnectionFormValidator.validate(base.copy(password = " Qwe980221"))
+        assertTrue(
+            "首尾空格要提示：${spaced.errorOf(FormField.PASSWORD)}",
+            spaced.errorOf(FormField.PASSWORD).orEmpty().contains("空格"),
+        )
     }
 
     @Test
