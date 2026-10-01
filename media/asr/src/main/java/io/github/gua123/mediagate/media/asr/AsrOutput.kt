@@ -90,10 +90,8 @@ object AsrOutput {
     fun render(cues: List<SubtitleCue>, format: AsrOutputFormat = AsrOutputFormat.DEFAULT): String = when (format) {
         AsrOutputFormat.SRT -> SubtitleWriter.serializeSrt(cues)
         AsrOutputFormat.VTT -> SubtitleWriter.serializeVtt(cues)
-        AsrOutputFormat.TEXT -> cues
-            .filter { it.text.isNotBlank() }
-            .sortedBy { it.startMs }
-            .joinToString("\n") { it.text.trim() }
+        // 纯文本稿与 :media:subtitle 的 TXT 序列化是同一份实现（避免两处漂移）
+        AsrOutputFormat.TEXT -> SubtitleWriter.serializeTxt(cues)
     }
 
     /** 产出文件名（与视频同名，换扩展名）。 */
