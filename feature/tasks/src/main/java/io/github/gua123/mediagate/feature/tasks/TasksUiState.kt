@@ -123,9 +123,28 @@ data class TasksUiState(
     val modelHint: String?
         get() = if (modelReady) null else "还没下载 " + selectedModelId + " 模型，去「设置 → 语音识别模型」下载后再入队"
 
-    /** 能不能入队：有勾选、模型可用、队列没被停掉。 */
+    /**
+     * 能不能入队：有勾选 + 模型可用。
+     *
+     * **2026-10-03 真机截图修**：这里原先还要求 `queue.state != STOPPED`——而「取消全部」正是把队列置成
+     * STOPPED，于是按钮变灰，加上当时 `resume` 对 STOPPED 也是空转，用户**彻底没有出路**。
+     * 现在入队本身会把 STOPPED 复活成空转（见 `AsrQueue.enqueue`），这道门就不需要了。
+     */
     val canEnqueue: Boolean
-        get() = selectedEntries.isNotEmpty() && modelReady && queue.state != AsrQueueState.STOPPED
+        get() = selectedEntries.isNotEmpty() && modelReady
+
+    /**
+     * 按钮点不了时的原因；能点就是 null。
+     *
+     * 灰按钮不解释原因 = 用户只能干瞪眼（真机反馈"勾了 1 项却点不动"就是这么来的）。
+     * 界面把它显示在按钮上方（红色小字）。
+     */
+    val enqueueHint: String?
+        get() = when {
+            !modelReady -> modelHint
+            selectedEntries.isEmpty() -> "先勾选要生成字幕的视频（也可以点「全选视频」）"
+            else -> null
+        }
 
     /** 总进度百分比（0..100）。 */
     val progressPercent: Int get() = queue.totalPercent
@@ -152,10 +171,18 @@ data class TasksUiState(
     /** 能不能暂停：正在跑且没暂停。 */
     val canPause: Boolean get() = queue.state == AsrQueueState.RUNNING
 
-    /** 能不能继续：暂停了、或者还有排队的任务但没在跑。 */
+    /**
+     * 能不能继续：暂停了，或者"没在跑但还有排队任务"（含被「取消全部」停掉的情况）。
+     *
+     * **STOPPED 也算**（2026-10-03 修）：[AsrQueue.resume] 现在会把 STOPPED 变回空转，
+     * 所以它也是一个正当的"复活"出口。
+     */
     val canResume: Boolean
         get() = queue.state == AsrQueueState.PAUSED ||
-            (queue.state == AsrQueueState.IDLE && queue.items.any { it.state == AsrItemState.QUEUED })
+            (
+                (queue.state == AsrQueueState.IDLE || queue.state == AsrQueueState.STOPPED) &&
+                    queue.items.any { it.state == AsrItemState.QUEUED }
+                )
 
     /** 能不能取消全部：还有没落定的任务。 */
     val canCancelAll: Boolean get() = queue.items.any { !it.state.isTerminal }

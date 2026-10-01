@@ -132,8 +132,8 @@ class AsrQueueTest {
         state = AsrQueue.resume(state)
         assertEquals(AsrQueueState.IDLE, state.state)
         assertEquals(1, state.canStartMore())
-        // 停止后不再恢复
-        assertEquals(AsrQueueState.STOPPED, AsrQueue.resume(AsrQueue.cancelAll(state)).state)
+        // 「取消全部」之后是 STOPPED，但**继续要能把它救回来**（2026-10-03 真机：灰按钮没有出路）
+        assertEquals(AsrQueueState.IDLE, AsrQueue.resume(AsrQueue.cancelAll(state)).state)
     }
 
     @Test

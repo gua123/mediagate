@@ -265,7 +265,8 @@ private fun PickerCard(
                 TextButton(onClick = onSelectAll) { Text(stringResource(R.string.tasks_select_all)) }
                 TextButton(onClick = onClear) { Text(stringResource(R.string.tasks_select_none)) }
             }
-            state.modelHint?.let { hint ->
+            // 灰按钮必须解释原因（真机反馈："勾了 1 项却点不动"）：模型没装 / 一项没勾，都在这里说清楚
+            state.enqueueHint?.let { hint ->
                 Text(
                     text = hint,
                     style = MaterialTheme.typography.bodySmall,

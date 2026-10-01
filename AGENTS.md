@@ -141,7 +141,12 @@
   统一重算 `_tasksRoot`；② **路径口径错**：旧实现把 `record.basePath` 当要列的目录，而后端路径是相对 basePath 的
   （basePath=/media 时会列 /media/media）→ 统一从后端根 `""` 开始，与浏览页同口径；
   ③ 远端切不过去时来源如实退回本地。判定收敛进纯函数 `tasksRootOf`（:app +4 例）。
-  当前版本 **0.1.14 / versionCode 15**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.13）。
+- **M22 任务中心"已停止"死胡同（2026-10-03，0.1.15）**：真机截图显示勾了 1 项但「加入队列并开始」是灰的且无说明 →
+  根因是 `STOPPED` 的出口全被堵死：`canEnqueue` 要求非 STOPPED、`resume` 对 STOPPED 空转、
+  `retry` 不动队列状态、`canResume` 不含 STOPPED —— 而 `cancelAll()` 正是置 STOPPED，于是"点过取消全部就出不来"。
+  修：`resume(STOPPED)` 复活、`reviveIfStopped`（retry/enqueue 后 STOPPED→IDLE）、`canEnqueue` 去掉该条件、
+  `canResume` 纳入 STOPPED，并新增 `TasksUiState.enqueueHint`（灰按钮在界面上解释原因）。
+  当前版本 **0.1.15 / versionCode 16**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.14）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
