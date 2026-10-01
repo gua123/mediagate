@@ -65,12 +65,15 @@
 - **当前基线**：全项目 **1279 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest`；
   本轮真机修复新增 15 例：:feature:connections +8、:app +2、:core:common +5）；
   release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
-- **R20 应用内更新（进行中，2026-10-02）**：用户要求「设置页能检查更新、应用内直接下载、不跳浏览器」；
-  更新源定为**公开仓库 `gua123/mediagate-releases`**（源码仓库保持私有——docs 里有内网/公网地址），
-  清单 `update.json` + release 资产 APK，App 匿名拉取不需要 token。已完成：`:core:download` 模块
-  （HTTP 传输 + 断点续传 `FileDownloader`，10 例）与 `:media:asr` 的共用化（提交 `5057d78`）、
-  plan.md 的 R20 验收项与设计要点（10.1 节）。待做：`:feature:update`（清单解析/版本比较/下载/签名校验/
-  系统安装器 + 「需要能访问 GitHub」提示）、`scripts/publish-update.sh`、发 v0.1.1（versionCode 2）。
+- **R20 应用内更新（进行中，2026-10-02）**：用户要求「设置页能检查更新、应用内直接下载、不跳浏览器」，
+  随后改口径为「**只读 token + 私有仓库**，且 token 要本地加密」。更新源＝**私有**仓库
+  `gua123/mediagate-releases` 的 `update.json` + release 资产；App 用只读 token 走内容 API/资产 API，
+  token 由用户在 GitHub 建（fine-grained、只该仓库 Contents: Read）、在设置页填入、
+  **经 :core:crypto 的 Keystore AES-GCM 加密后落盘**。已完成：`:core:download`（HTTP 传输 + 断点续传
+  `FileDownloader` + 自定义请求头，10 例，提交 `5057d78`）、`:feature:update`（清单解析/版本比较/检查更新
+  与五类中文失败，8 例，提交 `91e99f5`）、plan.md R20 验收项与 10.1 设计要点。
+  待做：设置页 token 输入与 Keystore 存储、下载（带 Authorization 与断点续传）+ SHA-256/签名证书校验、
+  FileProvider 与系统安装器、`scripts/publish-update.sh`、发 v0.1.1（versionCode 2）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
