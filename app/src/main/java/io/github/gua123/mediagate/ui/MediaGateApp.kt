@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -298,6 +299,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
 
                 // 图片查看器（M1-F，R1）：返回键由页面 BackHandler 回调到这里，回到原目录
                 composable(route = ViewerRoutes.ROUTE, arguments = ViewerRoutes.arguments) { entry ->
+                    // 看图/看图集同样全屏（2026-10-03：用户要"不要显示任务栏"）
+                    ImmersiveWhilePlaying()
                     ImageViewerScreen(
                         path = ViewerRoutes.pathOf(entry.arguments?.getString(ViewerRoutes.ARG_PATH)),
                         onBack = { navController.popBackStack() },
@@ -367,17 +370,22 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
 @Composable
 private fun ImmersiveWhilePlaying() {
     val context = LocalContext.current
-    DisposableEffect(Unit) {
-        val activity = context.findActivity()
-        val controller = activity?.let {
-            WindowCompat.getInsetsController(it.window, it.window.decorView)
-        }
+    val activity = remember(context) { context.findActivity() }
+    val controller = remember(activity) {
+        activity?.let { WindowCompat.getInsetsController(it.window, it.window.decorView) }
+    }
+    DisposableEffect(controller) {
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller?.hide(WindowInsetsCompat.Type.systemBars())
         onDispose {
             // 退出播放页把系统栏还回来（否则回到首页也是一条光秃秃的全屏）
             controller?.show(WindowInsetsCompat.Type.systemBars())
         }
+    }
+    // 再补一刀：从桌面切回来、锁屏解锁、或用户上滑把系统栏唤出过之后，重新收起来
+    // （只做一次 hide 的话，系统会在这些时机把栏放回来，用户会看到"任务栏又冒出来了"）
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
     }
 }
 

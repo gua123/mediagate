@@ -150,7 +150,12 @@
   `:app` 的视频路由挂 `ImmersiveWhilePlaying()`：进页面 `hide(systemBars())` +
   `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`，离开 `show(systemBars())` 恢复；只在播放页生效。
   两侧黑边属"4:3 视频在 2.17:1 屏幕上适应显示"的正常现象，不擅自改默认，用「缩放 → 裁剪」可铺满。
-  当前版本 **0.1.16 / versionCode 17**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.15）。
+- **M24 沉浸式再收一层（2026-10-03，0.1.17）**：用户要求「旋转过后留黑边最好，不要显示任务栏」→
+  ① 黑边：默认档位本来就是 `ResizeMode.FIT`（适应屏幕，不裁画面），**无需改动**（想铺满仍需手动切裁切）；
+  ② 任务栏：0.1.16 已在播放页 `hide(systemBars())`，本版补 `LifecycleEventEffect(ON_RESUME)` 重隐藏
+  （切回桌面/解锁/上滑唤出之后系统会放回栏，只 hide 一次不够）+ **图片查看器同样全屏** +
+  `remember` 缓存 insets controller。
+  当前版本 **0.1.17 / versionCode 18**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.16）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
