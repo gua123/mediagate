@@ -59,4 +59,5 @@ include(
     ":feature:connections",
     ":feature:settings",
     ":feature:tasks",
+    ":feature:update",
 )
