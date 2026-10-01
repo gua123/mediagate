@@ -147,7 +147,35 @@ interface VideoPlayerEnvironment {
      * 播放页销毁时调用（离开播放页就恢复原状），避免用户回到浏览页时看到修复缓存目录。
      */
     fun exitRepairRoot() = Unit
+
+    /**
+     * 准备 TS 索引（**R3 / R4**）：扫（或读缓存）出"时间 ↔ 关键帧字节偏移"表。
+     *
+     * 只有 TS 家族需要；实现应当**限制扫描量**（索引是加速手段，不该把整部片子读完）。
+     * 默认返回 null（不适用 / 拿不到），调用方按"没有索引"处理。
+     */
+    suspend fun prepareTsIndex(path: String): TsIndexInfo? = null
+
+    /**
+     * 按索引预取拖拽落点附近的数据（**R4**，best-effort）。
+     *
+     * 拿不到索引或没有分段缓存时**什么都不做**（不是错误）。
+     */
+    suspend fun prefetchSeek(path: String, positionMs: Long) = Unit
 }
+
+/**
+ * TS 索引的准备结果（**R3 / R4**）。
+ *
+ * @param hasPcr 文件里有没有 PCR——false 就是 R3 说的"无 PCR 样本"，拖拽一定不准，界面要提示。
+ * @param keyframeCount 索引里的关键帧数。
+ * @param complete 是否扫到文件尾（false = 只扫了一段，够用来预取）。
+ */
+data class TsIndexInfo(
+    val hasPcr: Boolean,
+    val keyframeCount: Int,
+    val complete: Boolean,
+)
 
 /** 时间戳重建的结果（**R3/R11**）。 */
 sealed interface TimestampRepairOutcome {

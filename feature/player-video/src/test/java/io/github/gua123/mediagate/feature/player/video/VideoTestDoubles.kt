@@ -431,6 +431,26 @@ internal class FakeVideoPlayerEnvironment(
     override fun exitRepairRoot() {
         exitRepairCalls++
     }
+
+    // ---- TS 索引（R3/R4）：准备结果与预取记录由测试摆布 ----
+
+    /** prepareTsIndex 的调用记录。 */
+    val tsIndexCalls = mutableListOf<String>()
+
+    /** prepareTsIndex 的返回值（默认 null = 没有索引）。 */
+    var tsIndexInfo: TsIndexInfo? = null
+
+    /** prefetchSeek 的调用记录（路径 to 位置毫秒）。 */
+    val prefetchCalls = mutableListOf<Pair<String, Long>>()
+
+    override suspend fun prepareTsIndex(path: String): TsIndexInfo? {
+        tsIndexCalls += path
+        return tsIndexInfo
+    }
+
+    override suspend fun prefetchSeek(path: String, positionMs: Long) {
+        prefetchCalls += path to positionMs
+    }
 }
 
 /**
