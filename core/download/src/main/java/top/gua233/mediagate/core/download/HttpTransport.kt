@@ -10,10 +10,13 @@ import java.net.URL
  *
  * @property url 目标地址。
  * @property rangeStart 断点续传的起点（> 0 时发 HTTP Range 头，只取这一段）。
+ * @property headers 额外请求头（**R20**：私有仓库要用 `Authorization: Bearer <只读 token>` 拉清单与 APK）。
+ *   凭据只在内存里传，**永远不进日志**（诊断日志只打 URL 与请求头名字，不打值）。
  */
 data class HttpRequest(
     val url: String,
     val rangeStart: Long? = null,
+    val headers: Map<String, String> = emptyMap(),
 ) {
 
     /** Range 头；不需要时 null。 */
@@ -76,6 +79,8 @@ class HttpUrlConnectionTransport(
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", userAgent)
             request.rangeHeader?.let { setRequestProperty("Range", it) }
+            // 调用方给的头放最后：允许覆盖默认值（如自定义 Accept）
+            request.headers.forEach { (name, value) -> setRequestProperty(name, value) }
         }
         val code = connection.responseCode
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream
