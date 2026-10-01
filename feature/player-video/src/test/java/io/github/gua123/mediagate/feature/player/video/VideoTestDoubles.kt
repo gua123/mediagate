@@ -107,7 +107,11 @@ internal class FakePlayerEngine(
     /** seekTo 的历史。 */
     val seekCalls = mutableListOf<Long>()
 
+    /** 装载媒体时抛出的异常（模拟真机上内核/解码器初始化失败）。null = 正常。 */
+    var failOnSetMedia: Throwable? = null
+
     override fun setMedia(src: MediaSourceRef) {
+        failOnSetMedia?.let { throw it }
         currentMedia = src
         calls += "setMedia:" + src.path
     }
@@ -394,10 +398,17 @@ internal class FakeVideoPlayerEnvironment(
     /** 最近建出来的内核。 */
     val last: FakePlayerEngine? get() = created.lastOrNull()
 
+    /** 下一次建内核时给假内核挂上"装载抛异常"的注入点（用完即清）。 */
+    var failSetMediaNext: Throwable? = null
+
     override suspend fun createEngine(kind: EngineKind): PlayerEngine {
         failCreateFor(kind)?.let { throw it }
         createCalls += kind
         val engine = FakePlayerEngine(kind, view = videoViewFor(kind))
+        failSetMediaNext?.let { error ->
+            engine.failOnSetMedia = error
+            failSetMediaNext = null
+        }
         created += engine
         return engine
     }
