@@ -54,6 +54,8 @@ import io.github.gua123.mediagate.feature.browser.BrowserScreen
 import io.github.gua123.mediagate.feature.browser.LocalBrowserEnvironment
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 import io.github.gua123.mediagate.feature.connections.ConnectionsScreen
+import io.github.gua123.mediagate.feature.connections.LocalRootMode
+import io.github.gua123.mediagate.feature.connections.LocalRootUi
 import io.github.gua123.mediagate.feature.connections.LocalConnectionsEnvironment
 import io.github.gua123.mediagate.feature.home.HomeRootUi
 import io.github.gua123.mediagate.feature.home.HomeScreen
@@ -304,7 +306,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
 
                 // 连接管理（M4，R6/R7/R8）：列表 + 新建/编辑/删除 + 测试连通性/测试全部 + 设为当前连接
                 composable(TopLevelDestination.CONNECTIONS.navRoute) {
-                    ConnectionsScreen()
+                    ConnectionsRoute(container = container, onPickSafDirectory = { safPicker.launch(null) })
                 }
                 // 批量字幕任务中心（M7-B，R19）：来源选择 → 多选/整文件夹 → 队列与进度。
                 // 首次进入时引导通知权限：后台生成的通知栏进度与「暂停/取消」按钮都要它（R18/R19）。
@@ -338,13 +340,42 @@ private fun HomeRoute(
 ) {
     val config by container.rootConfig.collectAsStateWithLifecycle()
     val allFilesGranted by container.allFilesGranted.collectAsStateWithLifecycle()
+    val remoteLabel by container.remoteRootLabel.collectAsStateWithLifecycle()
     HomeScreen(
         root = HomeRootUi(
             mode = config?.mode ?: RootModeKind.NONE,
             displayPath = config?.display.orEmpty(),
             allFilesGranted = allFilesGranted,
+            remoteLabel = remoteLabel,
         ),
         onOpenKind = onOpenKind,
+        onPickSafDirectory = onPickSafDirectory,
+        onUseAllFilesRoot = container::useAllFilesRoot,
+        onRequestAllFilesAccess = container::requestAllFilesAccess,
+        onClearRoot = container::clearRoot,
+    )
+}
+
+/**
+ * 连接页（M4，R6/R7/R8；R12 追加本地目录入口）：把容器里的根目录配置与权限状态映射成页面模型。
+ *
+ * 为什么要在这里也放本地目录：用户"媒体从哪来"的两个来源（本地 / 远端）本该在同一个页面里管，
+ * 原先只有首页能选本地目录，于是"我在连接页想换成手机里的目录"这件事没有入口。
+ */
+@Composable
+private fun ConnectionsRoute(container: AppContainer, onPickSafDirectory: () -> Unit) {
+    val config by container.rootConfig.collectAsStateWithLifecycle()
+    val allFilesGranted by container.allFilesGranted.collectAsStateWithLifecycle()
+    ConnectionsScreen(
+        localRoot = LocalRootUi(
+            mode = when (config?.mode) {
+                RootModeKind.SAF -> LocalRootMode.SAF
+                RootModeKind.ALL_FILES -> LocalRootMode.ALL_FILES
+                else -> LocalRootMode.NONE
+            },
+            displayPath = config?.display.orEmpty(),
+            allFilesGranted = allFilesGranted,
+        ),
         onPickSafDirectory = onPickSafDirectory,
         onUseAllFilesRoot = container::useAllFilesRoot,
         onRequestAllFilesAccess = container::requestAllFilesAccess,

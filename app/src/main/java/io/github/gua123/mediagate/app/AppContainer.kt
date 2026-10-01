@@ -289,6 +289,16 @@ class AppContainer(context: Context) :
         _remoteNotice.value = null
     }
 
+    private val _remoteRootLabel = MutableStateFlow<String?>(null)
+
+    /**
+     * 当前远端连接的展示名（如「homedev · 局域网」）；null = 没有远端连接（用本地根目录）。
+     *
+     * 首页据此把话说清楚：**远端优先**是既有口径（[publishRoot] 里远端后端优先），
+     * 但界面原先不体现，用户会以为自己在看本地目录（验收记录里的"文案未统一"）。
+     */
+    val remoteRootLabel: StateFlow<String?> = _remoteRootLabel.asStateFlow()
+
     /**
      * SFTP 已知主机指纹（plan 4.9 的 TOFU 落点）。
      *
@@ -744,6 +754,7 @@ class AppContainer(context: Context) :
         remoteRoot?.let { state ->
             remoteRoot = null
             remoteSignature = null
+            _remoteRootLabel.value = null
             runCatching { state.backend.close() }
         }
         // 没初始化过就别为了 stop 去初始化（lazy 的 isInitialized）
@@ -1312,6 +1323,7 @@ class AppContainer(context: Context) :
 
         remoteRoot = next
         remoteSignature = if (next == null) null else signature
+        _remoteRootLabel.value = next?.label
         if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
         if (next != null) _remoteNotice.value = null
         publishRoot()
@@ -1442,6 +1454,7 @@ class AppContainer(context: Context) :
         val previous = remoteRoot ?: return
         remoteRoot = null
         remoteSignature = null
+        _remoteRootLabel.value = null
         runCatching { previous.backend.close() }
         publishRoot()
     }
