@@ -71,6 +71,79 @@ class UpdateCheckerTest {
     }
 
     @Test
+    fun `备用清单地址是同一份文件的另一条 raw 路径`() {
+        val source = UpdateSource()
+
+        assertTrue(
+            "备用地址也要是 raw：${source.mirrorManifestUrl}",
+            source.mirrorManifestUrl.orEmpty().startsWith("https://raw.githubusercontent.com/gua123/mediagate/"),
+        )
+        assertTrue(source.mirrorManifestUrl.orEmpty().endsWith("/update.json"))
+        assertTrue(
+            "两条地址必须不同（否则缓存键相同，读了也白读）",
+            source.mirrorManifestUrl != source.manifestUrl,
+        )
+        assertTrue(
+            "refs/heads 形式才是另一条缓存键：${source.mirrorManifestUrl}",
+            source.mirrorManifestUrl.orEmpty().contains("/refs/heads/"),
+        )
+    }
+
+    @Test
+    fun `主清单说已是最新时再读备用清单`() = runTest {
+        val stale = json.replace("\"versionCode\": 2", "\"versionCode\": 1")
+        val transport = FakeTransport(200, stale)
+        // 主地址给旧清单（CDN 缓存），备用地址按 URL 给新清单
+        transport.bodyByUrl = { url ->
+            if (url.contains("/refs/heads/")) json else stale
+        }
+
+        val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
+
+        assertTrue("备用清单里有新版就该报出来：$result", result is UpdateCheckResult.Available)
+        assertEquals(2, transport.requested.size)
+        assertTrue(
+            "第二次问的必须是备用地址：${transport.requested}",
+            transport.requested[1].contains("/refs/heads/"),
+        )
+    }
+
+    @Test
+    fun `主清单就有新版时不再读备用清单`() = runTest {
+        val transport = FakeTransport(200, json)
+
+        val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
+
+        assertTrue(result is UpdateCheckResult.Available)
+        assertEquals("已经知道有新版，别多打一次网络", 1, transport.requested.size)
+    }
+
+    @Test
+    fun `主清单连不上时备用清单能顶上`() = runTest {
+        val transport = FakeTransport(200, json)
+        transport.failByUrl = { url -> if (url.contains("/refs/heads/")) null else IOException("UnknownHostException") }
+
+        val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
+
+        assertTrue("主地址挂了、备用地址有货，就该报更新：$result", result is UpdateCheckResult.Available)
+    }
+
+    @Test
+    fun `两条都读不到时报第一条的失败原因`() = runTest {
+        val transport = FakeTransport(500, "")
+        transport.bodyByUrl = { "" }
+
+        val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
+            .check(UpdateSource(), currentVersionCode = 1L)
+
+        assertEquals(UpdateFailure.HTTP, (result as UpdateCheckResult.Failed).kind)
+        assertEquals(2, transport.requested.size)
+    }
+
+    @Test
     fun `有新版时返回 Available 并原样透传清单`() = runTest {
         val transport = FakeTransport(200, json)
         val result = UpdateChecker(transport, io = Dispatchers.Unconfined)
@@ -118,7 +191,7 @@ class UpdateCheckerTest {
     }
 }
 
-/** 假 HTTP：返回固定状态码与正文（可以模拟抛网络异常）。 */
+/** 假 HTTP：返回固定状态码与正文（可以模拟抛网络异常；也能按 URL 分别给答案）。 */
 private class FakeTransport(
     private val code: Int,
     private val body: String,
@@ -127,10 +200,21 @@ private class FakeTransport(
 
     var lastRequest: HttpRequest? = null
 
+    /** 每次请求的 URL（按顺序），用于验证"读了几条、读的是哪条"。 */
+    val requested = mutableListOf<String>()
+
+    /** 按 URL 给不同正文（模拟"两条缓存键一个新一个旧"）。 */
+    var bodyByUrl: ((String) -> String)? = null
+
+    /** 按 URL 决定是否抛网络异常。 */
+    var failByUrl: ((String) -> IOException?)? = null
+
     override suspend fun open(request: HttpRequest): HttpStream {
         lastRequest = request
+        requested += request.url
+        failByUrl?.invoke(request.url)?.let { throw it }
         failWith?.let { throw it }
-        val bytes = body.toByteArray(Charsets.UTF_8)
+        val bytes = (bodyByUrl?.invoke(request.url) ?: body).toByteArray(Charsets.UTF_8)
         val input = ByteArrayInputStream(bytes)
         return object : HttpStream {
             override val code: Int = this@FakeTransport.code

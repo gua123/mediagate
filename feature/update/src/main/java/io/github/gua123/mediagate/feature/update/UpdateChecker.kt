@@ -22,21 +22,39 @@ import java.io.IOException
  *   （API 匿名限额 60 次/小时/IP，共享出口很容易用尽）。
  *
  * @param manifestUrl 清单地址（raw）。
+ * @param mirrorManifestUrl 备用清单地址（**同一份文件的另一条路径**，见下）；null = 不读备用。
  * @param apkHeaders 下载 APK 的额外请求头（公开资产直连即可，保留字段便于将来换源）。
  */
 data class UpdateSource(
     val manifestUrl: String = DEFAULT_MANIFEST_URL,
+    val mirrorManifestUrl: String? = DEFAULT_MIRROR_MANIFEST_URL,
     val apkHeaders: Map<String, String> = mapOf("Accept" to "application/octet-stream"),
 ) {
 
     /** 清单请求（公开源不带任何凭据）。 */
     fun manifestRequest(): HttpRequest = HttpRequest(manifestUrl)
 
+    /** 备用清单请求。 */
+    fun mirrorManifestRequest(): HttpRequest? = mirrorManifestUrl?.let { HttpRequest(it) }
+
     companion object {
 
         /** 默认清单地址（公开仓库 main 分支里的 update.json）。 */
         const val DEFAULT_MANIFEST_URL: String =
             "https://raw.githubusercontent.com/gua123/mediagate/main/update.json"
+
+        /**
+         * 备用清单地址 = **同一份文件的另一条 raw 路径**。
+         *
+         * 为什么需要它（2026-10-03 实测）：raw.githubusercontent.com 由 CDN 提供，
+         * 响应头是 `cache-control: max-age=300` —— 发新版本后，**老清单最多还会被端上 5 分钟以上**
+         * （实测发 0.1.3 后 6 分钟仍返回 0.1.2；加 `?ts=` 查询参数或 `Cache-Control: no-cache`
+         * 请求头都**不能**绕过，缓存按路径命中）。
+         * 而 `refs/heads/main` 形式的路径是**另一条缓存键**（实测同一时刻它是 MISS、拿到的就是新版本）。
+         * 所以：两个地址都读、取 versionCode 更高的那份——发布后至少有一条是新的。
+         */
+        const val DEFAULT_MIRROR_MANIFEST_URL: String =
+            "https://raw.githubusercontent.com/gua123/mediagate/refs/heads/main/update.json"
 
         /** 发布页（设置页里给用户的"手动下载"出口）。 */
         const val RELEASES_PAGE: String = "https://github.com/gua123/mediagate/releases"
@@ -82,6 +100,10 @@ sealed interface UpdateCheckResult {
  * 不做任何 UI 与落盘；失败一律给中文分类——"连不上 GitHub"是最常见的一种，
  * 必须与"清单不存在 / 格式不对"分开说，否则用户会去查网络而其实只是还没发版。
  *
+ * **两个清单地址按需读**（[UpdateSource.mirrorManifestUrl]，理由见那里的说明）：
+ * 先读主地址；只有当它"说没有新版本"时才读备用地址（两条缓存键，发布后至少一条是新的）；
+ * 任一条报出更新就立刻返回，省掉多余请求；主地址彻底打不开时，备用地址也能顶上。
+ *
  * @param transport HTTP 传输（真机是 [io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport]，
  *   单测灌假实现）。
  * @param io 调度器。
@@ -95,28 +117,69 @@ class UpdateChecker(
         source: UpdateSource,
         currentVersionCode: Long,
     ): UpdateCheckResult = withContext(io) {
+        val requests = listOfNotNull(source.manifestRequest(), source.mirrorManifestRequest())
+            .distinctBy { it.url }
+        var newest: UpdateManifest? = null
+        var failure: UpdateCheckResult.Failed? = null
+
+        for (request in requests) {
+            when (val result = fetch(request)) {
+                is Fetch.Ok -> {
+                    if (newest == null || result.manifest.versionCode > newest.versionCode) {
+                        newest = result.manifest
+                    }
+                    // 已经确认有新版本就不必再问第二个地址
+                    if (result.manifest.isNewerThan(currentVersionCode)) {
+                        return@withContext UpdateCheckResult.Available(result.manifest)
+                    }
+                }
+
+                is Fetch.Err -> if (failure == null) failure = result.failure
+            }
+        }
+
+        val manifest = newest
+        when {
+            manifest != null && manifest.isNewerThan(currentVersionCode) ->
+                UpdateCheckResult.Available(manifest)
+
+            manifest != null -> UpdateCheckResult.UpToDate(currentVersionCode)
+
+            // 一条都没读成：报第一条（主地址）的失败原因，它最能说明问题
+            else -> failure ?: UpdateCheckResult.Failed(UpdateFailure.BAD_MANIFEST)
+        }
+    }
+
+    /** 取一条清单：成功给出解析结果，失败给出中文分类（内部信号）。 */
+    private suspend fun fetch(request: HttpRequest): Fetch {
         val body = try {
-            transport.open(source.manifestRequest()).use { stream -> readBody(stream) }
+            transport.open(request).use { stream -> readBody(stream) }
         } catch (e: MissingException) {
-            AppLog.w(TAG, "检查更新：GitHub 上没有 update.json")
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.MISSING)
+            AppLog.w(TAG, "检查更新：这条地址上没有 update.json")
+            return Fetch.Err(UpdateCheckResult.Failed(UpdateFailure.MISSING))
         } catch (e: HttpCodeException) {
             AppLog.w(TAG, "检查更新失败：HTTP " + e.code)
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.HTTP, "HTTP " + e.code)
+            return Fetch.Err(UpdateCheckResult.Failed(UpdateFailure.HTTP, "HTTP " + e.code))
         } catch (e: IOException) {
             AppLog.w(TAG, "检查更新失败（网络）：" + e.javaClass.simpleName)
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.GITHUB_UNREACHABLE, ErrorText.of(e, "网络不可达"))
+            return Fetch.Err(
+                UpdateCheckResult.Failed(UpdateFailure.GITHUB_UNREACHABLE, ErrorText.of(e, "网络不可达")),
+            )
         }
         if (body == null) {
-            return@withContext UpdateCheckResult.Failed(UpdateFailure.HTTP, "清单太大或读不出来")
+            return Fetch.Err(UpdateCheckResult.Failed(UpdateFailure.HTTP, "清单太大或读不出来"))
         }
         val manifest = UpdateManifest.parse(body)
-            ?: return@withContext UpdateCheckResult.Failed(UpdateFailure.BAD_MANIFEST)
-        if (manifest.isNewerThan(currentVersionCode)) {
-            UpdateCheckResult.Available(manifest)
-        } else {
-            UpdateCheckResult.UpToDate(currentVersionCode)
-        }
+            ?: return Fetch.Err(UpdateCheckResult.Failed(UpdateFailure.BAD_MANIFEST))
+        return Fetch.Ok(manifest)
+    }
+
+    /** 一条清单的抓取结果。 */
+    private sealed interface Fetch {
+
+        data class Ok(val manifest: UpdateManifest) : Fetch
+
+        data class Err(val failure: UpdateCheckResult.Failed) : Fetch
     }
 
     /** 读完整响应体；非 2xx 归类成中文失败原因；超过上限返回 null。 */
