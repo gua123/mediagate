@@ -2,6 +2,11 @@ package io.github.gua123.mediagate.feature.browser
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +55,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -483,23 +489,38 @@ private fun ErrorPanel(
     } else {
         ""
     }
+    val fullText = listOf(message, detail, authHint).filter { it.isNotEmpty() }.joinToString("\n\n")
+    val context = LocalContext.current
     CenteredMessage(
         icon = Icons.Default.ErrorOutline,
         title = message,
         message = listOf(detail, authHint).filter { it.isNotEmpty() }.joinToString("\n\n"),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (state.errorKind == BrowserErrorKind.ACCESS_DENIED) {
-                Button(onClick = onRequestAccess) {
-                    Text(stringResource(R.string.browser_action_request_access))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (state.errorKind == BrowserErrorKind.ACCESS_DENIED) {
+                    Button(onClick = onRequestAccess) {
+                        Text(stringResource(R.string.browser_action_request_access))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                OutlinedButton(onClick = onRetry) {
+                    Text(stringResource(R.string.browser_action_retry))
+                }
             }
-            OutlinedButton(onClick = onRetry) {
-                Text(stringResource(R.string.browser_action_retry))
+            // 2026-10-03 用户要求：错误信息要能复制出去，不然只能截图
+            TextButton(onClick = { copyError(context, fullText) }) {
+                Text(stringResource(R.string.browser_action_copy_error))
             }
         }
     }
+}
+
+/** 把"错误 + 详情 + 指引"一起写进剪贴板（报错时用户可以直接粘给我，不用截图）。 */
+private fun copyError(context: Context, text: String) {
+    val manager = context.getSystemService(ClipboardManager::class.java) ?: return
+    manager.setPrimaryClip(ClipData.newPlainText("mediagate 错误", text))
+    Toast.makeText(context, context.getString(R.string.browser_error_copied), Toast.LENGTH_SHORT).show()
 }
 
 /** 加载中。 */

@@ -46,6 +46,14 @@
     <string name="diagnostics_view">查看全文</string>
     <string name="diagnostics_clear">清空</string>
     <string name="diagnostics_close">关闭</string>
+    <!-- 2026-10-03 用户要求：错误报告要能复制文字或另存为文件（否则只能截图） -->
+    <string name="diagnostics_copy">复制全文</string>
+    <string name="diagnostics_copied">已复制，可以粘贴发送了</string>
+    <string name="diagnostics_save">另存为文件</string>
+    <string name="diagnostics_saved">已保存</string>
+    <string name="diagnostics_save_failed">保存失败</string>
+    <string name="diagnostics_share">分享</string>
+    <string name="diagnostics_share_failed">没有可用的分享目标</string>
 
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>

@@ -1,5 +1,12 @@
 package io.github.gua123.mediagate.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,9 +25,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.selection.SelectionContainer
 import io.github.gua123.mediagate.R
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -30,7 +39,13 @@ import java.util.Locale
  * 设置页「诊断」卡片（**2026-10-03** 真机闪退之后加的）。
  *
  * 自用 sideload 拿不到 logcat：出问题时用户只能描述"闪退了"。这里把崩溃报告摆到界面上，
- * 一眼能看到时间与异常首行，点开看全文（可长按选中复制），粘给我即可定位。
+ * 一眼能看到时间与异常首行，点开看全文。
+ *
+ * **2026-10-03 用户反馈「错误报告需要增加复制文字或者另存为文件，否则只能截图」** →
+ * 对话框里补三件事：① 「复制全文」写进系统剪贴板（Android 13+ 系统自己会弹"已复制"提示）；
+ * ② 「另存为文件」走 SAF 的 `ACTION_CREATE_DOCUMENT`，存成 .txt 任意位置；
+ * ③ 「分享」走 `ACTION_SEND`（可以直接发到微信/邮件）。
+ * 正文本身也套了 [SelectionContainer]，长按还能手动选。
  */
 @Composable
 fun DiagnosticsSection(
@@ -41,6 +56,22 @@ fun DiagnosticsSection(
     modifier: Modifier = Modifier,
 ) {
     var showFull by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val toast = remember { ToastHolder(context) }
+
+    // 「另存为」：系统文件选择器（SAF），用户挑位置，我们只负责写文本
+    val saveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+    ) { uri ->
+        val report = crashReport ?: return@rememberLauncherForActivityResult
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ok = runCatching {
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+                stream.write(report.toByteArray(Charsets.UTF_8))
+            } ?: error("打不开写入通道")
+        }.isSuccess
+        toast.show(if (ok) context.getString(R.string.diagnostics_saved) else context.getString(R.string.diagnostics_save_failed))
+    }
 
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
@@ -76,6 +107,18 @@ fun DiagnosticsSection(
                     Text(stringResource(R.string.diagnostics_clear))
                 }
             }
+            // 卡片上直接给"一次性拿到全部"的三个出口（不用打开对话框）
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { toast.show(copyReport(context, crashReport)) }) {
+                    Text(stringResource(R.string.diagnostics_copy))
+                }
+                TextButton(onClick = { saveLauncher.launch(defaultReportFileName(crashTimeMs)) }) {
+                    Text(stringResource(R.string.diagnostics_save))
+                }
+                TextButton(onClick = { shareReport(context, crashReport) }) {
+                    Text(stringResource(R.string.diagnostics_share))
+                }
+            }
         }
     }
 
@@ -84,13 +127,15 @@ fun DiagnosticsSection(
             onDismissRequest = { showFull = false },
             title = { Text(stringResource(R.string.diagnostics_title)) },
             text = {
-                // 可滚动 + 可选中：用户可以长按复制，直接发给我
+                // 可滚动 + 可选中：长按能手动选，也可以直接用下面的三个按钮
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text(
-                        text = crashReport,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
+                    SelectionContainer {
+                        Text(
+                            text = crashReport,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -98,8 +143,50 @@ fun DiagnosticsSection(
                     Text(stringResource(R.string.diagnostics_close))
                 }
             },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { toast.show(copyReport(context, crashReport)) }) {
+                        Text(stringResource(R.string.diagnostics_copy))
+                    }
+                    TextButton(onClick = { saveLauncher.launch(defaultReportFileName(crashTimeMs)) }) {
+                        Text(stringResource(R.string.diagnostics_save))
+                    }
+                    TextButton(onClick = { shareReport(context, crashReport) }) {
+                        Text(stringResource(R.string.diagnostics_share))
+                    }
+                }
+            },
         )
     }
+}
+
+/** 把报告写进系统剪贴板；返回给用户看的提示语。 */
+private fun copyReport(context: Context, report: String): String {
+    val manager = context.getSystemService(ClipboardManager::class.java)
+    manager?.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.diagnostics_title), report))
+    return context.getString(R.string.diagnostics_copied)
+}
+
+/** 分享（ACTION_SEND）：可以直接发到微信/邮件，报告作为纯文本正文。 */
+private fun shareReport(context: Context, report: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.diagnostics_title))
+        putExtra(Intent.EXTRA_TEXT, report)
+    }
+    val chooser = Intent.createChooser(intent, context.getString(R.string.diagnostics_share))
+    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(chooser) }
+        .onFailure { error ->
+            Toast.makeText(context, context.getString(R.string.diagnostics_share_failed), Toast.LENGTH_SHORT).show()
+            android.util.Log.w("diagnostics", "分享报告失败", error)
+        }
+}
+
+/** 默认文件名：崩溃时间（拿不到就用当前时间）。 */
+internal fun defaultReportFileName(crashTimeMs: Long?): String {
+    val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(crashTimeMs ?: System.currentTimeMillis()))
+    return "mediagate-崩溃报告-" + stamp + ".txt"
 }
 
 /** 从报告全文里抽出异常那一行（「== 异常 ==」之后的第一行）；抽不到就退回首行。 */
@@ -108,4 +195,11 @@ internal fun crashSummary(report: String): String {
     val header = lines.indexOfFirst { it.contains("== 异常 ==") }
     val candidate = if (header >= 0) lines.getOrNull(header + 1) else null
     return (candidate ?: lines.firstOrNull()).orEmpty().trim().ifEmpty { "（报告为空）" }
+}
+
+/** 小工具：Toast 只在需要时创建，避免每次重组都 new 一个。 */
+private class ToastHolder(private val context: Context) {
+    fun show(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
 }
