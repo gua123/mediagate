@@ -49,7 +49,12 @@
 - **M2–M8 已完成（2026-10-01）**：播放内核与视频播放页、WebDAV/SFTP/FTP 三协议后端（含真网 opt-in 验收）、
   连接管理与多地址选路、TS 索引与 FFmpeg 简版、外挂字幕与 whisper 音转字幕（JNI 桥 + 批量任务中心）、
   画中画与视频后台播放、澎湃保活引导。
-- **当前基线**：全项目 **1264 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`）；
-  release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
+- **真机验收修复已完成（2026-10-02）**：真机反馈「SFTP 提示需要接入 M5」——M5 只交付了数据层后端
+  （`data/storage-sftp` / `data/storage-ftp`），**App 组合根那一段没接**（`applyCurrentConnection` 只有 WEBDAV / LOCAL 两分支，
+  `browsable` 也只放行这两种）。现已接进「设为当前连接 → 浏览/播放」：新增 `ConnectionBackends` 纯函数装配 +
+  `AppContainer` 的 `selectAddress`/`installRemoteRoot`（WEBDAV / SFTP / FTP 同一条流程 + 中文失败提示），
+  并清掉全部「M5 接入」陈旧文案（协议选择器 / 卡片 / 设置页 / core:network 提示）。
+- **当前基线**：全项目 **1272 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest --rerun-tasks --no-build-cache`，
+  含本次新增 8 例）；release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
