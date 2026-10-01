@@ -25,4 +25,7 @@ kotlin {
 
 dependencies {
     api(libs.kotlinx.coroutines.android)
+
+    // R16：ErrorText（异常 → 中文一句话）的纯 JVM 单测
+    testImplementation(libs.junit)
 }

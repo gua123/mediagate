@@ -61,7 +61,10 @@ class TimestampRepairTest {
 
         assertTrue(result is TimestampRepairResult.Failure)
         val failure = result as TimestampRepairResult.Failure
-        assertTrue(failure.message, failure.message.contains("moov atom not found"))
+        // R16：界面提示只给中文（ffmpeg 的英文 stderr 不进提示，留在 result.output 里供诊断）
+        assertTrue("提示要是中文的：${failure.message}", failure.message.contains("时间戳重建失败"))
+        assertTrue("提示里不该出现英文 stderr：${failure.message}", !failure.message.contains("moov atom not found"))
+        assertTrue("原始输出仍要保留：${failure.result?.output}", failure.result?.output?.contains("moov atom not found") == true)
         assertNotNull(failure.result)
         assertEquals(FfmpegOutcome.FAILED, failure.result!!.outcome)
     }

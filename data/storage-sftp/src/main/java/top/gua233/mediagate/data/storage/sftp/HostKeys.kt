@@ -1,5 +1,7 @@
 package io.github.gua123.mediagate.data.storage.sftp
 
+import io.github.gua123.mediagate.core.common.ErrorText
+
 import com.jcraft.jsch.HostKey
 import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.UserInfo
@@ -319,7 +321,7 @@ internal class JschHostKeyRepository(
                 expected = null,
                 reason = HostKeyRejectReason.UNKNOWN_HOST,
                 message = "SFTP 主机密钥校验失败，证书不受信任（安全连接已中止）：" +
-                    t.javaClass.simpleName + " " + t.message.orEmpty(),
+                    ErrorText.of(t, "详情见诊断日志"),
             )
         }
         lastCheck.set(check)

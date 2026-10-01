@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.media.asr.AsrCandidate
 import io.github.gua123.mediagate.media.asr.AsrQueueSnapshot
@@ -251,7 +252,7 @@ class TasksViewModel(
         is io.github.gua123.mediagate.data.storage.api.StorageException.AccessDenied -> "没有访问权限，请先在首页授权目录"
         is io.github.gua123.mediagate.data.storage.api.StorageException.NotFound -> "目录不存在或已被移走"
         is io.github.gua123.mediagate.data.storage.api.StorageException.Network -> "网络不可用，连不上远端目录"
-        else -> "列目录失败：" + (error.message ?: error::class.simpleName ?: "未知错误")
+        else -> "列目录失败：" + ErrorText.of(error, "详情见诊断日志")
     }
 
     private fun RemoteEntry.toUi(names: Set<String>, depth: Int): TaskEntryUi = TaskEntryUi(
