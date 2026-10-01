@@ -64,6 +64,12 @@
     <string name="video_subtitle_write_back">写回 %1$s</string>
     <string name="video_subtitle_save_as_vtt">另存为 VTT</string>
     <string name="video_subtitle_save_as_txt">另存为纯文本</string>
+    <!-- 时间戳重建（R3/R11）：TS 家族的救急出口 -->
+    <string name="video_repair_timestamps">修复时间戳</string>
+    <string name="video_repair_timestamps_hint">把整段视频重写一份时间戳正常的副本再播放（较慢，需要缓存空间）</string>
+    <string name="video_repair_running">正在重建时间戳 %1$d%%</string>
+    <string name="video_repair_running_indeterminate">正在重建时间戳…</string>
+    <string name="video_repair_dismiss">知道了</string>
     <string name="video_subtitle_notice_dismiss">知道了</string>
     <string name="video_subtitle_notice_load_failed">字幕加载失败：%1$s</string>
     <string name="video_subtitle_notice_load_failed_brief">字幕加载失败，可在下面手动选一条</string>

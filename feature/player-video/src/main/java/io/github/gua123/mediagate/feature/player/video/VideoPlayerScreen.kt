@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -332,6 +333,38 @@ private fun Controls(
             ProgressRow(state = state, onSeek = viewModel::onSeekChange, onSeekFinished = viewModel::onSeekFinished)
             PlaybackRow(state = state, viewModel = viewModel)
             ChipsRow(state = state, viewModel = viewModel, onToggleSubtitlePanel = onToggleSubtitlePanel)
+
+            // 时间戳重建（R3/R11）：进度 + 结束提示
+            if (state.timestampRepairRunning) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (state.timestampRepairPercent > 0) {
+                            stringResource(R.string.video_repair_running, state.timestampRepairPercent)
+                        } else {
+                            stringResource(R.string.video_repair_running_indeterminate)
+                        },
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            state.timestampRepairNotice?.let { notice ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = notice,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    TextButton(onClick = viewModel::dismissTimestampRepairNotice) {
+                        Text(stringResource(R.string.video_repair_dismiss))
+                    }
+                }
+            }
         }
     }
 }
@@ -440,6 +473,20 @@ private fun ChipsRow(
             onClick = viewModel::cycleResizeMode,
             label = { Text(stringResource(R.string.video_resize, state.resizeLabel)) },
         )
+        // 时间戳重建（R3/R11）：只有 TS 家族才显示这条出口
+        if (state.canRepairTimestamps) {
+            AssistChip(
+                onClick = viewModel::repairTimestamps,
+                label = { Text(stringResource(R.string.video_repair_timestamps)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Build,
+                        contentDescription = stringResource(R.string.video_repair_timestamps_hint),
+                        modifier = Modifier.size(18.dp),
+                    )
+                },
+            )
+        }
         if (state.count > 1) {
             Text(
                 text = stringResource(R.string.video_queue_position, state.position, state.count),

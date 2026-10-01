@@ -34,6 +34,8 @@
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>
+    <!-- 时间戳重建（R3/R11）：修复产物所在临时根目录的展示名 -->
+    <string name="root_label_timestamp_repair">时间戳修复</string>
 
     <!-- 画中画（M8-A / R13）：PIP 窗口内的三个动作按钮文案（图标用系统媒体图标） -->
     <string name="video_pip_play">播放</string>

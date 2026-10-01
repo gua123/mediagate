@@ -125,6 +125,17 @@ object VideoPlayerMath {
     /** 路径 → 展示名（最后一段）。 */
     fun fileNameOf(path: String): String = path.substringAfterLast('/')
 
+    /**
+     * 时间戳容易坏的容器（TS 家族）：只有这些才给「修复时间戳」入口（R3/R11）。
+     *
+     * 判据是扩展名而不是内容——内容探测要读文件，而入口必须在拉起播放页时就决定显不显示。
+     */
+    private val TIMESTAMP_FRAGILE_EXTENSIONS: Set<String> = setOf("ts", "m2ts", "mts", "tp", "trp")
+
+    /** 这条路径是否值得提供「修复时间戳」。 */
+    fun isTimestampRepairable(path: String): Boolean =
+        path.substringAfterLast('.', "").lowercase() in TIMESTAMP_FRAGILE_EXTENSIONS
+
     /** 列表轮转：命中就取下一项，未命中回到第一项。 */
     private fun <T> nextIn(values: List<T>, current: T): T {
         val index = values.indexOf(current)
