@@ -321,12 +321,15 @@ private fun Controls(
     onToggleSubtitlePanel: () -> Unit,
     onOpenPlaylist: () -> Unit,
 ) {
+    // 横屏是"看电影"的场景：同样的控件在 2.17:1 的屏幕上显得又高又占地
+    //（2026-10-03 用户反馈："播放过程中的这个页面占地方太大了"）→ 横屏统一用更紧凑的尺寸
+    val compact = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(CONTROL_SCRIM)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 0.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -355,7 +358,10 @@ private fun Controls(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(CONTROL_SCRIM)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(
+                    horizontal = if (compact) 8.dp else 12.dp,
+                    vertical = if (compact) 2.dp else 8.dp,
+                ),
         ) {
             if (state.ended) {
                 Text(
@@ -388,8 +394,13 @@ private fun Controls(
                 )
             }
 
-            ProgressRow(state = state, onSeek = viewModel::onSeekChange, onSeekFinished = viewModel::onSeekFinished)
-            PlaybackRow(state = state, viewModel = viewModel)
+            ProgressRow(
+                state = state,
+                onSeek = viewModel::onSeekChange,
+                onSeekFinished = viewModel::onSeekFinished,
+                compact = compact,
+            )
+            PlaybackRow(state = state, viewModel = viewModel, compact = compact)
             ChipsRow(
                 state = state,
                 viewModel = viewModel,
@@ -560,6 +571,7 @@ private fun ProgressRow(
     state: VideoPlayerUiState,
     onSeek: (Float) -> Unit,
     onSeekFinished: () -> Unit,
+    compact: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Slider(
@@ -578,29 +590,33 @@ private fun ProgressRow(
 
 /** 上一集 / 播放暂停 / 下一集。 */
 @Composable
-private fun PlaybackRow(state: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
+private fun PlaybackRow(state: VideoPlayerUiState, viewModel: VideoPlayerViewModel, compact: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        val skipSize = if (compact) 26.dp else 32.dp
         IconButton(onClick = viewModel::previous, enabled = state.canPrevious) {
             Icon(
                 imageVector = Icons.Default.SkipPrevious,
                 contentDescription = stringResource(R.string.video_previous),
                 tint = Color.White,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(skipSize),
             )
         }
-        Spacer(modifier = Modifier.size(20.dp))
-        FilledIconButton(onClick = viewModel::togglePlayPause, modifier = Modifier.size(64.dp)) {
+        Spacer(modifier = Modifier.size(if (compact) 12.dp else 20.dp))
+        // 横屏下 64dp 的圆钮太占高度：缩到 48dp（图标同步缩小），竖屏保持原尺寸
+        val buttonSize = if (compact) 48.dp else 64.dp
+        val iconSize = if (compact) 26.dp else 32.dp
+        FilledIconButton(onClick = viewModel::togglePlayPause, modifier = Modifier.size(buttonSize)) {
             Icon(
                 imageVector = if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = stringResource(if (state.playing) R.string.video_pause else R.string.video_play),
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(iconSize),
             )
         }
-        Spacer(modifier = Modifier.size(20.dp))
+        Spacer(modifier = Modifier.size(if (compact) 12.dp else 20.dp))
         IconButton(onClick = viewModel::next, enabled = state.canNext) {
             Icon(
                 imageVector = Icons.Default.SkipNext,
