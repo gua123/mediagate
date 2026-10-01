@@ -8,11 +8,16 @@ package io.github.gua123.mediagate.media.engine
  */
 data class CodecCandidate(val name: String, val softwareOnly: Boolean)
 
-/** 挑选结果：按优先级排好的候选 + 是否只能退回硬解。 */
+/**
+ * 挑选结果：按优先级排好的候选 + 两条"退回了"的上报位。
+ *
+ * @property onlyHardwareAvailable true = 请求软解但本机一个软件解码器都没有，只能拿硬解。
+ * @property onlySoftwareAvailable true = 请求硬解但本机一个硬解都没有（全是软解），只能拿软解。
+ */
 data class CodecSelection(
     val ordered: List<CodecCandidate>,
-    /** true = 一个软件解码器都没有，只能拿硬解（此时按 R10「做不到就记录并回报」上报）。 */
     val onlyHardwareAvailable: Boolean,
+    val onlySoftwareAvailable: Boolean = false,
 )
 
 /**
@@ -25,10 +30,16 @@ data class CodecSelection(
  */
 object DecoderSelection {
 
-    /** 依据模式与候选列表挑选；[DecoderMode.AUTO_HW] / [DecoderMode.FORCE_HW] 不改顺序。 */
-    fun select(mode: DecoderMode, candidates: List<CodecCandidate>): CodecSelection = when {
-        !mode.preferSoftwareDecoder -> CodecSelection(candidates, onlyHardwareAvailable = false)
-        else -> {
+    /**
+     * 依据模式与候选列表挑选。
+     *
+     * - [DecoderMode.AUTO_HW]：不动顺序（Media3 自己就是硬解优先，且允许回退）；
+     * - [DecoderMode.FORCE_SW]：只留软件解码器；
+     * - [DecoderMode.FORCE_HW]：**只留硬解**——这是「强制硬解」在 Media3 上唯一说得通的落地口径
+     *   （Android 没有官方的"只能硬解"开关，能做的是把软件解码器从候选里去掉）。
+     */
+    fun select(mode: DecoderMode, candidates: List<CodecCandidate>): CodecSelection = when (mode) {
+        DecoderMode.FORCE_SW -> {
             val software = candidates.filter { it.softwareOnly }
             if (software.isEmpty()) {
                 CodecSelection(candidates, onlyHardwareAvailable = candidates.isNotEmpty())
@@ -36,12 +47,27 @@ object DecoderSelection {
                 CodecSelection(software, onlyHardwareAvailable = false)
             }
         }
+
+        DecoderMode.FORCE_HW -> {
+            val hardware = candidates.filter { !it.softwareOnly }
+            if (hardware.isEmpty()) {
+                CodecSelection(candidates, onlyHardwareAvailable = false, onlySoftwareAvailable = candidates.isNotEmpty())
+            } else {
+                CodecSelection(hardware, onlyHardwareAvailable = false, onlySoftwareAvailable = false)
+            }
+        }
+
+        DecoderMode.AUTO_HW -> CodecSelection(candidates, onlyHardwareAvailable = false)
     }
 
     /** 生成面向用户的说明（null = 无需提示）。 */
     fun note(mode: DecoderMode, selection: CodecSelection): String? = when {
         mode.preferSoftwareDecoder && selection.onlyHardwareAvailable ->
             "本机没有可用的软件解码器（未内置 FFmpeg 解码扩展），已退回硬解；如需真软解请切 LibVLC 内核"
+
+        mode == DecoderMode.FORCE_HW && selection.onlySoftwareAvailable ->
+            "本机没有可用的硬解解码器，已退回软解；如果画面卡顿，可切到 LibVLC 内核"
+
         else -> null
     }
 }

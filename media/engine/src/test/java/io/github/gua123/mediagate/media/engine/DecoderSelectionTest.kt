@@ -39,14 +39,34 @@ class DecoderSelectionTest {
     }
 
     @Test
-    fun `自动与强制硬解档位不改变候选顺序`() {
+    fun `自动档位不改变候选顺序`() {
         val candidates = listOf(hardware, software)
-        for (mode in listOf(DecoderMode.AUTO_HW, DecoderMode.FORCE_HW)) {
-            val selection = DecoderSelection.select(mode, candidates)
-            assertEquals(candidates, selection.ordered)
-            assertFalse(selection.onlyHardwareAvailable)
-            assertNull(DecoderSelection.note(mode, selection))
-        }
+        val selection = DecoderSelection.select(DecoderMode.AUTO_HW, candidates)
+
+        assertEquals(candidates, selection.ordered)
+        assertFalse(selection.onlyHardwareAvailable)
+        assertNull(DecoderSelection.note(DecoderMode.AUTO_HW, selection))
+    }
+
+    @Test
+    fun `强制硬解会剔除软件解码器`() {
+        val candidates = listOf(hardware, software, hardware2)
+        val selection = DecoderSelection.select(DecoderMode.FORCE_HW, candidates)
+
+        assertEquals("只留硬解，顺序不变", listOf(hardware, hardware2), selection.ordered)
+        assertFalse(selection.onlySoftwareAvailable)
+        assertNull(DecoderSelection.note(DecoderMode.FORCE_HW, selection))
+    }
+
+    @Test
+    fun `全机只有软解时强制硬解如实退回并提示`() {
+        val selection = DecoderSelection.select(DecoderMode.FORCE_HW, listOf(software, software2))
+
+        assertEquals("退不回硬解就先保持可用", listOf(software, software2), selection.ordered)
+        assertTrue(selection.onlySoftwareAvailable)
+        val note = DecoderSelection.note(DecoderMode.FORCE_HW, selection)
+        assertNotNull("退回了就要说明", note)
+        assertTrue(note!!, note.contains("硬解"))
     }
 
     @Test
