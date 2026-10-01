@@ -60,4 +60,5 @@ include(
     ":feature:settings",
     ":feature:tasks",
     ":feature:update",
+    ":feature:asr-model",
 )

@@ -73,6 +73,7 @@ import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
+import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
 import io.github.gua123.mediagate.feature.update.SignatureCheck
 import io.github.gua123.mediagate.feature.update.UpdateEnvironment
 import io.github.gua123.mediagate.feature.update.UpdateManifest
@@ -82,6 +83,7 @@ import io.github.gua123.mediagate.media.asr.AsrItem
 import io.github.gua123.mediagate.media.asr.AsrYieldSettings
 import io.github.gua123.mediagate.media.asr.FileModelStore
 import io.github.gua123.mediagate.media.asr.FfmpegPcmProvider
+import io.github.gua123.mediagate.core.download.DownloadProgress
 import io.github.gua123.mediagate.core.download.HttpTransport
 import io.github.gua123.mediagate.core.download.HttpUrlConnectionTransport
 import io.github.gua123.mediagate.media.asr.ModelDownloader
@@ -753,6 +755,47 @@ class AppContainer(context: Context) :
                 else -> null
             }
         }.stateIn(ioScope, SharingStarted.Eagerly, null)
+    }
+
+    // ------------------------------------------------------------ 语音识别模型管理（R14，设置页）
+
+    /**
+     * 模型管理区块要的宿主能力（**R14**）：档位、已装列表、占用、下载（断点续传）、删除、选中。
+     *
+     * :app 只是把 [modelManager] 与 [asrSettings] 包一层；真正的下载/校验在 :media:asr。
+     */
+    val asrModelEnvironment: AsrModelEnvironment = AsrModelHost()
+
+    private inner class AsrModelHost : AsrModelEnvironment {
+
+        override fun models(): List<WhisperModel> = WhisperModel.ALL
+
+        override fun installedIds(): List<String> = modelManager.installedIds()
+
+        override fun usedBytes(): Long = modelManager.usedBytes()
+
+        override val selectedId: StateFlow<String> get() = selectedAsrModelId
+
+        override suspend fun select(id: String) {
+            asrSettings.setModelId(id)
+        }
+
+        override suspend fun delete(model: WhisperModel): Boolean {
+            val deleted = modelManager.delete(model)
+            refreshAsrModels()
+            return deleted
+        }
+
+        override suspend fun download(
+            model: WhisperModel,
+            mirror: String?,
+            onProgress: (DownloadProgress) -> Unit,
+        ) {
+            modelManager.download(model, mirror, onProgress)
+            refreshAsrModels()
+        }
+
+        override val defaultMirror: String? get() = WhisperModel.DEFAULT_MIRROR
     }
 
     // ------------------------------------------------------------ 应用内更新（R20）

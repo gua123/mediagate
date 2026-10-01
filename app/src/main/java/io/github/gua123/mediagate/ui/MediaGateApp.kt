@@ -64,6 +64,8 @@ import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
+import io.github.gua123.mediagate.feature.asrmodel.AsrModelSection
+import io.github.gua123.mediagate.feature.asrmodel.AsrModelViewModel
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
 import io.github.gua123.mediagate.feature.settings.SettingsNote
@@ -377,6 +379,17 @@ private fun SettingsRoute(
         )
     }
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
+
+    // 语音识别模型（R14）：设置页里下载/删除/切换 whisper 档位
+    val asrModelViewModel: AsrModelViewModel = viewModel {
+        AsrModelViewModel(environment = container.asrModelEnvironment)
+    }
+    val asrModelState by asrModelViewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(asrModelState.notice) {
+        val notice = asrModelState.notice ?: return@LaunchedEffect
+        onNotice(notice)
+        asrModelViewModel.dismissNotice()
+    }
     LaunchedEffect(updateState.notice) {
         val notice = updateState.notice ?: return@LaunchedEffect
         onNotice(notice)
@@ -416,6 +429,15 @@ private fun SettingsRoute(
             container.keepAlive.setConfirmed(kind, confirmed)
         },
         extraSections = {
+            // 语音识别模型（R14）：档位、下载进度、删除、设为当前
+            AsrModelSection(
+                state = asrModelState,
+                onDownload = asrModelViewModel::download,
+                onCancel = asrModelViewModel::cancelDownload,
+                onDelete = asrModelViewModel::delete,
+                onSelect = asrModelViewModel::select,
+                onMirrorToggle = asrModelViewModel::setMirrorEnabled,
+            )
             // 应用内更新（R20）：检查 → 下载（断点续传）→ 签名校验 → 系统安装器
             UpdateSection(
                 state = updateState,

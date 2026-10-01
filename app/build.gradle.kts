@@ -132,6 +132,8 @@ dependencies {
     implementation(project(":feature:tasks"))
     // R20：应用内更新的状态机与设置页区块
     implementation(project(":feature:update"))
+    // R14：语音识别模型的下载与管理界面（设置页区块）
+    implementation(project(":feature:asr-model"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.core.ktx)
