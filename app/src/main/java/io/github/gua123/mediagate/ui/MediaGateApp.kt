@@ -22,6 +22,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -310,6 +316,8 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 // 视频播放页（M2-B，R1/R4/R9/R10/R18）：队列由播放页按「同目录视频/音频」自己解析，
                 // 路由只带路径；内核实例、回环代理与断点存储都在 AppContainer 里。
                 composable(route = VideoPlayerRoutes.ROUTE, arguments = VideoPlayerRoutes.arguments) { entry ->
+                    // 播放页沉浸式全屏（2026-10-03 真机截图：横屏看视频时状态栏还占着一条）
+                    ImmersiveWhilePlaying()
                     VideoPlayerScreen(
                         path = VideoPlayerRoutes.pathOf(entry.arguments?.getString(VideoPlayerRoutes.ARG_PATH)),
                         onBack = { navController.popBackStack() },
@@ -348,6 +356,39 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/**
+ * 播放页期间的**沉浸式全屏**（2026-10-03 真机截图：横屏播放时系统状态栏仍占一条，画面被顶下来）。
+ *
+ * 进播放页隐藏状态栏与导航栏，从边缘上滑可临时唤出（BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE）；
+ * 离开播放页恢复——只在播放页生效，不影响其它页面。
+ */
+@Composable
+private fun ImmersiveWhilePlaying() {
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val activity = context.findActivity()
+        val controller = activity?.let {
+            WindowCompat.getInsetsController(it.window, it.window.decorView)
+        }
+        controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            // 退出播放页把系统栏还回来（否则回到首页也是一条光秃秃的全屏）
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}
+
+/** 从 Context 里找 Activity（Compose 里没有现成的）。 */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 /** 首页：把容器里的根目录配置 + 权限状态映射成 [HomeRootUi]（页面本身不碰 DataStore）。 */

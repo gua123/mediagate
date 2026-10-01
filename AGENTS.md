@@ -146,7 +146,11 @@
   `retry` 不动队列状态、`canResume` 不含 STOPPED —— 而 `cancelAll()` 正是置 STOPPED，于是"点过取消全部就出不来"。
   修：`resume(STOPPED)` 复活、`reviveIfStopped`（retry/enqueue 后 STOPPED→IDLE）、`canEnqueue` 去掉该条件、
   `canResume` 纳入 STOPPED，并新增 `TasksUiState.enqueueHint`（灰按钮在界面上解释原因）。
-  当前版本 **0.1.15 / versionCode 16**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.14）。
+- **M23 播放页沉浸式全屏（2026-10-03，0.1.16）**：真机横屏截图显示状态栏仍占一条（浅色底在黑色播放页上很突兀）→
+  `:app` 的视频路由挂 `ImmersiveWhilePlaying()`：进页面 `hide(systemBars())` +
+  `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`，离开 `show(systemBars())` 恢复；只在播放页生效。
+  两侧黑边属"4:3 视频在 2.17:1 屏幕上适应显示"的正常现象，不擅自改默认，用「缩放 → 裁剪」可铺满。
+  当前版本 **0.1.16 / versionCode 17**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.15）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
