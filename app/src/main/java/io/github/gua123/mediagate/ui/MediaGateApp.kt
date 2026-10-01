@@ -64,6 +64,7 @@ import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
+import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelSection
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelViewModel
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
@@ -385,6 +386,9 @@ private fun SettingsRoute(
         AsrModelViewModel(environment = container.asrModelEnvironment)
     }
     val asrModelState by asrModelViewModel.state.collectAsStateWithLifecycle()
+
+    // 已信任的 SFTP 主机指纹（R2）：TOFU 落库后要能看到、能忘掉
+    val trustedHostKeys by container.trustedHostKeys.collectAsStateWithLifecycle()
     LaunchedEffect(asrModelState.notice) {
         val notice = asrModelState.notice ?: return@LaunchedEffect
         onNotice(notice)
@@ -429,6 +433,12 @@ private fun SettingsRoute(
             container.keepAlive.setConfirmed(kind, confirmed)
         },
         extraSections = {
+            // SFTP 主机密钥（R2）：TOFU 落库后的展示与"忘掉重来"出口
+            TrustedHostKeysSection(
+                keys = trustedHostKeys,
+                onForget = { key -> container.forgetHostKey(key.host, key.port) },
+                onForgetAll = container::forgetAllHostKeys,
+            )
             // 语音识别模型（R14）：档位、下载进度、删除、设为当前
             AsrModelSection(
                 state = asrModelState,

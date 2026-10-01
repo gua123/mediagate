@@ -31,6 +31,13 @@
     <string name="settings_note_protocol_title">协议现状</string>
     <string name="settings_note_protocol_detail">本地目录、WebDAV、SFTP、FTP 四种协议都能浏览与播放：在连接页建好并「设为当前连接」即可。连通性测试会做真正的协议握手（本地查目录、WebDAV 发 PROPFIND、SFTP 走 SSH 认证、FTP 走登录 + PASV）。</string>
 
+    <!-- SFTP 主机密钥（R2 / plan 4.9）：TOFU 落库后的展示与复原出口 -->
+    <string name="trusted_host_keys_title">已信任的 SFTP 主机密钥</string>
+    <string name="trusted_host_keys_subtitle">首次连接时按 TOFU 记住；之后指纹一变就会拒绝连接（防中间人）。服务器确实换过密钥时，在这里忘掉旧记录即可重新信任。</string>
+    <string name="trusted_host_keys_empty">还没有记录（连过一次 SFTP 就会有）。</string>
+    <string name="trusted_host_keys_forget">忘掉</string>
+    <string name="trusted_host_keys_forget_all">全部忘掉</string>
+
     <string name="root_label_saf">已授权目录</string>
     <string name="root_label_all_files">内部存储</string>
     <string name="root_label_internal_storage">内部存储</string>

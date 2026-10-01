@@ -51,8 +51,26 @@ class MigrationSqlTest {
     }
 
     @Test
-    fun migrationsCoverVersionOneToThree() {
-        assertEquals(2, MediaGateDatabase.MIGRATIONS.size)
+    fun migration3To4_matchesExportedSchemaExactly() {
+        val expected = readStatements(version = 4, table = "sftp_host_key")
+        val actual = MediaGateDatabase.MIGRATION_3_4_SQL.map { normalize(it) }
+        assertEquals("迁移 DDL 与 Room 导出 schema 不一致", expected.toSet(), actual.toSet())
+        assertEquals(1, actual.size)
+    }
+
+    @Test
+    fun exportedSchemaHasEveryHostKeyColumn() {
+        val sql = readStatements(version = 4, table = "sftp_host_key").first()
+        listOf("host", "port", "keyType", "sha256", "md5", "addedAt").forEach { column ->
+            assertTrue("缺少列 " + column + "：" + sql, sql.contains(BACKTICK + column + BACKTICK))
+        }
+        // 复合主键：同一主机的同一算法只记一把指纹
+        assertTrue("主键应为 (host, port, keyType, sha256)：" + sql, sql.contains("PRIMARY KEY"))
+    }
+
+    @Test
+    fun migrationsCoverVersionOneToFour() {
+        assertEquals(3, MediaGateDatabase.MIGRATIONS.size)
         assertTrue(MediaGateDatabase.NAME.isNotEmpty())
     }
 

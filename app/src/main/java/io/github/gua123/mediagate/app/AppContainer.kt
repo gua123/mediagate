@@ -40,7 +40,7 @@ import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.ftp.FtpStorageBackend
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
 import io.github.gua123.mediagate.data.storage.sftp.HostKeyVerifier
-import io.github.gua123.mediagate.data.storage.sftp.InMemoryKnownHostsStore
+import io.github.gua123.mediagate.data.storage.sftp.PersistentKnownHostsStore
 import io.github.gua123.mediagate.data.storage.sftp.KnownHostsStore
 import io.github.gua123.mediagate.data.storage.sftp.SftpHostKeyPolicy
 import io.github.gua123.mediagate.data.storage.sftp.SftpStorageBackend
@@ -290,12 +290,14 @@ class AppContainer(context: Context) :
     /**
      * SFTP 已知主机指纹（plan 4.9 的 TOFU 落点）。
      *
-     * 进程内共享一份：换地址 / 重建后端不会忘掉已经信任过的指纹，指纹变了照样拒绝连接并告警
-     * （[TofuHostKeyVerifier] 的规则：变更绝不静默接受）。
-     * **指纹落库仍未做**（见 docs/验收记录-M2-M8.md 的「已知限制」），所以冷启动等于重新 TOFU 一次——
-     * 这是当前明确的取舍，不是漏接。
+     * **落库**（2026-10-03 补上，R2）：写穿到 Room 的 `sftp_host_key` 表，
+     * 于是"重启后仍认识旧指纹"成立——否则一个被换掉的密钥在冷启动后会被当成新主机按 TOFU 放行，
+     * 变更检测等于没做（[TofuHostKeyVerifier] 的规则：变更绝不静默接受）。
+     * 换地址 / 重建后端也共享同一份，指纹变了照样拒绝并告警。
      */
-    private val knownHosts: KnownHostsStore = InMemoryKnownHostsStore()
+    private val knownHosts: KnownHostsStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        PersistentKnownHostsStore(RoomHostKeyPersistence(database.hostKeyDao()))
+    }
 
     private val sftpHostKeys: HostKeyVerifier by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         TofuHostKeyVerifier(
@@ -303,6 +305,27 @@ class AppContainer(context: Context) :
             policy = SftpHostKeyPolicy.TOFU,
             onChange = { event -> AppLog.w(TAG, event.message) },
         )
+    }
+
+    /**
+     * 已信任的 SFTP 主机指纹（设置页「安全」区块）。
+     *
+     * 为什么必须有这个出口：TOFU 一旦落库，**服务器真的换了密钥时用户会被永久拒之门外**
+     * （拒绝是正确行为，但总得给一条"我看过新指纹，确认是服务器换钥"的路）。
+     */
+    val trustedHostKeys: StateFlow<List<TrustedHostKey>> =
+        database.hostKeyDao().observeAll()
+            .map { rows -> rows.map { TrustedHostKey(it.host, it.port, it.keyType, it.sha256, it.md5) } }
+            .stateIn(ioScope, SharingStarted.Eagerly, emptyList())
+
+    /** 忘掉某台主机的指纹（下次连接按 TOFU 重新记）。 */
+    fun forgetHostKey(host: String, port: Int) {
+        knownHosts.remove(host, port)
+    }
+
+    /** 忘掉全部（换机 / 大批服务器换钥时用）。 */
+    fun forgetAllHostKeys() {
+        trustedHostKeys.value.forEach { knownHosts.remove(it.host, it.port) }
     }
 
     private val _allFilesGranted = MutableStateFlow(hasAllFilesAccess())
