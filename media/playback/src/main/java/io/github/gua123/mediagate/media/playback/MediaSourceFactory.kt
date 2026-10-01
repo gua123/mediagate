@@ -35,23 +35,26 @@ object MediaSourceFactory {
      * @param backend 条目所在后端（后端 id 会编进伪 URI）。
      * @param title 通知栏/锁屏显示的名字；null 时取文件名。
      * @param mimeType 有就用（容器不给时长、扩展名又缺失时有用）。
+     * @param artwork 通知栏 / 锁屏封面（R18）；null = 没有（系统显示默认图标）。
      */
     fun mediaItem(
         path: String,
         backend: StorageBackend,
         title: String? = null,
         mimeType: String? = null,
+        artwork: ByteArray? = null,
     ): MediaItem {
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title ?: fileNameOf(path))
+            .setIsBrowsable(false)
+            .setIsPlayable(true)
+        if (artwork != null && artwork.isNotEmpty()) {
+            metadata.setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
         val builder = MediaItem.Builder()
             .setUri(MediaUri.format(backend.id, path))
             .setMediaId(path)
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title ?: fileNameOf(path))
-                    .setIsBrowsable(false)
-                    .setIsPlayable(true)
-                    .build(),
-            )
+            .setMediaMetadata(metadata.build())
         if (!mimeType.isNullOrEmpty()) builder.setMimeType(mimeType)
         return builder.build()
     }

@@ -48,6 +48,13 @@ interface VideoSessionSource {
     /** 总时长（毫秒）；未知为 0。 */
     val durationMs: Long
 
+    /**
+     * 通知栏 / 锁屏封面（**R18**）；null = 没有封面，系统退回默认图标。
+     *
+     * 由 :app 从缩略图缓存里取现成的字节（**不为了封面去抽帧**——列表里滚过的条目通常已经有了）。
+     */
+    val artwork: ByteArray? get() = null
+
     /** 播放（通知栏 / 锁屏 / 耳机键的"播放"）。 */
     fun play()
 
@@ -264,10 +271,15 @@ internal class VideoSessionPlayer(
             return builder.setPlaybackState(Player.STATE_IDLE).build()
         }
         val duration = source.durationMs
+        val artwork = source.artwork
+        val metadata = MediaMetadata.Builder().setTitle(source.title)
+        if (artwork != null && artwork.isNotEmpty()) {
+            metadata.setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+        }
         val item = MediaItem.Builder()
             .setMediaId(source.path)
             .setUri(source.path)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(source.title).build())
+            .setMediaMetadata(metadata.build())
             .build()
         val data = MediaItemData.Builder(source.path)
             .setMediaItem(item)
