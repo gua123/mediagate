@@ -919,19 +919,34 @@ class AppContainer(context: Context) :
     }
 
     /**
-     * 任务中心的「选择来源」起点（R19）：当前连接优先，其次首页选的本地根目录。
+     * 任务中心的「选择来源」起点（R19）：远端连接优先，其次本地根目录——**与浏览器同一口径**。
      *
-     * 懒加载：它要读 connection 表，冷启动不碰。
+     * **2026-10-03 真机 bug**：「从本地切换到 sftp 后，任务列表的文件夹没有一起切换，显示的还是本地目录」。
+     * 根因：原来它是 `combine(rootConfig, currentConnectionId, connections)` —— 跟着**连接 id** 走，
+     * 而 id 在切换动作一开始就变了，此时远端后端还没装好（[_root] 仍是本地后端），
+     * 任务页于是立刻按新 id 列目录，列到的却是本地内容，之后也不会自己再刷。
+     *
+     * 现在由 [publishRoot] 在**后端真正换好之后**统一发信号（[publishTasksRoot]），
+     * 判定收敛在纯函数 [tasksRootOf] 里；切远端失败时它就是本地来源，与浏览器所见一致。
      */
-    private val tasksBrowseRoot: StateFlow<TasksRoot?> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        combine(rootConfig, currentConnectionId, connectionRepository.connections) { config, id, records ->
-            val record = records.firstOrNull { it.id == id }
-            when {
-                record != null -> TasksRoot(label = record.name, path = record.basePath.ifEmpty { "/" })
-                config != null -> TasksRoot(label = config.display, path = "")
-                else -> null
-            }
-        }.stateIn(ioScope, SharingStarted.Eagerly, null)
+    private val _tasksRoot = MutableStateFlow<TasksRoot?>(null)
+
+    private val tasksBrowseRoot: StateFlow<TasksRoot?> = _tasksRoot.asStateFlow()
+
+    /** 当前生效的远端连接记录（给任务页取"根路径"用）；[closeRemoteRoot] 置空。 */
+    private var currentRemoteRecord: ConnectionRecord? = null
+
+    /**
+     * 重算任务页来源。
+     *
+     * 只在后端换好之后调用（见 [publishRoot]），所以任务页收到信号时 `_root.value.backend`
+     * 已经是新的那个，不会出现"标签是 SFTP、列出来是本地"的错位。
+     */
+    private fun publishTasksRoot() {
+        _tasksRoot.value = tasksRootOf(
+            remoteName = if (remoteRoot != null) currentRemoteRecord?.name else null,
+            localDisplay = rootConfig.value?.display,
+        )
     }
 
     // ------------------------------------------------------------ 语音识别模型管理（R14，设置页）
@@ -1358,6 +1373,7 @@ class AppContainer(context: Context) :
         }.getOrNull()
 
         remoteRoot = next
+        currentRemoteRecord = if (next == null) null else record
         remoteSignature = if (next == null) null else signature
         _remoteRootLabel.value = next?.label
         if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
@@ -1489,6 +1505,7 @@ class AppContainer(context: Context) :
     private fun closeRemoteRoot() {
         val previous = remoteRoot ?: return
         remoteRoot = null
+        currentRemoteRecord = null
         remoteSignature = null
         _remoteRootLabel.value = null
         runCatching { previous.backend.close() }
@@ -1498,6 +1515,8 @@ class AppContainer(context: Context) :
     /** 生效的后端：远端连接优先，其次本地根目录（R12 与 R8 的汇合点）。 */
     private fun publishRoot() {
         _root.value = remoteRoot ?: localRoot
+        // 任务页的来源跟着"生效的根目录"一起换（换好后端才发信号，避免列到旧后端的内容）
+        publishTasksRoot()
     }
 
     private fun buildRoot(config: RootConfig): BrowserRootState? = when (config.mode) {
