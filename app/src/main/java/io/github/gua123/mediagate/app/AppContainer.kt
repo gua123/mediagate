@@ -75,6 +75,8 @@ import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.feature.tasks.TasksEnvironment
 import io.github.gua123.mediagate.feature.tasks.TasksRoot
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
+import io.github.gua123.mediagate.core.common.Breadcrumbs
+import io.github.gua123.mediagate.core.common.VlcCrashHeuristic
 import io.github.gua123.mediagate.feature.browser.EntrySort
 import io.github.gua123.mediagate.feature.player.video.TsIndexInfo
 import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
@@ -634,7 +636,15 @@ class AppContainer(context: Context) :
             cache.prefetch(path, offset, PREFETCH_BYTES)
         }
 
-        /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
+            /**
+         * 上次切到 LibVLC 是不是把进程带走了（**2026-10-03 真机**：面包屑停在"切换内核：→ LibVLC"）。
+         *
+         * 界面据此在"再切一次"之前给出提示——那条路已知会把 App 弄死时，别让用户闷头再踩。
+         */
+        override val vlcPreviouslyCrashed: Boolean =
+            VlcCrashHeuristic.vlcSwitchLooksCrashed(CrashReporter.readBreadcrumbs(appContext, limit = 40))
+
+    /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
         override fun exitRepairRoot() {
             val previous = _videoRepairRoot.value ?: return
             _videoRepairRoot.value = null
@@ -668,14 +678,21 @@ class AppContainer(context: Context) :
 
             EngineKind.VLC -> {
                 // 起代理要绑监听端口（阻塞）；先在 IO 上起好，再回主线程构造播放器
+                // 细粒度面包屑（2026-10-03）：真机面包屑停在"切换内核：→ LibVLC（已释放旧内核）"之后没了，
+                // 说明进程死在下面这段里——再拆三步，下次就能分辨是回环代理、LibVLC 实例还是画面 View。
+                Breadcrumbs.mark("VLC：起回环代理")
                 val proxy = withContext(Dispatchers.IO) { requireVideoProxy() }
-                VlcEngine(
+                Breadcrumbs.mark("VLC：代理就绪 " + proxy)
+                Breadcrumbs.mark("VLC：建 LibVLC 实例")
+                val engine = VlcEngine(
                     context = appContext,
                     proxy = proxy,
                     // 解码档位是 LibVLC 的实例级选项（改档位要重建实例），建实例时就带上持久化的那一档
                     initialDecoderMode = preferences.decoderMode.value,
                     videoView = SurfaceView(appContext),
                 )
+                Breadcrumbs.mark("VLC：实例建好了")
+                engine
             }
         }
 

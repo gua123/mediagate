@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -96,6 +97,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import java.util.Locale
+import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.subtitle.SubtitleAlignment
 import io.github.gua123.mediagate.media.subtitle.SubtitleCandidate
 import io.github.gua123.mediagate.media.subtitle.SubtitleCue
@@ -158,6 +160,8 @@ fun VideoPlayerScreen(
     var subtitlePanelVisible by remember { mutableStateOf(false) }
     // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
     var playlistVisible by remember { mutableStateOf(false) }
+    // LibVLC 上次把进程带走过 → 再切之前先弹一句（不是禁止，是告知）
+    var vlcWarningVisible by remember { mutableStateOf(false) }
     // 离开播放页恢复"跟随系统"方向（见 ResetOrientationOnLeave 的说明）
     ResetOrientationOnLeave()
 
@@ -244,6 +248,36 @@ fun VideoPlayerScreen(
                         if (subtitlePanelVisible) viewModel.openSubtitlePanel()
                     },
                     onOpenPlaylist = { playlistVisible = true },
+                    onRequestSwitchEngine = {
+                        // 上次切 LibVLC 把进程带走过（真机面包屑证据）→ 先解释一句再切
+                        if (state.vlcSuspectCrash && state.otherEngine == EngineKind.VLC) {
+                            vlcWarningVisible = true
+                        } else {
+                            viewModel.switchEngine()
+                        }
+                    },
+                )
+            }
+
+            // LibVLC 风险提示（2026-10-03 真机：点内核 → 切 LibVLC → 进程被带走）
+            if (vlcWarningVisible) {
+                AlertDialog(
+                    onDismissRequest = { vlcWarningVisible = false },
+                    title = { Text(stringResource(R.string.video_vlc_warning_title)) },
+                    text = { Text(stringResource(R.string.video_vlc_warning_body)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                vlcWarningVisible = false
+                                viewModel.switchEngine()
+                            },
+                        ) { Text(stringResource(R.string.video_vlc_warning_continue)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { vlcWarningVisible = false }) {
+                            Text(stringResource(R.string.video_vlc_warning_cancel))
+                        }
+                    },
                 )
             }
 
@@ -320,6 +354,8 @@ private fun Controls(
     onBack: () -> Unit,
     onToggleSubtitlePanel: () -> Unit,
     onOpenPlaylist: () -> Unit,
+    /** 请求切内核（是否要先弹 LibVLC 风险提示由上层决定，它才拿得到那个状态）。 */
+    onRequestSwitchEngine: () -> Unit,
 ) {
     // 横屏是"看电影"的场景：同样的控件在 2.17:1 的屏幕上显得又高又占地
     //（2026-10-03 用户反馈："播放过程中的这个页面占地方太大了"）→ 横屏统一用更紧凑的尺寸
@@ -349,7 +385,7 @@ private fun Controls(
             )
             // 旋转（2026-10-03 用户要求）：点一下在横屏/竖屏之间切换；退出播放页恢复"跟随系统"
             RotateButton()
-            EngineChip(state = state, onClick = viewModel::switchEngine)
+            EngineChip(state = state, onClick = onRequestSwitchEngine)
         }
 
         Spacer(modifier = Modifier.weight(1f))
