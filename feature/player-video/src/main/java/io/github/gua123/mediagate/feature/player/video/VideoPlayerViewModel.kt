@@ -71,7 +71,10 @@ class VideoPlayerViewModel(
     private val exitScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(VideoPlayerUiState())
+    // 诊断标记：上次切 LibVLC 把进程带走过 → 界面在再切之前先解释一句（2026-10-03 真机）
+    private val _state = MutableStateFlow(
+        VideoPlayerUiState(vlcSuspectCrash = environment.vlcPreviouslyCrashed),
+    )
 
     /** 页面唯一状态源（StateFlow，见 plan 第 3 章）。 */
     val state: StateFlow<VideoPlayerUiState> = _state.asStateFlow()

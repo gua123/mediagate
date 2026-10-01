@@ -90,6 +90,14 @@ interface VideoPlayerEnvironment {
      */
     val proxyBaseUrl: String?
 
+    /**
+     * 上次切到 LibVLC 是不是把进程带走过（**2026-10-03 真机**：面包屑停在"切换内核：→ LibVLC"）。
+     *
+     * 为 true 时，界面在"再切一次 LibVLC"之前先解释一句——那条路已知会把 App 弄死时，
+     * 不该让用户闷头再踩一次。默认 false（JVM 单测与没有诊断数据时行为不变）。
+     */
+    val vlcPreviouslyCrashed: Boolean get() = false
+
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */
     val progress: PlaybackProgressStore
 

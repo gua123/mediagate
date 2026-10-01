@@ -172,7 +172,13 @@
   想铺满用「缩放 → 裁切填充」，默认保持 FIT（用户偏好）；
   ② 改：`Controls` 引入 `compact = 横屏`——顶栏内边距 4dp→0、底栏 8dp→2（左右 12→8）、
   播放圆钮 64dp→48dp、图标 32→26dp、上下集图标 32→26dp + 间距 20→12dp；竖屏不变；自动隐藏不变。
-  当前版本 **0.1.20 / versionCode 21**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.19）。
+- **M28 libvlc 崩溃定位（2026-10-03，0.1.21）**：用户回传面包屑 → 「切换内核：→ LibVLC（已释放旧内核）」
+  之后再无"新内核已创建"，紧接一次新的"应用启动" ⇒ 进程死在 `createEngine(VLC)` 内（代理或 LibVLC 实例），
+  无 Java 异常 ⇒ **原生崩溃**。修/补：① 该段拆细粒度面包屑（起代理 / 代理就绪 / 建实例 / 实例好了）；
+  ② 纯函数 `VlcCrashHeuristic.vlcSwitchLooksCrashed`（+5 例）+ `vlcPreviouslyCrashed`/`vlcSuspectCrash`
+  → 播放页再切 LibVLC 前弹确认（"仍然切换 / 先不切"，并提示可用「解码」档位换解码方式）；
+  ③ 待用户回传 `exit-…` 报告里的 native 轨迹以定位到具体 .so/函数。
+  当前版本 **0.1.21 / versionCode 22**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.20）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

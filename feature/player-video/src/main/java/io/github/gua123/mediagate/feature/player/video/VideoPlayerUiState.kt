@@ -129,6 +129,8 @@ data class VideoPlayerUiState(
     val switching: Boolean = false,
     /** 切换中的说明文案（由 [EngineSwitchPlanner.describe] 生成）。 */
     val switchMessage: String? = null,
+    /** 上次切 LibVLC 崩溃过（本机可能不兼容）：界面在再切之前给一句提示。 */
+    val vlcSuspectCrash: Boolean = false,
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,
     /** 失败分类；[VideoPlayerStatus.ERROR] 时非空。 */
