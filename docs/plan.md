@@ -437,11 +437,14 @@
 
 ### 10.1 R20 设计要点（2026-10-02 定，用户要求原文：「增加检查更新，同时如果有更新直接下载，而不是打开网页跳转到github页面」「更新的话，将github更改成公共的，并提示更新需要连接github才行，并且支持下载时的断线重连」）
 
-- **更新源**（2026-10-02 用户改口径：「使用只读token和私有仓库方案吧，但是存储的只读token需要本地加密」）：
-  **私有**仓库 `gua123/mediagate-releases` 的静态清单 `update.json`（versionCode / versionName / apkUrl / sizeBytes / sha256 / notes），
-  App 用**只读 token** 走内容 API 拉清单、走资产 API 下载 APK（`Accept: application/octet-stream` + `Authorization: Bearer`）。
-  token 由用户在 GitHub 建（fine-grained、只给该仓库 Contents: Read），在本应用设置页填入，
-  **用 Android Keystore（AES-GCM，复用 :core:crypto）加密后落盘**，界面不回显、日志不打印。
+- **更新源**（2026-10-02 **最终定稿**，用户原话：「将gua123/mediagate-releases仓库去掉，原代码私有仓库更改为公开仓库，
+  将文档中有关于真实数据的全部去掉…因此app中不用增加只读token了，将这部分去掉」）：
+  **源码仓库本身转公开**，更新清单与 APK 跟着一起公开——App 端**不需要任何凭据**。
+  清单 `update.json`（versionCode / versionName / apkUrl / sizeBytes / sha256 / notes）放仓库 main 分支，
+  走 `raw.githubusercontent.com` 读；APK 走 GitHub Release 资产直链。
+  两者都匿名可取、不吃 GitHub API 限额（API 匿名只有 60 次/小时/IP，共享出口极易耗尽）。
+  配套：仓库内全部真实数据（内网地址、公网域名/IP、测试账号、自建端口）已脱敏，包名换成
+  `io.github.gua123.mediagate`，并**重写了全部历史**（`git filter-branch`）后才转公开。
 - **安装**：FileProvider + `REQUEST_INSTALL_PACKAGES`，交给系统安装器——**Android 不允许静默安装**（这也是为什么只能说"直接下载"，安装那一下必须用户点一次）。
 - **校验**：大小 → SHA-256 → **签名证书必须与当前安装包一致**，任一不过就拒绝安装并给中文原因。
 - **断线续传**：`.part` 临时文件 + Range 请求；服务端回了 200（不支持 Range）就从头重下，绝不拼接（同时躲开"大文件被截断"这类链路问题）。
@@ -462,6 +465,7 @@
 | M6 ✅ 2026-10-01 | TS 强化（解析器、索引缓存、断点续扫、时间戳重建）+ FFmpeg 简版接入（tsext 128 / ffmpeg 30 例） | 6–8 |
 | M7 ✅ 2026-10-01 | 字幕（外挂 + 样式/延迟，110 例）+ **音转字幕 ASR**（JNI 桥 + 模型管理 + 分段识别 + SRT 写回，123 例）+ **批量任务中心**（25 例，多选/整文件夹、队列、进度、后台生成、播放让路） | 8–11 |
 | M8 ✅ 2026-10-01 | 画中画（35 例）、**视频后台播放与澎湃保活引导**（16 例）、全量验收与文档 | 5–8 |
+| M10 ✅ 2026-10-03 | **发版前整理（0.1.1）**：R20 应用内更新全链路（公开源 / 断点续传 / SHA-256 + 签名证书校验 / 系统安装器）、ASR 模型下载与管理界面、时间戳重建接线、字幕纯文本另存；仓库脱敏（含包名与 JNI 符号）并重写历史后转公开；`scripts/publish-update.sh` 一键发版；基线 1300+ JVM 用例 | 3–4 |
 | M9 ✅ 2026-10-02 | **真机验收修复**：① SFTP / FTP 此前只交付数据层后端、App 组合根未接（真机提示"（M5 接入）"），现已接入「设为当前连接 → 浏览/播放」并清掉全部 M5 陈旧文案（connections +8 例）；② 修掉**明文 http 被系统默认拦死**——targetSdk 36 下局域网 WebDAV（http）在真机全挂，新增 `network_security_config.xml` + `CleartextPolicyTest`（app +2 例）；③ 按用户要求统一**界面中文**：新增 `:core:common` 的 `ErrorText`，各界面不再露出库的英文 message（+5 例） | — |
 | 全量验收 | **1264 个 JVM 用例 0 失败**；release APK ≈74 MB、V2 签名、19 个 .so 全 16 KB 对齐；详见 docs/验收记录-M2-M8.md（含需真机验证清单与已知限制） | — |
 | **合计** | | **48–65 人日（约 9–13 周单人全职）** |

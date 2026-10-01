@@ -9,6 +9,11 @@
 - **凭据不进 git**：测试账号密码只存本工作区记忆库与 App 连接记录（Keystore 加密）；`keystore/`、`keystore.properties`、`*.jks/keystore`、`local.properties` 均已忽略。
 - **环境按项目隔离**：任何构建/命令前先 `source scripts/env.sh`；**不装系统级 JDK/SDK**。项目私有：JDK 21 `.toolchain/jdk-21`、Gradle 9.8.0 `.toolchain/gradle-9.8.0`、**Android SDK `.toolchain/android-sdk`（platform 37.2 / build-tools 37.0.0 / platform-tools / NDK r30 / CMake 4.1.2）**、`GRADLE_USER_HOME` 与 `ANDROID_USER_HOME`。公共 `/opt/android-sdk` 只当 sdkmanager 下载来源，**不再被本项目构建引用**；不得修改系统 java/环境变量以免影响其它项目。
 - **不碰其它项目**：只在本工作区内读写；/root/project/project-plan 为只读存档。
+- **仓库已公开（2026-10-03 起）**：`github.com/gua123/mediagate` 是公开仓库，更新源也挂在它上面（`update.json` + Release 资产）。
+  因此**任何真实数据都不许进 git**：内网地址、公网域名/IP、测试账号、自建端口一律用示例值
+  （`192.168.1.x` / `dav.example.com` / `203.0.113.10` / `demo` / 8080·2222·8443）；
+  历史上已做全量脱敏并重写（`git filter-branch` + 清 `refs/original` + gc）。
+  **替换对照表只存在本工作区记忆库**（不在仓库里），提交前按它自查一遍。发版走 `scripts/publish-update.sh`。
 
 ## 2. 方案要点（详见 docs/plan.md）
 
@@ -26,7 +31,7 @@
 
     app/ core/{common,model,database,crypto,network,download} data/{storage-api,storage-local,storage-webdav,storage-sftp,storage-ftp}
     media/{engine,proxy,playback,thumbnail,tsext,ffmpeg,asr,subtitle}
-    feature/{home,browser,player-video,player-audio,viewer-image,connections,settings,tasks}
+    feature/{home,browser,player-video,player-audio,viewer-image,connections,settings,tasks,update,asr-model}
     docs/（plan.md、验收记录）  scripts/（env.sh、测试服务、样本生成）  models/（ASR 模型，不进 git）
 
 ## 4. 常用命令
@@ -65,15 +70,18 @@
 - **当前基线**：全项目 **1279 个 JVM 用例 0 失败**（`./gradlew testDebugUnitTest`；
   本轮真机修复新增 15 例：:feature:connections +8、:app +2、:core:common +5）；
   release APK ≈74 MB、V2 签名、19 个 native 库全部 16 KB 页对齐。
-- **R20 应用内更新（进行中，2026-10-02）**：用户要求「设置页能检查更新、应用内直接下载、不跳浏览器」，
-  随后改口径为「**只读 token + 私有仓库**，且 token 要本地加密」。更新源＝**私有**仓库
-  `gua123/mediagate-releases` 的 `update.json` + release 资产；App 用只读 token 走内容 API/资产 API，
-  token 由用户在 GitHub 建（fine-grained、只该仓库 Contents: Read）、在设置页填入、
-  **经 :core:crypto 的 Keystore AES-GCM 加密后落盘**。已完成：`:core:download`（HTTP 传输 + 断点续传
-  `FileDownloader` + 自定义请求头，10 例，提交 `5057d78`）、`:feature:update`（清单解析/版本比较/检查更新
-  与五类中文失败，8 例，提交 `91e99f5`）、plan.md R20 验收项与 10.1 设计要点。
-  待做：设置页 token 输入与 Keystore 存储、下载（带 Authorization 与断点续传）+ SHA-256/签名证书校验、
-  FileProvider 与系统安装器、`scripts/publish-update.sh`、发 v0.1.1（versionCode 2）。
+- **M10 发版前整理（2026-10-03，0.1.1）已完成**：
+  ① **R20 应用内更新**（最终口径：源码仓库转公开 → 更新源用公开 raw 清单 + Release 资产，**App 不要 token**）：
+  `:core:download`（HTTP 传输 + 自定义请求头 + 断点续传 `FileDownloader`）、`:feature:update`（清单解析 /
+  版本比较 / 检查更新的中文失败分类 / 状态机 / 设置页卡片），`:app` 的 UpdateHost 负责版本号、**签名证书
+  SHA-256 比对**、FileProvider + `REQUEST_INSTALL_PACKAGES` 调系统安装器；
+  ② **ASR 模型下载与管理界面**（`:feature:asr-model`：档位 / 进度 / 删除 / 设为当前 / 国内镜像开关）——
+  此前该功能完全没有界面，音转字幕在真机上用不了；
+  ③ **时间戳重建接线**（TS 家族在播放页有「修复时间戳」出口，产物进 cacheDir 并经"视频专用修复根目录"续播）；
+  ④ **字幕另存为纯文本**（`SubtitleFormat.TXT` 只作导出目标，不进可加载字幕源）；
+  ⑤ `scripts/publish-update.sh` 一键发版（建 Release + 传 APK + 写 update.json + 提交推送）；
+  ⑥ 仓库**脱敏 + 包名替换 + 重写全部历史**后转公开（详见第 1 节红线与 docs/验收记录-M2-M8.md 第 10 节）。
+  当前版本 **0.1.1 / versionCode 2**，包名 `io.github.gua123.mediagate`。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
