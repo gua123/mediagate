@@ -27,7 +27,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -181,8 +183,17 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     }
 
     // R12 SAF 模式：系统目录选择器（结果 URI 由容器 takePersistableUriPermission 后落 DataStore）
+    // SAF 选择器有两个消费者：① 首页/连接页的"全局本地根目录"；② 连接编辑器里某个本地连接的目录。
+    // 用 pendingSafTarget 区分：非 null 表示这次是给编辑器挑的（结果只回调，不改全局根目录）。
+    var pendingSafTarget by remember { mutableStateOf<((String) -> Unit)?>(null) }
     val safPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        if (uri != null) container.onSafTreePicked(uri)
+        val target = pendingSafTarget
+        pendingSafTarget = null
+        when {
+            uri == null -> Unit
+            target != null -> target(uri.toString())
+            else -> container.onSafTreePicked(uri)
+        }
     }
 
     // R12 全盘模式：用户可能刚从系统设置页返回，回前台就重新读一次授权状态
@@ -306,7 +317,14 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
 
                 // 连接管理（M4，R6/R7/R8）：列表 + 新建/编辑/删除 + 测试连通性/测试全部 + 设为当前连接
                 composable(TopLevelDestination.CONNECTIONS.navRoute) {
-                    ConnectionsRoute(container = container, onPickSafDirectory = { safPicker.launch(null) })
+                    ConnectionsRoute(
+                        container = container,
+                        onPickSafDirectory = { safPicker.launch(null) },
+                        onPickLocalDirectory = { callback ->
+                            pendingSafTarget = callback
+                            safPicker.launch(null)
+                        },
+                    )
                 }
                 // 批量字幕任务中心（M7-B，R19）：来源选择 → 多选/整文件夹 → 队列与进度。
                 // 首次进入时引导通知权限：后台生成的通知栏进度与「暂停/取消」按钮都要它（R18/R19）。
@@ -363,7 +381,12 @@ private fun HomeRoute(
  * 原先只有首页能选本地目录，于是"我在连接页想换成手机里的目录"这件事没有入口。
  */
 @Composable
-private fun ConnectionsRoute(container: AppContainer, onPickSafDirectory: () -> Unit) {
+private fun ConnectionsRoute(
+    container: AppContainer,
+    onPickSafDirectory: () -> Unit,
+    /** 为本地连接挑目录：:app 拉起 SAF 选择器，结果以 URI 回调给编辑器草稿。 */
+    onPickLocalDirectory: ((String) -> Unit) -> Unit,
+) {
     val config by container.rootConfig.collectAsStateWithLifecycle()
     val allFilesGranted by container.allFilesGranted.collectAsStateWithLifecycle()
     ConnectionsScreen(
@@ -375,11 +398,14 @@ private fun ConnectionsRoute(container: AppContainer, onPickSafDirectory: () -> 
             },
             displayPath = config?.display.orEmpty(),
             allFilesGranted = allFilesGranted,
+            // 原始值：SAF 是树 URI，全盘是绝对路径。编辑器里"用已选的目录"一键沿用
+            value = config?.value.orEmpty(),
         ),
         onPickSafDirectory = onPickSafDirectory,
         onUseAllFilesRoot = container::useAllFilesRoot,
         onRequestAllFilesAccess = container::requestAllFilesAccess,
         onClearRoot = container::clearRoot,
+        onPickLocalDirectory = onPickLocalDirectory,
     )
 }
 

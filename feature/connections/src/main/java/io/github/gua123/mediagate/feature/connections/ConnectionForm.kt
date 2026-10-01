@@ -199,13 +199,16 @@ object ConnectionFormValidator {
             name.length > MAX_NAME_LENGTH -> global[FormField.NAME] = "名称最多 " + MAX_NAME_LENGTH + " 个字符"
         }
 
-        val basePath = draft.basePath.trim()
-        when {
-            basePath.isEmpty() -> global[FormField.BASE_PATH] =
-                if (draft.protocol == ProtocolKind.LOCAL) "请填写本地目录的绝对路径" else "请填写根路径（例如 /）"
-            !basePath.startsWith("/") -> global[FormField.BASE_PATH] =
-                if (draft.protocol == ProtocolKind.LOCAL) "本地目录必须是绝对路径（以 / 开头）" else "根路径必须以 / 开头"
-            basePath.contains("..") -> global[FormField.BASE_PATH] = "根路径不能包含 .."
+        // LOCAL 的"目录"只有一个来源：地址里的路径（见 :app 的 applyLocalConnectionRoot）。
+        // 以前这里还校验 basePath，界面上那个"本地目录（绝对路径）"其实是 basePath——
+        // 用户填在那里、App 读的却是地址，于是"填了目录还进不去"（2026-10-03 真机反馈）。
+        if (draft.protocol != ProtocolKind.LOCAL) {
+            val basePath = draft.basePath.trim()
+            when {
+                basePath.isEmpty() -> global[FormField.BASE_PATH] = "请填写根路径（例如 /）"
+                !basePath.startsWith("/") -> global[FormField.BASE_PATH] = "根路径必须以 / 开头"
+                basePath.contains("..") -> global[FormField.BASE_PATH] = "根路径不能包含 .."
+            }
         }
 
         if (draft.addresses.isEmpty()) {
@@ -245,10 +248,13 @@ object ConnectionFormValidator {
                 port !in 1..65535 -> errors[FormField.PORT] = "端口范围是 1-65535"
             }
         } else {
-            // LOCAL：地址就是本地目录，必须绝对路径
+            // LOCAL：地址就是本地目录。两种形态都合法：
+            // ① SAF 授权目录（content:// 树 URI，用「选择目录」按钮选出来）；
+            // ② 全盘访问下的绝对路径（如 /storage/emulated/0，用「使用内部存储」一键填）。
             when {
-                host.isEmpty() -> errors[FormField.HOST] = "请填写本地目录的绝对路径"
-                !host.startsWith("/") -> errors[FormField.HOST] = "本地目录必须是绝对路径（以 / 开头）"
+                host.isEmpty() -> errors[FormField.HOST] = "请选择或填写本地目录"
+                host.startsWith("content://") -> Unit
+                !host.startsWith("/") -> errors[FormField.HOST] = "本地目录要么用「选择目录」授权，要么是绝对路径（以 / 开头）"
             }
         }
 

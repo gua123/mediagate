@@ -26,6 +26,16 @@
     <string name="connections_local_use_all_files">使用内部存储</string>
     <string name="connections_local_request_all_files">开启全部文件访问</string>
     <string name="connections_local_clear">清除</string>
+    <string name="connections_local_use_local">改用本地目录（取消当前连接）</string>
+    <string name="connections_local_current_remote">当前用的是某条连接；改用本地目录后，浏览与播放回到下面这个目录。</string>
+
+    <!-- 本地连接的目录选择（不再要求手写路径） -->
+    <string name="connections_local_pick">选择目录</string>
+    <string name="connections_local_internal">使用内部存储</string>
+    <string name="connections_local_use_existing">用已选的目录</string>
+    <string name="connections_local_need_all_files">「使用内部存储」需要先开启「所有文件访问」权限；也可以直接用「选择目录」授权一个目录。</string>
+    <string name="connections_local_grant">去开启权限</string>
+    <string name="connections_local_picked">已选：%1$s</string>
     <string name="connections_local_hint">远端连接优先：一旦「设为当前连接」，浏览与播放就用那条连接；清除本地目录不会断开远端。</string>
     <string name="connections_action_test">测试连通性</string>
     <string name="connections_action_retest">重新测试</string>

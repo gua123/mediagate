@@ -259,11 +259,17 @@ class ConnectionsViewModel(
         }
     }
 
-    /** 清除当前连接（回到首页选择的本地根目录）。 */
+    /**
+     * 清除当前连接（**改用本地目录**）。
+     *
+     * 真机反馈：加了连接、设成当前之后，本地目录就"进不去"了——因为远端优先（publishRoot），
+     * 而界面上原先**没有任何**"改回本地目录"的出口。这里补上，并给一句明确提示。
+     */
     fun clearCurrent() {
         viewModelScope.launch {
             environment.setCurrentConnection(null)
             _state.update { it.reduce(ConnectionsEvent.CurrentChanged(null)) }
+            _state.update { it.reduce(ConnectionsEvent.Notice("已改用本地目录（当前连接已取消）")) }
         }
     }
 
