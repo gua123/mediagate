@@ -96,6 +96,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.positionChange
@@ -900,7 +901,25 @@ private fun PlaylistSheet(
             if (state.siblingPaths.isEmpty()) {
                 Text(stringResource(R.string.video_playlist_empty), style = MaterialTheme.typography.bodyMedium)
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                // **2026-10-03 用户要求**：打开面板自动跳到"当前正在播的那一条"，而不是从最上边开始
+                val listState = rememberLazyListState(
+                    initialFirstVisibleItemIndex = PlaylistScroll.firstVisibleIndex(
+                        currentIndex = state.siblingIndex,
+                        count = state.siblingPaths.size,
+                    ),
+                )
+                // 面板开着的时候换了集（点别的 / 自动续播），列表跟着滚过去
+                LaunchedEffect(state.siblingIndex, state.siblingPaths.size) {
+                    if (state.siblingPaths.isNotEmpty()) {
+                        listState.animateScrollToItem(
+                            PlaylistScroll.firstVisibleIndex(state.siblingIndex, state.siblingPaths.size),
+                        )
+                    }
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                ) {
                     itemsIndexed(state.siblingPaths) { index, path ->
                         val selected = index == state.siblingIndex
                         ListItem(
