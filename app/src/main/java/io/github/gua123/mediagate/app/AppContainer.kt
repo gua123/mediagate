@@ -673,6 +673,22 @@ class AppContainer(context: Context) :
             vlcProbeNow()
         }
 
+        /**
+         * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
+         *
+         * 播放页一确定要播这个文件，就在后台把**开头两段**拉进分段缓存——
+         * 于是 Media3 起播要读头几个字节时，数据往往已经在本地了；
+         * 段级"单飞"保证这次预取与起播的真实请求不会重复拉同一段。
+         */
+        override fun prefetchHead(path: String) {
+            val cache = remoteCache ?: return
+            val bytes = networkTuning.tuning.value.segmentBytes * PREFETCH_HEAD_SEGMENTS
+            ioScope.launch {
+                runCatching { cache.prefetch(path, offset = 0L, length = bytes) }
+                    .onFailure { AppLog.w(TAG, "打开即预取失败（不影响播放）：" + path, it) }
+            }
+        }
+
 
 
     /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
@@ -1540,6 +1556,9 @@ class AppContainer(context: Context) :
         /** 时间戳重建（R3/R11）产物目录（cacheDir 下）与 ffmpeg 中间文件目录。 */
         /** 远端随机读的分段缓存（plan 4.1 降级链第二级）。 */
         const val SEGMENT_CACHE_DIR = "segments"
+
+        /** 打开即预取的段数（2 段 ≈ 8 MB，内网几乎瞬间，公网也不至于太铺张）。 */
+        const val PREFETCH_HEAD_SEGMENTS = 2L
 
         /** 拖拽预取的字节数（R4）：4 MB = 一个段。 */
         const val PREFETCH_BYTES = 4L * 1024 * 1024

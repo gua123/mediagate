@@ -78,6 +78,9 @@ class VideoPlayerViewModel(
             vlcUsable = environment.vlcUsable,
             // 极简模式是持久化偏好：进页面就按上次的选择显示
             simpleMode = environment.preferences.simpleMode,
+            // 记住的音量/亮度（2026-10-03 用户要求）：进入播放页就按上次的值来
+            volume = PlayerEngine.sanitizeVolume(environment.preferences.playerVolume),
+            brightness = environment.preferences.screenBrightness,
         ),
     )
 
@@ -151,6 +154,7 @@ class VideoPlayerViewModel(
      *    口径是 **READY + 在播 + 没播完**（暂停/加载中/播完/失败都不算，识别任务该跑就跑）。
      */
     private fun attachHosts() {
+        applyVolumeToEngine()
         environment.pip.setActionSink(VideoPipActionSink(::onPipAction))
         hostJob = viewModelScope.launch {
             state.collect { snapshot ->
@@ -289,6 +293,56 @@ class VideoPlayerViewModel(
     // ------------------------------------------------------------------ 极简模式与横滑调进度（2026-10-03 用户要求）
 
     /** 切极简模式（记住选择）。 */
+    /**
+     * **竖直手势**（2026-10-03 用户要求）：左区调亮度、右区调音量。
+     *
+     * 界面负责换算（[PlayerGestureMath]），这里只做三件事：夹值 → 应用 → 拖动结束时记住。
+     */
+    fun beginVerticalGesture(zone: PlayerGestureZone) {
+        _state.update { it.copy(verticalZone = zone, verticalValue = if (zone == PlayerGestureZone.VOLUME) it.volume else it.brightness) }
+    }
+
+    /** 拖动过程中实时更新（亮度直接作用于窗口，音量直接作用于内核）。 */
+    fun updateVerticalGesture(value: Float) {
+        val zone = _state.value.verticalZone ?: return
+        when (zone) {
+            PlayerGestureZone.VOLUME -> {
+                val v = PlayerEngine.sanitizeVolume(value)
+                _state.update { it.copy(volume = v, verticalValue = v) }
+                engine?.setVolume(v)
+            }
+
+            PlayerGestureZone.BRIGHTNESS -> {
+                val b = value.coerceIn(0.01f, 1f)
+                _state.update { it.copy(brightness = b, verticalValue = b) }
+            }
+
+            PlayerGestureZone.SEEK -> Unit
+        }
+    }
+
+    /** 松手：收 HUD，并把这次的值记住（下次播放沿用）。 */
+    fun commitVerticalGesture() {
+        val snapshot = _state.value
+        val zone = snapshot.verticalZone ?: return
+        _state.update { it.copy(verticalZone = null) }
+        viewModelScope.launch {
+            runCatching {
+                when (zone) {
+                    PlayerGestureZone.VOLUME -> environment.preferences.setPlayerVolume(snapshot.volume)
+                    PlayerGestureZone.BRIGHTNESS -> environment.preferences.setScreenBrightness(snapshot.brightness)
+                    PlayerGestureZone.SEEK -> Unit
+                }
+            }
+        }
+    }
+
+    /** 把当前音量套到内核上（建/换内核之后都要做一次，否则新内核又回到 100%）。 */
+    private fun applyVolumeToEngine() {
+        val v = _state.value.volume
+        runCatching { engine?.setVolume(v) }
+    }
+
     fun toggleSimpleMode() {
         val on = !_state.value.simpleMode
         _state.update { it.reduce(VideoPlayerEvent.SimpleModeChanged(on)) }
@@ -897,6 +951,11 @@ class VideoPlayerViewModel(
         observe(created)
         val view = created.videoView()
         _videoOutput.value = view
+        // 音量跟着"记住的值"走（换内核/重进播放页都不能回到 100%）
+        runCatching { created.setVolume(_state.value.volume) }
+        // **打开即预取**（2026-10-03 用户反馈：新视频第一次打开要等很久）：
+        // 不等第一帧来催数据，确定要播就开始在后台拉开头几段
+        environment.prefetchHead(path)
         // 内核装载与起播整体兜底（2026-10-03 真机"一播放就闪退"）：
         // 内核/解码器在真机上抛出的异常（MediaCodec 初始化失败、容器不支持…）不该让 App 直接消失，
         // 统一降级成播放页的错误卡片 + 中文原因。
@@ -1089,6 +1148,7 @@ class VideoPlayerViewModel(
             observe(created)
             val view = created.videoView()
             _videoOutput.value = view
+            runCatching { created.setVolume(_state.value.volume) }
             Breadcrumbs.mark("切换内核：开始恢复现场（装载媒体）")
             VideoEngineSwitch.applyRestore(created, plan.restore)
             Breadcrumbs.mark("切换内核：现场恢复完成")

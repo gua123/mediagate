@@ -75,6 +75,30 @@ class VideoPlayerPreferencesSettings(
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SIMPLE_MODE] = on }
     }
 
+    // ---------------------------- 音量 / 亮度（**2026-10-03 用户要求**：左右竖直滑动 + 音量 200% 上限）
+
+    /** 记住的音量倍率；没有记录时为 1.0（原始音量）。 */
+    private val volumeFlow: StateFlow<Float> = context.videoPlayerDataStore.data
+        .map { preferences -> preferences[KEY_PLAYER_VOLUME] ?: 1f }
+        .stateIn(scope, SharingStarted.Eagerly, 1f)
+
+    override val playerVolume: Float get() = volumeFlow.value
+
+    override suspend fun setPlayerVolume(volume: Float) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_PLAYER_VOLUME] = volume }
+    }
+
+    /** 记住的屏幕亮度（0..1）；-1 = 跟随系统（默认）。 */
+    private val brightnessFlow: StateFlow<Float> = context.videoPlayerDataStore.data
+        .map { preferences -> preferences[KEY_SCREEN_BRIGHTNESS] ?: -1f }
+        .stateIn(scope, SharingStarted.Eagerly, -1f)
+
+    override val screenBrightness: Float get() = brightnessFlow.value
+
+    override suspend fun setScreenBrightness(brightness: Float) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SCREEN_BRIGHTNESS] = brightness }
+    }
+
     // ------------------------------------------------------------ 字幕（M7-A，R14）
 
     /** 字幕总开关（R14）；没有记录时为关。 */
@@ -129,6 +153,12 @@ class VideoPlayerPreferencesSettings(
 
         /** 极简模式（2026-10-03）：默认关。 */
         val KEY_SIMPLE_MODE = booleanPreferencesKey("simple_mode")
+
+        /** 音量倍率（2026-10-03）：0..2，默认 1.0。 */
+        val KEY_PLAYER_VOLUME = floatPreferencesKey("player_volume")
+
+        /** 屏幕亮度（2026-10-03）：0..1；-1 = 跟随系统。 */
+        val KEY_SCREEN_BRIGHTNESS = floatPreferencesKey("screen_brightness")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")

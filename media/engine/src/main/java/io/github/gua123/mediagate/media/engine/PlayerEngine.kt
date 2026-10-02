@@ -77,6 +77,17 @@ interface PlayerEngine {
      */
     fun videoView(): View?
 
+    /**
+     * **音量倍率**（2026-10-03 用户要求：「右侧上下为调整音量，同时增加音量上限为 200%」）。
+     *
+     * 1.0 = 原始音量；上限 [MAX_VOLUME]（200%）。口径：0~100% 走播放器自身音量，
+     * 100%~200% 用系统增益（Media3 侧 LoudnessEnhancer；LibVLC 自身就支持到 200）。
+     */
+    val volume: Float
+
+    /** 设置音量倍率（实现内部夹到 0..[MAX_VOLUME]）。 */
+    fun setVolume(volume: Float)
+
     /** 当前播放位置（毫秒）。 */
     fun positionMs(): Long
 
@@ -85,4 +96,18 @@ interface PlayerEngine {
 
     /** 释放所有资源（幂等）。 */
     fun release()
+
+    companion object {
+
+        /** 音量上限倍率：200%（用户要求）。 */
+        const val MAX_VOLUME: Float = 2f
+
+        /** 音量倍率夹到合法范围（NaN/负数一律当 0）。 */
+        fun sanitizeVolume(value: Float): Float = when {
+            value.isNaN() -> 1f
+            value <= 0f -> 0f
+            value > MAX_VOLUME -> MAX_VOLUME
+            else -> value
+        }
+    }
 }
