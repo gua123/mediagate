@@ -6,8 +6,10 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Dns
@@ -251,13 +253,20 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             // M7-B：批量字幕任务中心（R19）的宿主能力（队列 + 目录 + 模型 + 让路）
             LocalTasksEnvironment provides container.tasksEnvironment,
         ) {
+            // **播放页 / 看图页要铺满整块屏幕**（2026-10-03 真机横屏截图：左边出现一条浅色竖条）：
+            // 那两个页面本身是黑底沉浸式，而 Scaffold 给的 innerPadding 在横屏会把**刘海 + 手势区**
+            // 也算进去 ⇒ 黑底被整体内缩，窗口背景（浅色）从左边露出来。
+            // 所以这两个路由**不吃内边距**（其余页面照旧）。
+            val edgeToEdgeRoute = currentDestination?.route?.let { route ->
+                route == VideoPlayerRoutes.ROUTE || route == ViewerRoutes.ROUTE
+            } ?: false
             NavHost(
                 navController = navController,
                 startDestination = TopLevelDestination.HOME.navRoute,
                 // 外层已经让出了状态栏 / 底部导航的高度，这里把它标记为「已消费」，
                 // 否则页面内部的 Scaffold + TopAppBar 会把系统栏再顶一次（内容整体下移一倍）
                 modifier = Modifier
-                    .padding(innerPadding)
+                    .padding(if (edgeToEdgeRoute) PaddingValues(0.dp) else innerPadding)
                     .consumeWindowInsets(innerPadding),
             ) {
                 composable(TopLevelDestination.HOME.navRoute) {
@@ -377,9 +386,28 @@ private fun ImmersiveWhilePlaying() {
     DisposableEffect(controller) {
         controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         controller?.hide(WindowInsetsCompat.Type.systemBars())
+        // **窗口背景刷黑 + 允许画进刘海区**（2026-10-03 真机横屏截图：左边一条浅色竖条＝
+        // 刘海/手势区没被内容覆盖，露出了窗口背景）。这两下手之后，哪怕还有没被内容盖住的窗口区域，
+        // 也是黑的，不会再出现浅色条。
+        val window = activity?.window
+        val previousBackground = window?.decorView?.background
+        val previousCutout = window?.attributes?.layoutInDisplayCutoutMode
+        if (window != null) {
+            window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode =
+                        android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                }
+            }
+        }
         onDispose {
             // 退出播放页把系统栏还回来（否则回到首页也是一条光秃秃的全屏）
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            window?.decorView?.background = previousBackground
+            if (window != null && previousCutout != null) {
+                window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = previousCutout }
+            }
         }
     }
     // 再补一刀：从桌面切回来、锁屏解锁、或用户上滑把系统栏唤出过之后，重新收起来
