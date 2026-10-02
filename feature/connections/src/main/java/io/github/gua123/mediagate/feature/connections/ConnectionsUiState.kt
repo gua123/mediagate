@@ -102,6 +102,9 @@ data class ConnectionsUiState(
     val draftTesting: Boolean = false,
     /** 草稿测试结果（中文一行）；改动草稿会清掉。 */
     val draftTestResult: String? = null,
+
+    /** 技术详情（可复制）；用户问过「在哪里查看详情」——这次给它一个真能点的地方。 */
+    val draftTestDetail: String? = null,
     val pendingDeleteId: Long? = null,
     val notice: String? = null,
     val summary: TestAllSummary? = null,
@@ -185,9 +188,14 @@ data class ConnectionsUiState(
             draftTestResult = null,
         )
 
-        ConnectionsEvent.DraftTestStarted -> copy(draftTesting = true, draftTestResult = null)
+        ConnectionsEvent.DraftTestStarted ->
+            copy(draftTesting = true, draftTestResult = null, draftTestDetail = null)
 
-        is ConnectionsEvent.DraftTestFinished -> copy(draftTesting = false, draftTestResult = event.result)
+        is ConnectionsEvent.DraftTestFinished -> copy(
+            draftTesting = false,
+            draftTestResult = event.result,
+            draftTestDetail = event.detail,
+        )
 
         is ConnectionsEvent.DeletePending -> copy(pendingDeleteId = event.id)
 
@@ -246,8 +254,10 @@ sealed interface ConnectionsEvent {
     /** 编辑器里点了「测试一下」（用草稿测，不落库）。 */
     data object DraftTestStarted : ConnectionsEvent
 
-    /** 草稿测试结束（中文一句话，直接显示）。 */
-    data class DraftTestFinished(val result: String) : ConnectionsEvent
+    /**
+     * 草稿测试结束：一句话给人看（[result]）+ 可复制的技术详情（[detail]，没有就是 null）。
+     */
+    data class DraftTestFinished(val result: String, val detail: String? = null) : ConnectionsEvent
 
     /** 关闭编辑器。 */
     data object EditorClosed : ConnectionsEvent

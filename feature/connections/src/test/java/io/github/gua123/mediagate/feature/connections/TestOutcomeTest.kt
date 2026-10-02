@@ -68,6 +68,43 @@ class TestOutcomeTest {
     }
 
     @Test
+    fun `技术详情把原始信息摊开（用户问「在哪里查看详情」）`() {
+        val detail = DraftTestSupport.detailOf(
+            listOf(
+                AddressTestResult(
+                    address = SelectableAddress(
+                        id = 1L,
+                        label = AddressLabel.WAN,
+                        scheme = "http",
+                        host = "vpn.example.com",
+                        port = 20005,
+                    ),
+                    ok = false,
+                    dnsMs = 209,
+                    connectMs = 1,
+                    handshakeMs = 579,
+                    error = ConnectivityError.SERVER_ERROR,
+                    failedStage = TestStage.HANDSHAKE,
+                    message = "HTTP 502 Bad Gateway",
+                ),
+            ),
+            PasswordSource.NEW_INPUT,
+        )
+        assertTrue("详情不该为空", detail != null)
+        val text = detail!!
+        assertTrue("要写清卡在哪一段：" + text, text.contains("协议握手"))
+        assertTrue("要写清分类：" + text, text.contains("SERVER_ERROR"))
+        assertTrue("要带原始信息：" + text, text.contains("HTTP 502 Bad Gateway"))
+        assertTrue("要带耗时：" + text, text.contains("DNS 209 ms"))
+        assertTrue("要标明用的是哪份凭据：" + text, text.contains("本次新输入的密码"))
+    }
+
+    @Test
+    fun `没有测试结果时技术详情为空`() {
+        assertEquals(null, DraftTestSupport.detailOf(emptyList(), PasswordSource.NONE))
+    }
+
+    @Test
     fun `标记符号稳定（供界面加前缀）`() {
         assertEquals("✓", TestOutcome.PASSED.mark)
         assertEquals("✗", TestOutcome.FAILED.mark)

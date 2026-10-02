@@ -88,6 +88,31 @@ object DraftTestSupport {
             base
         }
     }
+
+    /**
+     * 测试结果的**技术详情**（可复制；界面上的「技术详情」按钮就用它）。
+     *
+     * **2026-10-03 用户问「在哪里查看详情」**——原来那句「未知错误 · 查看详情」里根本没有可点的东西。
+     * 现在把每个地址的原始信息摊开：阶段、分类（含 code）、原始 message / notice、三段耗时。
+     * 没有可展示的内容时返回 null（界面就不显示按钮）。
+     */
+    fun detailOf(results: List<AddressTestResult>, source: PasswordSource): String? {
+        if (results.isEmpty()) return null
+        return buildString {
+            appendLine("mediagate 连接测试详情")
+            appendLine("使用凭据：" + source.zhText)
+            results.forEachIndexed { index, result ->
+                appendLine()
+                appendLine("[" + (index + 1) + "] " + result.address.display)
+                appendLine("    结果：" + (if (result.ok) "通过" else "失败"))
+                result.failedStage?.let { appendLine("    卡在：" + it.zhText + "（" + it.code + "）") }
+                result.error?.let { appendLine("    分类：" + it.zhText + "（" + it.code + "）— " + it.hint) }
+                result.message?.takeIf { it.isNotBlank() }?.let { appendLine("    原始信息：" + it) }
+                result.notice?.takeIf { it.isNotBlank() }?.let { appendLine("    备注：" + it) }
+                appendLine("    耗时：" + result.timingLine + "（合计 " + result.totalMs + " ms）")
+            }
+        }.trim()
+    }
 }
 
 /** 测试结果的三种结局（**2026-10-03 真机**：截图里「测试通过」被染成了红色）。 */
