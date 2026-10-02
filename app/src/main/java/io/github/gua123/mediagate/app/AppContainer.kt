@@ -1512,9 +1512,12 @@ class AppContainer(context: Context) :
                 displayPath = displayPath,
                 // 降级链第二级（plan 4.1）：远端一律套一层分段缓存——不支持随机读的协议（无 Range 的
                 // WebDAV、无 REST 的 FTP）因此也能被拖拽 seek；支持随机读的也省掉重复过网
+                // 分段缓存：段内**并发取块** + 读到某段后**预读后面几段**（2026-10-03 用户问「缓冲能不能多线程」）。
+                // readAheadScope 传 ioScope：预读任务挂在应用级作用域上，播放页退出也能跑完。
                 backend = SegmentedCacheBackend(
                     delegate = build(),
                     rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
+                    readAheadScope = ioScope,
                 ),
             )
         }.onFailure { t ->
