@@ -68,8 +68,19 @@ class ConnectivityErrorTest {
         assertEquals(ConnectivityError.PROTOCOL_UNSUPPORTED, ConnectivityError.fromHttpStatus(405))
         assertEquals(ConnectivityError.PROTOCOL_UNSUPPORTED, ConnectivityError.fromHttpStatus(501))
         assertEquals(ConnectivityError.TIMEOUT, ConnectivityError.fromHttpStatus(504))
+        // 2xx / 无法归类的状态仍是"没有分类"（由上层决定怎么说）
         assertNull(ConnectivityError.fromHttpStatus(207))
-        assertNull(ConnectivityError.fromHttpStatus(500))
+        assertNull(ConnectivityError.fromHttpStatus(200))
+        // **2026-10-03 补**：3xx（跳转）与 5xx（服务端错误）以前都落到"未知错误"，
+        // 真机就是 `http://…:20005` 那次——用户只看到「未知错误 · 查看详情」，看不出下一步。
+        assertEquals(ConnectivityError.REDIRECT, ConnectivityError.fromHttpStatus(301))
+        assertEquals(ConnectivityError.REDIRECT, ConnectivityError.fromHttpStatus(302))
+        assertEquals(ConnectivityError.REDIRECT, ConnectivityError.fromHttpStatus(307))
+        assertEquals(ConnectivityError.SERVER_ERROR, ConnectivityError.fromHttpStatus(500))
+        assertEquals(ConnectivityError.SERVER_ERROR, ConnectivityError.fromHttpStatus(502))
+        assertEquals(ConnectivityError.SERVER_ERROR, ConnectivityError.fromHttpStatus(503))
+        assertEquals(ConnectivityError.REQUEST_REJECTED, ConnectivityError.fromHttpStatus(400))
+        assertEquals(ConnectivityError.REQUEST_REJECTED, ConnectivityError.fromHttpStatus(429))
     }
 
     @Test

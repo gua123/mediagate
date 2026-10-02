@@ -70,7 +70,17 @@ object DraftTestSupport {
         }
         val first = results.first()
         val detail = first.error?.display ?: first.message ?: first.notice ?: "原因未知"
-        val base = used + "测试失败：" + first.address.display + " — " + detail + "（" + first.timingLine + "）"
+        // **2026-10-03 真机**：未知错误时界面只显示「未知错误 · 查看详情」，用户看不出下一步。
+        // 现在把"卡在哪一段"和"原始 message"一起摊开。
+        val stage = first.failedStage?.zhText ?: "未知阶段"
+        val raw = first.message?.trim().orEmpty()
+        val extra = when {
+            first.error == ConnectivityError.UNKNOWN && raw.isNotEmpty() -> "（原始原因：" + raw + "）"
+            first.error == ConnectivityError.UNKNOWN -> "（卡在" + stage + "，服务端没给出可识别的原因）"
+            else -> ""
+        }
+        val base = used + "测试失败：" + first.address.display + " — " + detail + extra +
+            "（" + first.timingLine + "）"
         // 认证失败时的自检提示：换一份密码再测，结论立刻分化
         return if (first.error == ConnectivityError.AUTH_FAILED && source != PasswordSource.NEW_INPUT) {
             base + "。试试在密码框里重新输入一遍密码再点「测试一下」：如果这次通过，说明存着的那份密码不对（留空=沿用旧密码）。"

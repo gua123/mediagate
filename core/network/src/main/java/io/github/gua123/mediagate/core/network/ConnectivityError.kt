@@ -63,8 +63,22 @@ enum class ConnectivityError(
      */
     CLEARTEXT_BLOCKED("CLEARTEXT_BLOCKED", "明文流量被系统拦截", "在连接页打开「允许明文 http」，或改用 https"),
 
+    /**
+     * 服务器要求跳转（HTTP 3xx）。
+     *
+     * **2026-10-03 真机**：`http://vpn.gua233.top:20005` 测试失败只显示「未知错误 · 查看详情」，
+     * 用户完全不知道下一步做什么——而这类失败最常见的成因就是"这个端口其实在跳转到 https/别的路径"。
+     */
+    REDIRECT("REDIRECT", "服务器要求跳转", "换 https 试试，或用跳转后的地址（也可能是反代配置问题）"),
+
+    /** 服务器内部错误（HTTP 5xx）：问题在服务端或反向代理，不是配置写错。 */
+    SERVER_ERROR("SERVER_ERROR", "服务器内部错误", "服务端或反向代理出的问题：看服务日志，或稍后重试"),
+
+    /** 请求被服务端拒绝（HTTP 400 / 429 等）。 */
+    REQUEST_REJECTED("REQUEST_REJECTED", "请求被服务端拒绝", "换根路径或换个地址试试（也可能被限流）"),
+
     /** 其他未分类错误（详情看 message）。 */
-    UNKNOWN("UNKNOWN", "未知错误", "查看详情"),
+    UNKNOWN("UNKNOWN", "未知错误", "看后面括号里的原始原因"),
     ;
 
     /** 给界面用的一行中文：「认证失败 · 账号或密码不正确」。 */
@@ -112,6 +126,10 @@ enum class ConnectivityError(
             407 -> AUTH_FAILED
             423 -> PERMISSION_DENIED
             408, 504 -> TIMEOUT
+            // 2026-10-03 补：这三类以前都落到"未知错误"，用户看不出下一步（真机就撞上了 3xx 跳转）
+            in 300..399 -> REDIRECT
+            in 500..599 -> SERVER_ERROR
+            400, 411, 413, 414, 429 -> REQUEST_REJECTED
             else -> null
         }
 
@@ -140,6 +158,8 @@ enum class ConnectivityError(
                 text.contains("不支持") || text.contains("PROPFIND") -> PROTOCOL_UNSUPPORTED
                 text.contains("不存在") || text.contains("404") -> PATH_NOT_FOUND
                 text.contains("证书") || text.contains("TLS") -> TLS_FAILED
+                text.contains("跳转") || text.contains("redirect", true) -> REDIRECT
+                text.contains("服务器错误") || text.contains("502") || text.contains("503") -> SERVER_ERROR
                 else -> UNKNOWN
             }
         }
