@@ -1,8 +1,8 @@
 {
-  "versionCode": 52,
-  "versionName": "0.1.51",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.51/mediagate-0.1.51.apk",
-  "sizeBytes": 70415357,
-  "sha256": "3077bacd07d84e72eaff6c7d1ff429271ee67a09bce23a0f2ebf4fff15053ec1",
-  "notes": "## mediagate 0.1.51 —— 缓存上限多了\"可以自己输入\"的窗口\n\n### 加在哪\n\n**设置 → 网络与缓冲 → 缓存上限**，现在是两排：\n\n- 上面仍是四个**快捷档位**：1 GB / 2 GB / 4 GB / 8 GB；\n- 下面新增一个**输入框**（写着「自定义（GB）」）+ 「应用」按钮：填 **3** 或 **3.5** 这样的值都行；\n- 标题上直接显示**当前上限**（例如「缓存上限：3.5 GB」，不是整 GB 时保留一位小数）。\n\n### 允许的范围\n\n**512 MB ~ 64 GB**，超出或填了非数字会给一句中文提示（例如「最小 512 MB」「请填数字，例如 3 或 3.5」），\n而不是默默不生效。\n\n### 生效口径（没变）\n\n**缓存上限与段大小都是\"下次连接生效\"**——它们决定磁盘上已有段怎么算、淘汰预算多少，中途改会让缓存对不上号；\n「预读段数」仍是即时生效。\n\n### 兼容\n\n以前只存过\"GB 档位\"的版本升级上来：老设置会被按 ×1024 迁移成新口径，**不会突然掉回默认值**。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.51/mediagate-0.1.51.apk`"
+  "versionCode": 53,
+  "versionName": "0.1.52",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.52/mediagate-0.1.52.apk",
+  "sizeBytes": 70415361,
+  "sha256": "8a534bab0ee3a85fc2d04f097da1762e4506fd27086281ee9fdd4c1d7e0e73cf",
+  "notes": "## mediagate 0.1.52 —— 「检查更新连不上 GitHub」的修法与自查\n\n### 你说的现象我信：网络正常，但 App 里连不上 GitHub\n\n原因很具体：**清单走的是 raw.githubusercontent.com**，而它在国内经常不可达，而且——\n**你为 GitHub 配的代理/VPN 未必覆盖这个域名**（很多人只代理了 github.com）。\n\n### 这一版做了两件事\n\n**① 清单多了一个国内可达的镜像源（jsDelivr）**\n\n现在会依次尝试三个地址，取 versionCode 最高的那份：\n\n| 顺序 | 地址 | 说明 |\n| --- | --- | --- |\n| 1 | `raw.githubusercontent.com/…/main/update.json` | 主源，最新（有 CDN 缓存最多 5 分钟） |\n| 2 | `raw.githubusercontent.com/…/refs/heads/main/update.json` | 同一份文件的另一条缓存键 |\n| 3 | **`cdn.jsdelivr.net/gh/gua123/mediagate@main/update.json`** | **国内通常不需要代理就能读**（刚实测：直连 200、内容就是最新版） |\n\n只要有**任何一个**能读到，检查更新就能正常工作。\n\n**② 失败时把\"每个地址的结果\"写出来**\n\n以前只说一句「连不上 GitHub」，现在会跟着一串证据，例如：\n\n```\n连不上 GitHub：检查更新需要能访问 GitHub（可能需要代理）\n（✗ raw.githubusercontent.com/update.json → 连不上 GitHub；\n  ✗ raw.githubusercontent.com/refs → 连不上 GitHub；\n  ✗ cdn.jsdelivr.net/update.json → 连不上 GitHub）\n```\n\n一看就知道是\"全都不通\"还是\"只有 raw 不通\"——不用再猜。\n\n### 如果三个都不通（那说明当前网络确实出不去）\n\n- 把代理**改成按域名分流**：`github.com`、`raw.githubusercontent.com`、`objects.githubusercontent.com`、`cdn.jsdelivr.net` 一起走代理；\n- 或者直接**用浏览器打开**发布页下载（浏览器里你的代理是生效的）：\n  `https://github.com/gua123/mediagate/releases`\n- 顺便说：**APK 本身仍然来自 GitHub Release**（67 MB，任何免费 CDN 都不接这么大的文件），\n  所以下载那一步还是需要能访问 GitHub；只有\"检查有没有新版本\"这一步现在可以不靠代理了。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.52/mediagate-0.1.52.apk`"
 }
