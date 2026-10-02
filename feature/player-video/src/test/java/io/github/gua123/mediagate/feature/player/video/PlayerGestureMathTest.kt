@@ -18,6 +18,31 @@ class PlayerGestureMathTest {
     }
 
     @Test
+    fun 全屏任何位置横向拖动都是调进度() {
+        // 2026-10-03 用户要求：「全屏幕部分都可以左右滑动调整进度而不是只有中间三分之一才可以」
+        for (startX in listOf(10f, 300f, 450f, 700f, 890f)) {
+            assertEquals(
+                "起点 x=" + startX + " 横滑应判为进度",
+                DragMode.SEEK,
+                PlayerGestureMath.dragModeOf(startX, 900, dx = 60f, dy = 5f, slop = 20f),
+            )
+        }
+    }
+
+    @Test
+    fun 竖滑才看左右分区_中间竖滑不做事() {
+        assertEquals(DragMode.BRIGHTNESS, PlayerGestureMath.dragModeOf(100f, 900, dx = 5f, dy = 80f, slop = 20f))
+        assertEquals(DragMode.VOLUME, PlayerGestureMath.dragModeOf(800f, 900, dx = 5f, dy = 80f, slop = 20f))
+        assertEquals("中间竖滑不抢事件", DragMode.NONE, PlayerGestureMath.dragModeOf(450f, 900, dx = 5f, dy = 80f, slop = 20f))
+    }
+
+    @Test
+    fun 没过触摸阈值前不判定方向() {
+        assertEquals(DragMode.NONE, PlayerGestureMath.dragModeOf(100f, 900, dx = 8f, dy = 6f, slop = 20f))
+        assertEquals(DragMode.SEEK, PlayerGestureMath.dragModeOf(100f, 900, dx = 21f, dy = 6f, slop = 20f))
+    }
+
+    @Test
     fun 宽度为零时不会崩_退化成进度区() {
         assertEquals(PlayerGestureZone.SEEK, PlayerGestureMath.zoneOf(10f, 0))
     }

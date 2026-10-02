@@ -95,7 +95,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -256,7 +259,6 @@ fun VideoPlayerScreen(
 
         // 2) 点按显隐控制层 + **横滑调进度**（2026-10-03 用户要求：「不弹出控制也能左右滑动调整进度条」）
         //    横滑走独立的手势检测，只更新画面中央的 HUD，不把控制层弹出来
-        val dragAccum = remember { FloatArray(1) }
         // **竖直手势**（2026-10-03 用户要求）：左 1/3 调亮度、右 1/3 调音量。
         // 三个区各挂各的手势检测，互不抢事件（中间仍是横滑调进度）。
         val zoneHeight = remember { FloatArray(1) }
@@ -292,58 +294,70 @@ fun VideoPlayerScreen(
                         interactionTick++
                     }
                 }
-                .pointerInput(state.durationMs) {
-                    detectHorizontalDragGestures(
-                        onDragStart = {
-                            dragAccum[0] = 0f
-                            viewModel.beginSeekGesture()
-                        },
-                        onHorizontalDrag = { change, dragAmount ->
-                            change.consume()
-                            dragAccum[0] += dragAmount
-                            viewModel.seekGestureBy(dragAccum[0] / size.width.coerceAtLeast(1))
-                        },
-                        onDragEnd = { viewModel.commitSeekGesture() },
-                        onDragCancel = { viewModel.cancelSeekGesture() },
-                    )
+                // **一个手势处理器搞定三件事**（2026-10-03 用户要求：「全屏幕部分都可以左右滑动
+                // 调整进度而不是只有中间三分之一才可以」）：先按主要方向判定——
+                // 横向占优＝调进度（全屏任意位置）；纵向占优才看起始位置：左＝亮度、右＝音量、中间不做事。
+                .pointerInput(state.durationMs, state.volume, state.brightness) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startX = down.position.x
+                        var mode: DragMode? = null
+                        var totalDx = 0f
+                        var totalDy = 0f
+                        val slop = viewConfiguration.touchSlop
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            val delta = change.positionChange()
+                            totalDx += delta.x
+                            totalDy += delta.y
+                            if (mode == null) {
+                                when (
+                                    PlayerGestureMath.dragModeOf(startX, size.width, totalDx, totalDy, slop)
+                                ) {
+                                    DragMode.SEEK -> {
+                                        mode = DragMode.SEEK
+                                        viewModel.beginSeekGesture()
+                                    }
+                                    DragMode.BRIGHTNESS -> {
+                                        mode = DragMode.BRIGHTNESS
+                                        onVerticalStart(PlayerGestureZone.BRIGHTNESS)
+                                    }
+                                    DragMode.VOLUME -> {
+                                        mode = DragMode.VOLUME
+                                        onVerticalStart(PlayerGestureZone.VOLUME)
+                                    }
+                                    DragMode.NONE -> Unit
+                                }
+                            }
+                            when (mode) {
+                                DragMode.SEEK -> {
+                                    change.consume()
+                                    interactionTick++
+                                    viewModel.seekGestureBy(totalDx / size.width.coerceAtLeast(1))
+                                }
+                                DragMode.BRIGHTNESS, DragMode.VOLUME -> {
+                                    change.consume()
+                                    interactionTick++
+                                    onVerticalDrag(
+                                        if (mode == DragMode.BRIGHTNESS) PlayerGestureZone.BRIGHTNESS
+                                        else PlayerGestureZone.VOLUME,
+                                        delta.y,
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        }
+                        when (mode) {
+                            DragMode.SEEK -> viewModel.commitSeekGesture()
+                            DragMode.BRIGHTNESS, DragMode.VOLUME -> viewModel.commitVerticalGesture()
+                            else -> Unit
+                        }
+                    }
                 },
         )
 
-        // 亮度区（左 1/3）与音量区（右 1/3）：竖直拖动，各自独立检测
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(1f / 3f)
-                .align(Alignment.CenterStart)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { onVerticalStart(PlayerGestureZone.BRIGHTNESS) },
-                        onVerticalDrag = { change, delta ->
-                            change.consume()
-                            onVerticalDrag(PlayerGestureZone.BRIGHTNESS, delta)
-                        },
-                        onDragEnd = { viewModel.commitVerticalGesture() },
-                        onDragCancel = { viewModel.commitVerticalGesture() },
-                    )
-                },
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth(1f / 3f)
-                .align(Alignment.CenterEnd)
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragStart = { onVerticalStart(PlayerGestureZone.VOLUME) },
-                        onVerticalDrag = { change, delta ->
-                            change.consume()
-                            onVerticalDrag(PlayerGestureZone.VOLUME, delta)
-                        },
-                        onDragEnd = { viewModel.commitVerticalGesture() },
-                        onDragCancel = { viewModel.commitVerticalGesture() },
-                    )
-                },
-        )
 
         // 竖直手势的 HUD：拖动时显示「亮度 40%」「音量 180%」
         state.verticalZone?.let { zone ->
