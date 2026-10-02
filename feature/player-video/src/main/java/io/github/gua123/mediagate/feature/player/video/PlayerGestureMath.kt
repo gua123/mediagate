@@ -21,7 +21,47 @@ enum class PlayerGestureZone {
     SEEK,
 }
 
+/** 一次拖动最终被判定成哪种手势。 */
+enum class DragMode {
+
+    /** 还没超过触摸阈值（或者方向不明确）。 */
+    NONE,
+
+    /** 横滑：调进度（**全屏任何位置都可以**，2026-10-03 用户要求）。 */
+    SEEK,
+
+    /** 竖滑且在左侧：调亮度。 */
+    BRIGHTNESS,
+
+    /** 竖滑且在右侧：调音量。 */
+    VOLUME,
+}
+
 object PlayerGestureMath {
+
+    /**
+     * **按主要方向判定手势**（2026-10-03 用户要求：「全屏幕部分都可以左右滑动调整进度
+     * 而不是只有中间三分之一才可以」）。
+     *
+     * 规则：累加位移超过 [slop] 之后，**横向占优就是调进度**（不受起始位置限制）；
+     * 纵向占优才看起始位置落在左/右哪一侧——左边调亮度、右边调音量，**中间竖滑不做任何事**
+     * （避免和横滑抢事件）。
+     *
+     * @param startX 按下点的横坐标（只有纵向手势才用得到）。
+     * @param dx 累计横向位移。
+     * @param dy 累计纵向位移。
+     * @param slop 触摸阈值（一般传 ViewConfiguration.touchSlop）。
+     */
+    fun dragModeOf(startX: Float, width: Int, dx: Float, dy: Float, slop: Float): DragMode {
+        if (dx.isNaN() || dy.isNaN()) return DragMode.NONE
+        if (kotlin.math.abs(dx) < slop && kotlin.math.abs(dy) < slop) return DragMode.NONE
+        if (kotlin.math.abs(dx) >= kotlin.math.abs(dy)) return DragMode.SEEK
+        return when (zoneOf(startX, width)) {
+            PlayerGestureZone.BRIGHTNESS -> DragMode.BRIGHTNESS
+            PlayerGestureZone.VOLUME -> DragMode.VOLUME
+            PlayerGestureZone.SEEK -> DragMode.NONE
+        }
+    }
 
     /**
      * 依据**按下点**的横坐标判定生效区。
