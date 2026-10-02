@@ -316,6 +316,8 @@ class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Cl
         is StorageException.AccessDenied -> 403
         is StorageException.NotSupported -> 501
         is StorageException.Network -> 502
+        // 超时按"源站不可达"处理（与网络失败同码；LibVLC 侧会重试或报错，不会挂住）
+        is StorageException.Timeout -> 504
         is StorageException.Auth -> 502
         is StorageException.Unknown -> 500
     }
