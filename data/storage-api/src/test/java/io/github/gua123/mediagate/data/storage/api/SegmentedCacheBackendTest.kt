@@ -205,6 +205,47 @@ class SegmentedCacheBackendTest {
     }
 
     @Test
+    fun `文件改过（大小相同但修改时间不同）会丢掉旧缓存`() = runTest {
+        // 2026-10-03 用户提问「你如何判断局域网和公网是同一个链接」之后加固：
+        // 只比大小会漏掉"同名同大小、内容不同"（重新压制/换音轨）的情况。
+        val fetches = mutableListOf<Pair<Long, Long>>()
+        val dir = tmp.newFolder()
+        fun cacheFor(mtime: Long) = SegmentedCacheBackend(
+            delegate = object : StorageBackend {
+                override val id: String = "fake-stamp:/root"
+                override val caps: Caps = Caps(randomAccess = false, maxParallelReads = 1)
+                override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+                override suspend fun stat(path: String): RemoteEntry =
+                    RemoteEntry(name = "movie.ts", path = path, size = payload.size.toLong(), mtime = mtime)
+                override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+                    fetches += offset to length
+                    return FakeSequentialBackend(payload, mutableListOf()).openRead(path, offset, length)
+                }
+                override suspend fun write(path: String, data: InputStream) = Unit
+                override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+                override fun close() = Unit
+            },
+            rootDir = dir,
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.Unconfined,
+            namespace = "conn:1",
+        )
+        val first = cacheFor(mtime = 1_000L)
+        val s1 = first.openRead("/movie.ts", offset = 0L, length = 16L)
+        s1.read(ByteArray(16), 0, 16)
+        s1.close()
+        assertEquals("第一次要下", 1, fetches.size)
+
+        // 同一个文件名、同样大小，但修改时间变了 ⇒ 应当丢弃旧段重下
+        val second = cacheFor(mtime = 9_999L)
+        val s2 = second.openRead("/movie.ts", offset = 0L, length = 16L)
+        s2.read(ByteArray(16), 0, 16)
+        s2.close()
+        assertEquals("文件变了要重下", 2, fetches.size)
+    }
+
+    @Test
     fun `清空缓存会把段全删掉`() = runTest {
         val cache = backend()
         val stream = cache.openRead("/movie.ts", offset = 0L, length = 16L)
