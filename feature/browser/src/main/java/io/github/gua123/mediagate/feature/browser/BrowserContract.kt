@@ -69,6 +69,14 @@ interface BrowserEnvironment {
      */
     val sort: StateFlow<EntrySort>
 
+    /**
+     * **最后一次播放的文件路径**（2026-10-03 用户要求：「最后一次播放的视频和文件夹变一个颜色，
+     * 并且这个变色需要向上贯穿到连接的根目录」）。
+     *
+     * null / 空串 ＝没有记录（此时列表里谁都不变色）；默认 null，单测与预览不必提供。
+     */
+    val lastPlayedPath: String? get() = null
+
     /** 改排序并落盘。 */
     suspend fun setSort(sort: EntrySort)
 }

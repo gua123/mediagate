@@ -54,6 +54,22 @@ class RootSettings(private val context: Context) {
      */
     val vlcProbeVerdict: Flow<String?> = context.rootDataStore.data.map { it[KEY_VLC_VERDICT] }
 
+    /**
+     * **最后一次播放的文件路径**（2026-10-03 用户要求：「在重新打开软件时，如果网络通畅，
+     * 自动打开到最后一次播放的文件夹」+「最后一次播放的视频和文件夹变一个颜色」）。
+     *
+     * 两个用途共用一条记录：① 启动时取它的父目录当浏览页初始目录；② 浏览页高亮"上次播放"的路径链。
+     */
+    val lastPlayedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_PLAYED] }
+
+    /** 记下最后一次播放的文件（空串 = 清掉）。 */
+    suspend fun setLastPlayedPath(path: String?) {
+        context.rootDataStore.edit { preferences ->
+            if (path.isNullOrBlank()) preferences.remove(KEY_LAST_PLAYED)
+            else preferences[KEY_LAST_PLAYED] = path
+        }
+    }
+
     /** 记下探针结论（null = 清掉，视为未知）。 */
     suspend fun setVlcProbeVerdict(verdict: String?) {
         context.rootDataStore.edit { preferences ->
@@ -114,6 +130,9 @@ class RootSettings(private val context: Context) {
 
         /** LibVLC 启动探针的结论（2026-10-03）。 */
         val KEY_VLC_VERDICT = stringPreferencesKey("vlc_probe_verdict")
+
+        /** 最后一次播放的文件路径（2026-10-03）：启动恢复目录 + 浏览页高亮共用。 */
+        val KEY_LAST_PLAYED = stringPreferencesKey("last_played_path")
 
         /** 列表排序（2026-10-03）：方式 + 升降序。 */
         val KEY_SORT_MODE = stringPreferencesKey("list_sort_mode")

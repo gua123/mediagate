@@ -63,6 +63,16 @@ interface VideoPlayerPreferences {
     /** 记住亮度（同样是拖动结束才写）。 */
     suspend fun setScreenBrightness(brightness: Float) = Unit
 
+    /**
+     * 循环方式（**2026-10-03 用户要求**：「没有此文件夹循环、单曲循环、随机播放」）。
+     *
+     * 默认 [VideoLoopMode.OFF]（播完就停，与旧版行为一致）；实现方负责持久化。
+     */
+    val loopMode: VideoLoopMode get() = VideoLoopMode.OFF
+
+    /** 记住循环方式。 */
+    suspend fun setLoopMode(mode: VideoLoopMode) = Unit
+
     /** 字幕总开关（R14）；默认关。 */
     val subtitleEnabled: StateFlow<Boolean>
 

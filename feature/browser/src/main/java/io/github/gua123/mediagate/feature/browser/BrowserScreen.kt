@@ -67,6 +67,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -313,6 +315,12 @@ private fun EntryListPanel(
                         backend = backend,
                         imageLoader = imageLoader,
                         onClick = { onEntryClick(entry) },
+                        // 「上次播放」高亮：文件本身 + 通往它的每一级目录（2026-10-03 用户要求）
+                        highlight = PlaybackHighlight.kindOf(
+                            entryPath = entry.path,
+                            isDirectory = entry.isDirectory,
+                            lastPlayedPath = state.lastPlayedPath,
+                        ),
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -330,11 +338,24 @@ private fun EntryRow(
     backend: StorageBackend,
     imageLoader: ImageLoader,
     onClick: () -> Unit,
+    highlight: HighlightKind = HighlightKind.NONE,
 ) {
     val kind = remember(entry.name) { MediaKindGuesser.guess(entry.name) }
+    // 高亮色：视频本身用主色；**祖先目录用同色但淡一点**（从根一路贯穿到那个文件夹）
+    val highlightColor = when (highlight) {
+        HighlightKind.LAST_PLAYED -> MaterialTheme.colorScheme.primary
+        HighlightKind.ON_PATH -> MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+        HighlightKind.NONE -> Color.Unspecified
+    }
+    val background = when (highlight) {
+        HighlightKind.LAST_PLAYED -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+        HighlightKind.ON_PATH -> MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
+        HighlightKind.NONE -> Color.Transparent
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(background)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -345,9 +366,17 @@ private fun EntryRow(
             Text(
                 text = entry.name,
                 style = MaterialTheme.typography.bodyLarge,
+                color = highlightColor,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (highlight == HighlightKind.LAST_PLAYED) {
+                Text(
+                    text = "上次播放到这里",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = entryMeta(entry),

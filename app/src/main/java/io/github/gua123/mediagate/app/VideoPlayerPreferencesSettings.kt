@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import io.github.gua123.mediagate.feature.player.video.VideoLoopMode
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
@@ -95,6 +96,20 @@ class VideoPlayerPreferencesSettings(
 
     override val screenBrightness: Float get() = brightnessFlow.value
 
+    /** 循环方式（2026-10-03 用户要求）；没有记录时为不循环（与旧版行为一致）。 */
+    private val loopModeFlow: StateFlow<VideoLoopMode> = context.videoPlayerDataStore.data
+        .map { preferences ->
+            val raw = preferences[KEY_LOOP_MODE]
+            VideoLoopMode.entries.firstOrNull { it.name == raw } ?: VideoLoopMode.OFF
+        }
+        .stateIn(scope, SharingStarted.Eagerly, VideoLoopMode.OFF)
+
+    override val loopMode: VideoLoopMode get() = loopModeFlow.value
+
+    override suspend fun setLoopMode(mode: VideoLoopMode) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_LOOP_MODE] = mode.name }
+    }
+
     override suspend fun setScreenBrightness(brightness: Float) {
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SCREEN_BRIGHTNESS] = brightness }
     }
@@ -159,6 +174,9 @@ class VideoPlayerPreferencesSettings(
 
         /** 屏幕亮度（2026-10-03）：0..1；-1 = 跟随系统。 */
         val KEY_SCREEN_BRIGHTNESS = floatPreferencesKey("screen_brightness")
+
+        /** 循环方式（2026-10-03）：存枚举名，认不出来就当不循环。 */
+        val KEY_LOOP_MODE = stringPreferencesKey("video_loop_mode")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")

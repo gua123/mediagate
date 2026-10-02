@@ -66,6 +66,9 @@ data class BrowserUiState(
     val visibleEntries: List<RemoteEntry> = emptyList(),
     /** 列表排序（用户可选，持久化在 :app）。 */
     val sort: EntrySort = EntrySort(),
+
+    /** 最后一次播放的文件路径（高亮"上次播放"的路径链用）；null = 没有记录。 */
+    val lastPlayedPath: String? = null,
     /** 失败分类；非 [BrowserStatus.ERROR] 时为 null。 */
     val errorKind: BrowserErrorKind? = null,
     /** 后端给的具体错误信息（诊断用，可为 null）。 */

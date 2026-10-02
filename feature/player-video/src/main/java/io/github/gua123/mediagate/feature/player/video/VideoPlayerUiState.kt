@@ -163,6 +163,9 @@ data class VideoPlayerUiState(
 
     /** 竖直拖动的实时值（音量倍率或亮度，看 [verticalZone]）。 */
     val verticalValue: Float = 0f,
+
+    /** 循环方式（2026-10-03 用户要求：文件夹循环 / 单曲循环 / 随机播放）。 */
+    val loopMode: VideoLoopMode = VideoLoopMode.OFF,
     /** 预览帧（图片字节）；抽不到就是 null，HUD 退化成只显示时间。 */
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,
