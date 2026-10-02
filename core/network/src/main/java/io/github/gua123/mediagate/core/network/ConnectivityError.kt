@@ -77,6 +77,15 @@ enum class ConnectivityError(
     /** 请求被服务端拒绝（HTTP 400 / 429 等）。 */
     REQUEST_REJECTED("REQUEST_REJECTED", "请求被服务端拒绝", "换根路径或换个地址试试（也可能被限流）"),
 
+    /**
+     * 网络中途被掐断（`unexpected end of stream` / `connection reset` / `broken pipe`）。
+     *
+     * **2026-10-03**：这类失败在探针里会走 `ErrorText` 兜底成「网络请求失败」，
+     * 而旧的关键词表里没有它 ⇒ 落到 UNKNOWN「未知错误」，用户完全不知道该干什么。
+     * 移动网络 / VPN 下这非常常见，值得单独一类并直接建议重试。
+     */
+    NETWORK_IO("NETWORK_IO", "网络中途断开", "连接被掐断了（移动网络/VPN 常见）：重试一次多半就好"),
+
     /** 其他未分类错误（详情看 message）。 */
     UNKNOWN("UNKNOWN", "未知错误", "看后面括号里的原始原因"),
     ;
@@ -159,6 +168,10 @@ enum class ConnectivityError(
                 text.contains("不存在") || text.contains("404") -> PATH_NOT_FOUND
                 text.contains("证书") || text.contains("TLS") -> TLS_FAILED
                 text.contains("跳转") || text.contains("redirect", true) -> REDIRECT
+                // 网络中途断开（含 ErrorText 兜底出来的「网络请求失败」「请求失败」）
+                text.contains("网络请求失败") || text.contains("请求失败") -> NETWORK_IO
+                text.contains("end of stream", true) || text.contains("connection reset", true) ||
+                    text.contains("broken pipe", true) || text.contains("连接中断") -> NETWORK_IO
                 text.contains("服务器错误") || text.contains("502") || text.contains("503") -> SERVER_ERROR
                 else -> UNKNOWN
             }
