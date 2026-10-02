@@ -14,7 +14,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayOutputStream
 import java.io.RandomAccessFile
 import kotlinx.coroutines.sync.Mutex
@@ -63,6 +62,20 @@ class SegmentedCacheBackend(
     private val readAheadSegments: Int = DEFAULT_READ_AHEAD_SEGMENTS,
     /** 预读用的作用域；为 null 时不做预读（单测与其它调用方不受影响）。 */
     private val readAheadScope: CoroutineScope? = null,
+    /**
+     * **实时参数**（2026-10-03 用户要求把并发数开放到设置里）：每次取块/预读现读一次。
+     *
+     * 为什么不直接用构造参数：用户改设置后不该等到"重新连接"才生效——块大小、并发块数、
+     * 预读段数都能中途改（段大小不行，它决定磁盘上段文件的切分方式，见 [CacheTuning] 的说明）。
+     */
+    private val liveTuning: () -> CacheTuning = {
+        CacheTuning(
+            segmentBytes = segmentBytes,
+            chunkBytes = chunkBytes,
+            parallelChunks = parallelChunks,
+            readAheadSegments = readAheadSegments,
+        ).normalized()
+    },
 ) : StorageBackend {
 
     init {
@@ -72,8 +85,13 @@ class SegmentedCacheBackend(
         require(parallelChunks >= 1) { "parallelChunks 至少为 1：$parallelChunks" }
     }
 
-    /** 同一段的并发块数（跨段也共用它，避免手机上一口气开太多连接）。 */
-    private val chunkPermits = Semaphore(parallelChunks)
+    /**
+     * 并发许可池：**容量固定为上限**，每次取块按当前设置请求若干许可。
+     *
+     * 这样"把并发数调小"能立刻生效（下次取块就少要几个许可），调大也不用重建对象；
+     * 跨段共用同一个池，避免手机上一口气开太多连接。
+     */
+    private val chunkPermits = Semaphore(CacheTuning.MAX_PARALLEL_CHUNKS)
 
     /** 正在下载的段（单飞：同一段不会被下两次，不同段可以同时下——预读才有意义）。 */
     private val inFlight = mutableMapOf<String, Deferred<File>>()
@@ -206,6 +224,38 @@ class SegmentedCacheBackend(
         }
     }
 
+    /** 正在下载的块数（用于执行"当前并发数"这个用户可调的限制）。 */
+    private val inFlightChunks = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * 按"当前并发数"取块：[limit] 由用户随时可改，所以不能用固定容量的信号量直接表达。
+     *
+     * 做法：**每块占 1 个硬许可**（[chunkPermits] 容量 = 上限，兜住"别开太多连接"），
+     * 再用在飞计数 + 短轮询执行"当前并发数"这个软限制。
+     *
+     * 为什么可以轮询：块下载本身是**秒级**的网络传输，10 ms 的检查间隔开销可以忽略；
+     * 反过来（用固定容量信号量直接当限制用）会导致"一个块抢走全部许可、其余块排队"，
+     * 也就是并发退化成串行——那是错的（已在单测里暴露过）。
+     */
+    private suspend fun <T> withChunkLimit(limit: Int, block: suspend () -> T): T {
+        val soft = limit.coerceIn(1, CacheTuning.MAX_PARALLEL_CHUNKS)
+        chunkPermits.acquire()
+        try {
+            while (true) {
+                val current = inFlightChunks.get()
+                if (current < soft && inFlightChunks.compareAndSet(current, current + 1)) break
+                kotlinx.coroutines.delay(CHUNK_SLOT_POLL_MS)
+            }
+            return try {
+                block()
+            } finally {
+                inFlightChunks.decrementAndGet()
+            }
+        } finally {
+            chunkPermits.release()
+        }
+    }
+
     /** 下载一个段：**拆块并发取**，各自写到临时文件的对应偏移，最后改名。 */
     private suspend fun downloadSegment(path: String, index: Long, file: File): File =
         segmentLock.withLock {
@@ -218,13 +268,14 @@ class SegmentedCacheBackend(
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, file.name + TMP_SUFFIX)
             try {
-                val chunks = chunkRanges(start, length, chunkBytes)
+                val tuning = liveTuning()
+                val chunks = chunkRanges(start, length, tuning.chunkBytes)
                 val written = withContext(io) {
                     RandomAccessFile(temporary, "rw").use { raf ->
                         coroutineScope {
                             val jobs = chunks.mapIndexed { i, chunk ->
                                 async {
-                                    chunkPermits.withPermit {
+                                    withChunkLimit(tuning.parallelChunks) {
                                         delegate.openRead(path, chunk.offset, chunk.length).use { stream ->
                                             val buffer = ByteArray(COPY_BUFFER_BYTES)
                                             val bytes = ByteArrayOutputStream(chunk.length.toInt())
@@ -270,8 +321,9 @@ class SegmentedCacheBackend(
     /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
     private fun scheduleReadAhead(path: String, index: Long) {
         val scope = readAheadScope ?: return
-        if (readAheadSegments <= 0) return
-        for (step in 1..readAheadSegments) {
+        val ahead = liveTuning().readAheadSegments
+        if (ahead <= 0) return
+        for (step in 1..ahead) {
             val target = index + step
             val file = segmentFile(path, target)
             if (file.isFile && file.length() > 0L) continue
@@ -382,5 +434,8 @@ class SegmentedCacheBackend(
         const val TMP_SUFFIX = ".tmp"
 
         private const val COPY_BUFFER_BYTES = 64 * 1024
+
+        /** 等待"并发槽位"的轮询间隔（毫秒）；块下载是秒级，这点开销可忽略。 */
+        private const val CHUNK_SLOT_POLL_MS = 10L
     }
 }

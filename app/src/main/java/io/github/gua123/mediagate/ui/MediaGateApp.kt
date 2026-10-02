@@ -81,6 +81,7 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
 import io.github.gua123.mediagate.app.ui.DiagnosticsSection
+import io.github.gua123.mediagate.app.ui.NetworkTuningSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
@@ -510,6 +511,10 @@ private fun SettingsRoute(
     }
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
 
+    // 网络与缓冲参数（2026-10-03）：设置页里能改，改完即时生效（段大小下次连接生效）
+    val networkTuning by container.networkTuning.tuning.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+
     // 已信任的 SFTP 主机指纹（R2）：TOFU 落库后要能看到、能忘掉
     val trustedHostKeys by container.trustedHostKeys.collectAsStateWithLifecycle()
 
@@ -560,6 +565,17 @@ private fun SettingsRoute(
             container.keepAlive.setConfirmed(kind, confirmed)
         },
         extraSections = {
+            // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
+            NetworkTuningSection(
+                tuning = networkTuning,
+                onParallelChunks = { value -> scope.launch { container.networkTuning.setParallelChunks(value) } },
+                onChunkBytes = { value -> scope.launch { container.networkTuning.setChunkKb((value / 1024).toInt()) } },
+                onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
+                onSegmentBytes = { value ->
+                    scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
+                },
+                onReset = { scope.launch { container.networkTuning.reset() } },
+            )
             // 诊断（2026-10-03）：崩溃报告看得到、复制得走——真机闪退唯一的定位手段
             DiagnosticsSection(
                 crashReport = crashReport,
