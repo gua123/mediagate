@@ -39,6 +39,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -103,6 +104,21 @@ import kotlinx.coroutines.launch
  * 两者分开是因为浏览页带查询参数（`browser?path={path}&kind={kind}`），
  * 而点击时必须跳到不带参数的形式 `browser`。
  */
+/**
+ * 从播放/看图页"返回"到浏览页（**2026-10-03 用户要求**）。
+ *
+ * 两种来路：
+ * - 从浏览页点进来的：回退栈里就有浏览页 ⇒ 直接 pop（它会保留自己所在的目录）；
+ * - 从首页"最近播放/继续播放"点进来的：栈里没有浏览页 ⇒ **打开上次浏览的目录**，
+ *   而不是回首页（用户原话：「返回下方菜单栏中的首页，这样我还要重新选择文件夹」）。
+ */
+private fun NavHostController.backToBrowser(lastPath: String?) {
+    if (popBackStack(BrowserRoutes.ROUTE, inclusive = false)) return
+    navigate(BrowserRoutes.route(path = lastPath?.takeIf { it.isNotEmpty() })) {
+        launchSingleTop = true
+    }
+}
+
 private enum class TopLevelDestination(
     val navRoute: String,
     val matchRoute: String,
@@ -144,6 +160,11 @@ private enum class TopLevelDestination(
 @Composable
 fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
     val navController = rememberNavController()
+
+    // **2026-10-03 用户要求**：「退出视频播放…而不是返回下方菜单栏中的首页，这样我还要重新选择文件夹」
+    // ⇒ 记住浏览页当前所在目录；播放/看图退出时回到这个文件夹（而不是首页）。
+    // 放在外壳层（不在浏览页的 ViewModel 里），所以浏览页被销毁也能记住。
+    var lastBrowsedPath by rememberSaveable { mutableStateOf("") }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
 
@@ -307,6 +328,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                             }
                         },
                         onRequestRootAccess = { safPicker.launch(null) },
+                        onPathChanged = { lastBrowsedPath = it },
                     )
                 }
 
@@ -316,7 +338,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     ImmersiveWhilePlaying()
                     ImageViewerScreen(
                         path = ViewerRoutes.pathOf(entry.arguments?.getString(ViewerRoutes.ARG_PATH)),
-                        onBack = { navController.popBackStack() },
+                        onBack = { navController.backToBrowser(lastBrowsedPath) },
                     )
                 }
 
@@ -325,7 +347,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(route = AudioPlayerRoutes.ROUTE, arguments = AudioPlayerRoutes.arguments) { entry ->
                     AudioPlayerScreen(
                         path = AudioPlayerRoutes.pathOf(entry.arguments?.getString(AudioPlayerRoutes.ARG_PATH)),
-                        onBack = { navController.popBackStack() },
+                        onBack = { navController.backToBrowser(lastBrowsedPath) },
                     )
                 }
 
@@ -336,7 +358,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     ImmersiveWhilePlaying()
                     VideoPlayerScreen(
                         path = VideoPlayerRoutes.pathOf(entry.arguments?.getString(VideoPlayerRoutes.ARG_PATH)),
-                        onBack = { navController.popBackStack() },
+                        onBack = { navController.backToBrowser(lastBrowsedPath) },
                     )
                 }
 

@@ -58,7 +58,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,6 +108,8 @@ fun BrowserScreen(
     initialKind: MediaKind? = null,
     onOpenEntry: ((RemoteEntry) -> Unit)? = null,
     onRequestRootAccess: () -> Unit = {},
+    /** **2026-10-03 用户要求**：当前目录变化时回调（:app 记下来，退出播放时好回到这个文件夹）。 */
+    onPathChanged: (String) -> Unit = {},
 ) {
     val environment = LocalBrowserEnvironment.current
     val viewModel: BrowserViewModel = viewModel {
@@ -116,6 +120,13 @@ fun BrowserScreen(
     val imageLoader = rememberThumbnailImageLoader(environment.thumbnails)
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // **2026-10-03 用户要求**：「系统手势返回修改为返回上级目录」——
+    // 不在根目录时，返回手势 = 回到上一级；已在根目录就不拦截，交回系统（退出/回首页）。
+    BackHandler(enabled = state.canGoUp) { viewModel.up() }
+
+    // 把当前目录报给 :app（退出播放页时回到这里，而不是回首页重新找文件夹）
+    LaunchedEffect(state.path) { onPathChanged(state.path) }
 
     val placeholders = OpenPlaceholders(
         image = stringResource(R.string.browser_open_todo_image),
