@@ -129,7 +129,11 @@ class TasksViewModel(
         viewModelScope.launch {
             dispatch(TasksEvent.Loading)
             val resolved = withContext(io) { resolveSelection(current) }
-            val planned = TasksPlan.plan(resolved, current.skipExisting)
+            // 去重：已经在队列里没结束的文件不再重复入队（2026-10-03 真机截图：同一文件排了三遍）
+            val queued = current.queue.items
+                .filterNot { it.state.isTerminal }
+                .mapTo(HashSet()) { it.path }
+            val planned = TasksPlan.plan(resolved, current.skipExisting, alreadyQueued = queued)
             if (planned.accepted.isEmpty()) {
                 dispatch(TasksEvent.Notice("没有需要生成字幕的视频（已自动过滤非视频与已有字幕的文件）"))
                 dispatch(TasksEvent.Loaded(current.currentDir, current.dirLabel, current.entries))
@@ -246,6 +250,7 @@ class TasksViewModel(
         append("已入队 ").append(planned.accepted.size).append(" 项")
         if (planned.skipped.isNotEmpty()) append("，跳过已有字幕 ").append(planned.skipped.size).append(" 项")
         if (planned.filteredOut > 0) append("，过滤非视频 ").append(planned.filteredOut).append(" 项")
+        if (planned.duplicate.isNotEmpty()) append("，跳过重复 ").append(planned.duplicate.size).append(" 项")
     }
 
     private fun friendlyMessage(error: Throwable): String = when (error) {

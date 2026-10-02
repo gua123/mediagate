@@ -292,7 +292,12 @@ object AsrQueue {
     /** 入队（追加到队尾，保持既有任务的位置）。 */
     fun enqueue(queue: AsrQueueSnapshot, items: List<AsrItem>): AsrQueueSnapshot {
         if (items.isEmpty()) return queue
-        val merged = queue.items + items.map { it.copy(state = AsrItemState.QUEUED) }
+        // 去重（2026-10-03 真机截图：同一个文件被重复入队三次，白占队列）：
+        // 只跟"未结束"的任务比——已成功/已取消/已失败的不拦，那种情况用户是故意重跑。
+        val active = queue.items.filterNot { it.state.isTerminal }.mapTo(HashSet()) { it.path }
+        val fresh = items.filter { active.add(it.path) }
+        if (fresh.isEmpty()) return queue
+        val merged = queue.items + fresh.map { it.copy(state = AsrItemState.QUEUED) }
         return queue.copy(items = merged, state = if (queue.state == AsrQueueState.STOPPED) AsrQueueState.IDLE else queue.state)
     }
 

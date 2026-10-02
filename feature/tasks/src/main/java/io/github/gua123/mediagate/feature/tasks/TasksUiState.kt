@@ -284,9 +284,12 @@ object TasksPlan {
         .filter { !it.isDirectory }
         .map { AsrCandidate(path = it.path, name = it.name, size = it.size, hasSubtitle = it.hasSubtitle) }
 
-    /** 勾选 + 展开后的候选 → 入队/跳过结果。 */
-    fun plan(resolved: List<AsrCandidate>, skipExisting: Boolean): AsrSelectionResult =
-        AsrSelection.plan(resolved, skipExisting)
+    /** 勾选 + 展开后的候选 → 入队/跳过结果（[alreadyQueued] = 队列里未结束的路径，用于去重）。 */
+    fun plan(
+        resolved: List<AsrCandidate>,
+        skipExisting: Boolean,
+        alreadyQueued: Set<String> = emptySet(),
+    ): AsrSelectionResult = AsrSelection.plan(resolved, skipExisting, alreadyQueued)
 
     /** 一行是不是视频（目录不算；界面用它决定要不要显示「视频」徽标）。 */
     fun isVideo(name: String, size: Long = -1L): Boolean = AsrSelection.isVideoEntry(name, false, size)

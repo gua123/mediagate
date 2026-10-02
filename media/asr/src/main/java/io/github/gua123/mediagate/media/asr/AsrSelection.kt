@@ -33,9 +33,13 @@ data class AsrSelectionResult(
     val accepted: List<AsrCandidate>,
     val skipped: List<AsrCandidate>,
     val filteredOut: Int,
+    /**
+     * 已经在队列里（未结束）而被跳过的候选（**2026-10-03 真机截图**：同一个文件被重复入队三次）。
+     */
+    val duplicate: List<AsrCandidate> = emptyList(),
 ) {
     /** 一共看了多少条。 */
-    val examined: Int get() = accepted.size + skipped.size + filteredOut
+    val examined: Int get() = accepted.size + skipped.size + filteredOut + duplicate.size
 }
 
 /**
@@ -118,13 +122,28 @@ object AsrSelection {
      *
      * @param skipExisting true = 已经有字幕的文件进 [AsrSelectionResult.skipped] 而不是入队。
      */
-    fun plan(candidates: List<AsrCandidate>, skipExisting: Boolean): AsrSelectionResult {
+    fun plan(
+        candidates: List<AsrCandidate>,
+        skipExisting: Boolean,
+        /**
+         * 队列里已有的、**还没结束**的任务路径（去重用；2026-10-03 真机截图：同一文件被重复入队三次）。
+         *
+         * 同一批里出现两次也会被去重（第一次受理、第二次算重复）。
+         */
+        alreadyQueued: Set<String> = emptySet(),
+    ): AsrSelectionResult {
         val accepted = ArrayList<AsrCandidate>()
         val skipped = ArrayList<AsrCandidate>()
+        val duplicate = ArrayList<AsrCandidate>()
         var filtered = 0
+        val seen = HashSet<String>(alreadyQueued)
         for (candidate in candidates) {
             if (!isVideoEntry(candidate.name, isDirectory = false, size = candidate.size)) {
                 filtered++
+                continue
+            }
+            if (!seen.add(candidate.path)) {
+                duplicate += candidate
                 continue
             }
             if (skipExisting && candidate.hasSubtitle) {
@@ -133,7 +152,7 @@ object AsrSelection {
                 accepted += candidate
             }
         }
-        return AsrSelectionResult(accepted, skipped, filtered)
+        return AsrSelectionResult(accepted, skipped, filtered, duplicate)
     }
 
     /** 一条候选的跳过原因（中文，界面展示）。 */
