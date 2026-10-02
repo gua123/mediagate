@@ -214,7 +214,21 @@
   ③ **只给主进程建容器**（`Application.getProcessName() != packageName` 直接返回——`:vlcprobe` 副进程不该建 Room/DataStore/服务）；
   ④ 源码级回归护栏 `:app` 的 `AppStartupOrderTest`（扫 `onCreate` 里 `container.` 是否出现在赋值之前；已实证旧源码报违规、修复后通过）；
   ⑤ 极简模式开关从主线程 `runBlocking` 读盘改 StateFlow。**交付方式特殊**：App 打不开 ⇒ 只能直接下载 APK 安装（应用内更新用不了）。
-  当前版本 **0.1.26 / versionCode 27**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.21，或直接覆盖坏版本安装）。
+  当前版本 **0.1.26 / versionCode 27**（☠️ 仍打不开，见 M35），包名 `io.github.gua123.mediagate`。
+- **M34 让 App 自己说原因（2026-10-03，0.1.27）**：0.1.26 仍打不开、又没有 adb ⇒ 换打法：① **LibVLC 探针移出启动路径**
+  （改按需触发，`AppContainer` 的 init 不再调它——"启动瞬间拉一个会原生崩溃的独立进程"本身就是打不开的一大嫌疑）；
+  ② 新增**独立进程的崩溃/启动失败错误页 `CrashActivity`**（清单 `android:process=":crash"`）：未捕获异常与 `Application.onCreate`
+  里的失败都把"版本 + 设备 + 异常 + 堆栈 + 面包屑 + 日志"摆到屏幕上，带「复制全部 / 分享」，主进程死掉也不影响显示；
+  ③ `CrashReporter` 新增 `showStartupFailure` / `renderStartupFailure` / `renderCrash` / `versionNameOf`；④ `Application.onCreate` 的容器构造加 try/catch。
+- **M35 P0 真凶：容器构造期读到未初始化的 StateFlow（2026-10-03，0.1.28）**：用户发来 0.1.27 错误页的文本——
+  `阶段：容器构造 / NullPointerException / Attempt to read from field 'a84 ei3.b' on a null object reference in method 'void ph.<init>(…)'`；
+  用发版时生成的 **R8 映射表** `app/build/outputs/mapping/release/mapping.txt` 反查：`ph`=AppContainer、`ei3`=ReadonlyStateFlow、
+  `a84`=StateFlowImpl ⇒ **容器构造期读了未初始化 StateFlow 的 `.value`** ⇒ 精确定位到 `VideoPlayerHost` 里
+  `override val vlcUsable: Boolean? = vlcUsableState.value`（而 `vlcUsableState` 声明在容器第 1018 行、宿主较早构造）
+  ⇒ **这就是 0.1.22–0.1.27"打不开"的真因**（0.1.26/0.1.27 两次修补都是必要但不充分）。修：① 改成 getter；
+  ② 新增源码级护栏 `StartupPropertyOrderTest`（禁「带类型标注的属性初始化器里读 `.value`」；已实证旧源码报 `AppContainer.kt:662`、修复后通过）。
+  **用户真机确认："打开了"**（交付包已用 aapt2 核对 versionCode 29 / 0.1.28 与新文案）。
+  当前版本 **0.1.28 / versionCode 29**，包名 `io.github.gua123.mediagate`（0.1.22–0.1.27 为坏版本，可被直接覆盖安装）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
