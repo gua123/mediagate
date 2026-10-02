@@ -1,8 +1,8 @@
 {
-  "versionCode": 53,
-  "versionName": "0.1.52",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.52/mediagate-0.1.52.apk",
-  "sizeBytes": 70415361,
-  "sha256": "8a534bab0ee3a85fc2d04f097da1762e4506fd27086281ee9fdd4c1d7e0e73cf",
-  "notes": "## mediagate 0.1.52 —— 「检查更新连不上 GitHub」的修法与自查\n\n### 你说的现象我信：网络正常，但 App 里连不上 GitHub\n\n原因很具体：**清单走的是 raw.githubusercontent.com**，而它在国内经常不可达，而且——\n**你为 GitHub 配的代理/VPN 未必覆盖这个域名**（很多人只代理了 github.com）。\n\n### 这一版做了两件事\n\n**① 清单多了一个国内可达的镜像源（jsDelivr）**\n\n现在会依次尝试三个地址，取 versionCode 最高的那份：\n\n| 顺序 | 地址 | 说明 |\n| --- | --- | --- |\n| 1 | `raw.githubusercontent.com/…/main/update.json` | 主源，最新（有 CDN 缓存最多 5 分钟） |\n| 2 | `raw.githubusercontent.com/…/refs/heads/main/update.json` | 同一份文件的另一条缓存键 |\n| 3 | **`cdn.jsdelivr.net/gh/gua123/mediagate@main/update.json`** | **国内通常不需要代理就能读**（刚实测：直连 200、内容就是最新版） |\n\n只要有**任何一个**能读到，检查更新就能正常工作。\n\n**② 失败时把\"每个地址的结果\"写出来**\n\n以前只说一句「连不上 GitHub」，现在会跟着一串证据，例如：\n\n```\n连不上 GitHub：检查更新需要能访问 GitHub（可能需要代理）\n（✗ raw.githubusercontent.com/update.json → 连不上 GitHub；\n  ✗ raw.githubusercontent.com/refs → 连不上 GitHub；\n  ✗ cdn.jsdelivr.net/update.json → 连不上 GitHub）\n```\n\n一看就知道是\"全都不通\"还是\"只有 raw 不通\"——不用再猜。\n\n### 如果三个都不通（那说明当前网络确实出不去）\n\n- 把代理**改成按域名分流**：`github.com`、`raw.githubusercontent.com`、`objects.githubusercontent.com`、`cdn.jsdelivr.net` 一起走代理；\n- 或者直接**用浏览器打开**发布页下载（浏览器里你的代理是生效的）：\n  `https://github.com/gua123/mediagate/releases`\n- 顺便说：**APK 本身仍然来自 GitHub Release**（67 MB，任何免费 CDN 都不接这么大的文件），\n  所以下载那一步还是需要能访问 GitHub；只有\"检查有没有新版本\"这一步现在可以不靠代理了。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.52/mediagate-0.1.52.apk`"
+  "versionCode": 54,
+  "versionName": "0.1.53",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.53/mediagate-0.1.53.apk",
+  "sizeBytes": 70431742,
+  "sha256": "554d0f4ae0d8cdf8120ccdafeded14f58967086bc8227707ca729b6d1aa7cff2",
+  "notes": "## mediagate 0.1.53 —— 三条新需求：亮度手势 / 音量手势（上限 200%）/ 首次打开更快\n\n### ① 播放时左侧上下滑动 = 调亮度\n\n- 屏幕**左 1/3** 区域上下滑动：向上变亮、向下变暗，中央显示「亮度 40%」；\n- **不播放时自动恢复**：退出播放页立刻交还系统亮度（不会改掉整个手机的亮度）；\n- **下次播放记住**：调完的值存下来，下次进播放页直接用这个亮度。\n\n### ② 播放时右侧上下滑动 = 调音量，上限 200%\n\n- 屏幕**右 1/3** 区域上下滑动，中央显示「音量 120%」；\n- **上限 200%**：0–100% 走播放器自身音量，**100%–200% 用系统增益补**（Media3 内核用 LoudnessEnhancer，200% ≈ +6 dB；LibVLC 内核本来就支持到 200）。个别机型/音轨不支持音效链时会**如实退回 100%**，不影响播放；\n- 音量同样**记住**：换内核、退出重进都不会掉回 100%。\n\n### ③ 新视频\"第一次打开要等很久\"\n\n这次做了**打开即预取**：以前是\"起播时才开始拉第一段\"，现在是**一确定要播这个文件，就在后台先把开头两段（约 8 MB）拉进缓存**，Media3 要数据时往往已经在本地了；段级\"单飞\"保证预取与起播不会重复拉同一段。\n\n> 想更激进可以自己在 **设置 → 网络与缓冲** 里调：内网把**段大小**调到 **8 MB**、**预读段数**调到 **3–4**；公网建议保持默认（段太大反而等得久）。\n\n### 手势分布（互不打架）\n\n| 区域 | 手势 |\n| --- | --- |\n| 左 1/3 | 竖直：亮度 |\n| 中间 1/3 | 横滑：进度 |\n| 右 1/3 | 竖直：音量 |\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.53/mediagate-0.1.53.apk`"
 }
