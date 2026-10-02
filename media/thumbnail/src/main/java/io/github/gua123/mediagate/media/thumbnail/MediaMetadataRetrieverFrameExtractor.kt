@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.data.storage.api.RandomAccessSource
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** 日志 TAG（文件级：同文件的 [SourceMediaDataSource] 也要用）。 */
@@ -82,6 +83,49 @@ class MediaMetadataRetrieverFrameExtractor(
                 AppLog.w(TAG, "释放 MediaMetadataRetriever 失败：${t.message}", t)
             }
             dataSource.close()
+        }
+    }
+
+    /**
+     * **本地文件直读取帧**（2026-10-03 真机反馈「滑动进度条没有预览图」后新增）。
+     *
+     * 为什么单开一条路：走 [SourceMediaDataSource] 时 MMR 只能通过 `readAt` 一点点问数据，
+     * 对本地大文件也要绕一圈（还要我们自己实现 seek 语义）；直接给文件路径，
+     * MMR 内部用 `MediaExtractor` 顺序读索引，**快一个量级**，滑动手势这种"要即时反馈"的场景才跟得上。
+     *
+     * 只对**真实存在的本地文件**用（远端/SAF 仍然走 [extract]）。
+     */
+    override suspend fun extractFromFile(
+        file: File,
+        positionMs: Long,
+        targetWidth: Int,
+    ): ByteArray? = withContext(io) {
+        var retriever: MediaMetadataRetriever? = null
+        var frame: Bitmap? = null
+        var scaled: Bitmap? = null
+        try {
+            retriever = MediaMetadataRetriever()
+            retriever.setDataSource(file.absolutePath)
+            val timeUs = if (positionMs < 0) ANY_FRAME_US else positionMs * 1_000L
+            frame = frameAt(retriever, timeUs, targetWidth)
+            if (frame == null) return@withContext null
+            scaled = scaleTo(frame, targetWidth)
+            val out = ByteArrayOutputStream()
+            if (!scaled.compress(compressFormat(), quality, out)) return@withContext null
+            out.toByteArray().takeIf { it.isNotEmpty() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "本地文件取帧失败：${file.name} @$positionMs ${t.message}", t)
+            null
+        } finally {
+            if (scaled != null && scaled !== frame) scaled.recycle()
+            frame?.recycle()
+            try {
+                retriever?.release()
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "释放 MediaMetadataRetriever 失败：${t.message}", t)
+            }
         }
     }
 
