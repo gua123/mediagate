@@ -150,6 +150,63 @@ class SegmentedCacheBackendTest {
         )
     }
 
+    // ---------------------------------------------------------------- 并发取块（2026-10-03 用户问「缓冲能不能多线程」）
+
+    @Test
+    fun `大段会拆成多块并发取`() = runTest {
+        // 真实粒度：4 MB 段 / 1 MB 块 ⇒ 期望看到多个并发请求
+        val big = ByteArray(4 * 1024 * 1024) { (it % 251).toByte() }
+        val inFlight = java.util.concurrent.atomic.AtomicInteger()
+        val peak = java.util.concurrent.atomic.AtomicInteger()
+        val delegate = object : StorageBackend {
+            override val id: String = "fake-parallel:/root"
+            override val caps: Caps = Caps(randomAccess = true, maxParallelReads = 4)
+            override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+            override suspend fun stat(path: String): RemoteEntry =
+                RemoteEntry(name = "m.bin", path = path, size = big.size.toLong(), mtime = 1L)
+            override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+                val now = inFlight.incrementAndGet()
+                peak.updateAndGet { maxOf(it, now) }
+                kotlinx.coroutines.delay(50) // 让并发有机会重叠
+                return object : RangeStream {
+                    private var cursor = offset
+                    private val end =
+                        if (length < 0) big.size.toLong() else minOf(big.size.toLong(), offset + length)
+                    override val length: Long = (big.size - offset).toLong()
+                    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int {
+                        if (cursor >= end) return -1
+                        val count = minOf(len.toLong(), end - cursor).toInt()
+                        System.arraycopy(big, cursor.toInt(), buf, off, count)
+                        cursor += count
+                        return count
+                    }
+                    override suspend fun seek(position: Long) { cursor = position }
+                    override fun position(): Long = cursor
+                    override fun close() { inFlight.decrementAndGet() }
+                }
+            }
+            override suspend fun write(path: String, data: InputStream) = Unit
+            override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+            override fun close() = Unit
+        }
+        val cache = SegmentedCacheBackend(
+            delegate = delegate,
+            rootDir = tmp.newFolder(),
+            segmentBytes = 4L * 1024 * 1024,
+            maxBytes = 16L * 1024 * 1024,
+            io = Dispatchers.Unconfined,
+            chunkBytes = 1024L * 1024,
+            parallelChunks = 4,
+            readAheadSegments = 0,
+        )
+        val stream = cache.openRead("/m.bin", offset = 0L, length = 16L)
+        val buffer = ByteArray(16)
+        stream.read(buffer, 0, 16)
+        assertArrayEquals(big.copyOfRange(0, 16), buffer)
+        assertTrue("拆块后应当出现并发（实测峰值 " + peak.get() + "）", peak.get() >= 2)
+        stream.close()
+    }
+
     /** 只会顺序读的假后端：`openRead` 记下每次请求的 (offset, length)。 */
     private class FakeSequentialBackend(
         private val payload: ByteArray,

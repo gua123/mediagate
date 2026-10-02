@@ -7,6 +7,16 @@ import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.io.ByteArrayOutputStream
+import java.io.RandomAccessFile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -45,12 +55,34 @@ class SegmentedCacheBackend(
     private val segmentBytes: Long = DEFAULT_SEGMENT_BYTES,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** 单块大小：段会被拆成若干块**并发**取（见 [chunkRanges]）。 */
+    private val chunkBytes: Long = DEFAULT_CHUNK_BYTES,
+    /** 同一段的并发块数上限。 */
+    private val parallelChunks: Int = DEFAULT_PARALLEL_CHUNKS,
+    /** 读到某段后**顺手预读**后面几段（0 = 关闭）。 */
+    private val readAheadSegments: Int = DEFAULT_READ_AHEAD_SEGMENTS,
+    /** 预读用的作用域；为 null 时不做预读（单测与其它调用方不受影响）。 */
+    private val readAheadScope: CoroutineScope? = null,
 ) : StorageBackend {
 
     init {
         require(segmentBytes > 0L) { "segmentBytes 必须为正：$segmentBytes" }
         require(maxBytes >= segmentBytes) { "maxBytes 不能小于一个段：$maxBytes < $segmentBytes" }
+        require(chunkBytes > 0L) { "chunkBytes 必须为正：$chunkBytes" }
+        require(parallelChunks >= 1) { "parallelChunks 至少为 1：$parallelChunks" }
     }
+
+    /** 同一段的并发块数（跨段也共用它，避免手机上一口气开太多连接）。 */
+    private val chunkPermits = Semaphore(parallelChunks)
+
+    /** 正在下载的段（单飞：同一段不会被下两次，不同段可以同时下——预读才有意义）。 */
+    private val inFlight = mutableMapOf<String, Deferred<File>>()
+
+    /** 保护 [inFlight] 的锁（只在取放 map 时持有，**不覆盖下载过程**）。 */
+    private val inFlightLock = Mutex()
+
+    /** 没给预读作用域时的兜底（下载任务挂在它上面；随进程结束）。 */
+    private val fallbackScope = CoroutineScope(SupervisorJob() + io)
 
     override val id: String get() = delegate.id
 
@@ -156,9 +188,27 @@ class SegmentedCacheBackend(
         val file = segmentFile(path, index)
         if (file.isFile && file.length() > 0L) {
             file.setLastModified(System.currentTimeMillis())
+            scheduleReadAhead(path, index)
             return file
         }
-        return segmentLock.withLock {
+        // 单飞：同一段只下一次（不同段可并行 → 预读才有意义）
+        val key = path + "#" + index
+        val existing = inFlightLock.withLock { inFlight[key] }
+        if (existing != null) return existing.await()
+        val job = scopeForDownload().async { downloadSegment(path, index, file) }
+        inFlightLock.withLock { inFlight[key] = job }
+        try {
+            val result = job.await()
+            scheduleReadAhead(path, index)
+            return result
+        } finally {
+            inFlightLock.withLock { inFlight.remove(key) }
+        }
+    }
+
+    /** 下载一个段：**拆块并发取**，各自写到临时文件的对应偏移，最后改名。 */
+    private suspend fun downloadSegment(path: String, index: Long, file: File): File =
+        segmentLock.withLock {
             if (file.isFile && file.length() > 0L) {
                 file.setLastModified(System.currentTimeMillis())
                 return@withLock file
@@ -168,20 +218,38 @@ class SegmentedCacheBackend(
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, file.name + TMP_SUFFIX)
             try {
-                withContext(io) {
-                    delegate.openRead(path, start, length).use { stream ->
-                        temporary.outputStream().use { output ->
-                            val buffer = ByteArray(COPY_BUFFER_BYTES)
-                            var total = 0L
-                            while (true) {
-                                val read = stream.read(buffer, 0, buffer.size)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                total += read
-                                if (total >= length) break
+                val chunks = chunkRanges(start, length, chunkBytes)
+                val written = withContext(io) {
+                    RandomAccessFile(temporary, "rw").use { raf ->
+                        coroutineScope {
+                            val jobs = chunks.mapIndexed { i, chunk ->
+                                async {
+                                    chunkPermits.withPermit {
+                                        delegate.openRead(path, chunk.offset, chunk.length).use { stream ->
+                                            val buffer = ByteArray(COPY_BUFFER_BYTES)
+                                            val bytes = ByteArrayOutputStream(chunk.length.toInt())
+                                            while (bytes.size() < chunk.length) {
+                                                val want = minOf(buffer.size.toLong(), chunk.length - bytes.size()).toInt()
+                                                val read = stream.read(buffer, 0, want)
+                                                if (read < 0) break
+                                                bytes.write(buffer, 0, read)
+                                            }
+                                            val data = bytes.toByteArray()
+                                            synchronized(raf) {
+                                                raf.seek((chunk.offset - start))
+                                                raf.write(data)
+                                            }
+                                            data.size.toLong()
+                                        }
+                                    }
+                                }
                             }
+                            jobs.sumOf { it.await() }
                         }
                     }
+                }
+                if (written <= 0L) throw StorageException.Unknown("分段下载为空：$path @$start")
+                withContext(io) {
                     if (!temporary.renameTo(file)) {
                         temporary.copyTo(file, overwrite = true)
                         temporary.delete()
@@ -198,7 +266,24 @@ class SegmentedCacheBackend(
             }
             file
         }
+
+    /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
+    private fun scheduleReadAhead(path: String, index: Long) {
+        val scope = readAheadScope ?: return
+        if (readAheadSegments <= 0) return
+        for (step in 1..readAheadSegments) {
+            val target = index + step
+            val file = segmentFile(path, target)
+            if (file.isFile && file.length() > 0L) continue
+            scope.launch {
+                runCatching { ensureSegment(path, target) }
+                    .onFailure { AppLog.d(TAG, "预读失败（不影响播放）：$path 第 $target 段 — ${it.message}") }
+            }
+        }
     }
+
+    /** 段下载用的作用域（[readAheadScope] 没给就临时起一个，保证单飞 map 生命周期正确）。 */
+    private fun scopeForDownload(): CoroutineScope = readAheadScope ?: fallbackScope
 
     /** 超出上限就按最后访问时间淘汰（跳过正在被读的段由调用方保证：段是整段读入的）。 */
     private suspend fun evictIfNeeded() {
