@@ -491,6 +491,40 @@ class AppContainer(context: Context) :
     private val previewExtractor: FrameExtractor = MediaMetadataRetrieverFrameExtractor()
 
     /**
+     * **测速**（2026-10-03 用户实测公网 SFTP 0.9 MB/s、WebDAV 0.1 MB/s 后加的仪表）。
+     *
+     * 走**当前生效的远端后端**（即被分段缓存包着的那条真实播放路径），
+     * 所以它量出来的就是"播放时会拿到多少"。测一个新文件最准——已缓存的段不会过网。
+     *
+     * @param path 远端路径（相对连接根目录）。
+     * @param megabytes 读多少 MB（1..64）。
+     */
+    suspend fun measureThroughput(path: String, megabytes: Int = 8): ThroughputReport = withContext(Dispatchers.IO) {
+        val backend = _root.value?.backend
+            ?: return@withContext ThroughputReport(0L, 0L, "当前没有可用的根目录（先去连接页设一个）")
+        val want = megabytes.coerceIn(1, 64).toLong() * 1024 * 1024
+        var total = 0L
+        val started = System.nanoTime()
+        try {
+            backend.openRead(path, 0L, want).use { stream ->
+                val buffer = ByteArray(THROUGHPUT_BUFFER_BYTES)
+                while (total < want) {
+                    val wantNow = minOf(buffer.size.toLong(), want - total).toInt()
+                    val read = stream.read(buffer, 0, wantNow)
+                    if (read < 0) break
+                    total += read
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "测速失败：" + path, t)
+            return@withContext ThroughputReport(total, (System.nanoTime() - started) / 1_000_000, ErrorText.of(t, "测速失败"))
+        }
+        ThroughputReport(total, (System.nanoTime() - started) / 1_000_000)
+    }
+
+    /**
      * 网络/缓冲可调参数（**2026-10-03 用户要求**：把并发数开放到设置里，他自己调）。
      *
      * 与 [videoPreferences] 同一考虑：容器构造时就开始读（Eagerly），界面一进来拿到的是真值。
@@ -1563,6 +1597,9 @@ class AppContainer(context: Context) :
 
         /** 预览帧宽度（像素）：HUD 里显示得下就行，别为预览花大成本。 */
         const val PREVIEW_WIDTH_PX = 240
+
+        /** 测速时的读缓冲（256 KB：够大，能把"每次调用的开销"淹掉）。 */
+        private const val THROUGHPUT_BUFFER_BYTES = 256 * 1024
 
         /** 预览帧缓存条数。 */
         const val PREVIEW_CACHE_SIZE = 32

@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -36,6 +39,13 @@ fun NetworkTuningSection(
     onReadAheadSegments: (Int) -> Unit,
     onSegmentBytes: (Long) -> Unit,
     onReset: () -> Unit,
+    /** 测速：要测的文件路径（相对连接根目录）。 */
+    speedPath: String,
+    onSpeedPathChange: (String) -> Unit,
+    speedRunning: Boolean,
+    /** 测速结果文本（可整段选中复制）。 */
+    speedResult: String?,
+    onRunSpeedTest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier.fillMaxWidth()) {
@@ -118,6 +128,33 @@ fun NetworkTuningSection(
                     text = "默认 4 MB 段 · 1 MB 块 · 4 并发 · 预读 2 段",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+
+            // ---------------- 测速（2026-10-03）：调参有没有用，量一下就知道
+            Text("测速", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = "走真实的播放路径（含分段缓存与上面的并发设置）读 8 MB。",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedTextField(
+                value = speedPath,
+                onValueChange = onSpeedPathChange,
+                label = { Text("远端文件路径（相对连接根目录）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onRunSpeedTest,
+                    enabled = !speedRunning && speedPath.isNotBlank(),
+                ) {
+                    Text(if (speedRunning) "测速中…" else "开始测速")
+                }
+            }
+            speedResult?.let { text ->
+                SelectionContainer {
+                    Text(text, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }

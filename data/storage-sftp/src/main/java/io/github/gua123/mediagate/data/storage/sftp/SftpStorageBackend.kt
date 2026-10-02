@@ -45,6 +45,27 @@ class SftpStorageBackend(
 
     private val pool = SftpChannelPool(config, verifier)
 
+    /**
+     * 文件属性缓存（**2026-10-03 性能修复**）。
+     *
+     * 起因：用户实测公网 SFTP ≈0.9 MB/s、WebDAV ≈0.1 MB/s，而公网**每次请求延迟约 600 ms**
+     * （连接测试里"握手"那段就是它）。而 [openRead] 每次都要先 stat 一次拿大小——
+     * 分段缓存按 1 MB 块取数 ⇒ **每 1 MB 白付一个 RTT**，在 600 ms 延迟下直接砍掉约四成吞吐。
+     *
+     * 做法与分段缓存的大小缓存同理：会话内文件几乎不变，按绝对路径缓存 128 条。
+     */
+    private val attrsCache = object : LinkedHashMap<String, SftpATTRS>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SftpATTRS>?): Boolean = size > 128
+    }
+
+    /** 取属性：先查缓存，未命中才走一次网络。 */
+    private suspend fun attrsOf(abs: String, display: String): SftpATTRS {
+        synchronized(attrsCache) { attrsCache[abs] }?.let { return it }
+        val attrs = pool.use { channel -> statOrThrow(channel, abs, display) }
+        synchronized(attrsCache) { attrsCache[abs] = attrs }
+        return attrs
+    }
+
     /** 后端唯一标识（R2 缓存 key）：`sftp://用户名@主机:端口/根路径`。 */
     override val id: String = config.id
 
@@ -96,7 +117,8 @@ class SftpStorageBackend(
         val relative = normalizeSftpPath(path)
         if (relative.isEmpty()) throw StorageException.NotSupported("目录不能读取：" + path)
         val abs = absoluteSftpPath(config.rootPath, relative)
-        val attrs = pool.use { channel -> statOrThrow(channel, abs, path) }
+        // 走缓存：同一文件连续取多块时不再每块都 stat 一次（高延迟链路上这是纯亏的 RTT）
+        val attrs = attrsOf(abs, path)
         if (attrs.isDir) throw StorageException.NotSupported("目录不能读取：" + path)
         if (length == 0L) return@withContext SftpRangeStream(pool, abs, offset, 0L, path)
         // 越界（offset 已在末尾之后）不报错：length 会被夹成 0，read 直接返回 -1（与本地后端同语义）
