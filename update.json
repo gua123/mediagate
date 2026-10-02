@@ -1,8 +1,8 @@
 {
-  "versionCode": 29,
-  "versionName": "0.1.28",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.28/mediagate-0.1.28.apk",
-  "sizeBytes": 74600714,
-  "sha256": "fccd0ee2e51e9f47a974329a0a2e4c5fcf70ab73623b1e048eda1d5914f17f4c",
-  "notes": "## mediagate 0.1.28 —— 真凶抓到了（就是你发来的那段崩溃文本帮我抓到的）\n\n### 你发来的那段文本，直接把答案写在了脸上\n\n```\n阶段：容器构造\n异常：java.lang.NullPointerException\n消息：Attempt to read from field 'a84 ei3.b' on a null object reference in method 'void ph.<init>(...)`\n\tat ph.<init>(SourceFile:870)\n\tat io.github.gua123.mediagate.MediaGateApplication.onCreate\n```\n\n我用发版时生成的 **R8 混淆对照表** 把这三个代号翻译了回来：\n\n| 混淆名 | 真身 |\n| --- | --- |\n| `ph` | `AppContainer`（容器本身） |\n| `ei3` | `kotlinx.coroutines.flow.ReadonlyStateFlow`（`asStateFlow()` 的返回类型） |\n| `a84` | `StateFlowImpl`（它内部那个真正的流） |\n\n⇒ \"读一个 **null** 的 StateFlow 的 `.value`\"：容器构造到一半，某个属性去读了**声明在它后面**的流。\n定位到具体一行：\n\n```kotlin\noverride val vlcUsable: Boolean? = vlcUsableState.value   // ← 宿主先建，流还没初始化\n```\n\n`vlcUsableState` 声明在容器**后面**（第 1018 行），而这个宿主是容器里**较早**构造的属性——\n构造到它时那个流还是 null，于是 `Application.onCreate` → 容器构造直接 NPE。\n\n### 为什么前几版都没查出来\n- **Kotlin 不拦**：`val` 在 JVM 上默认就是 null，顺序问题编译器看不见；\n- **单测拦不住**：JVM 单测不会构造这个 Android 容器；\n- **0.1.26 我修的那个 `lateinit` 是另一个真 bug**（同一个提交里埋的），修掉它之后这个 NPE 才露出来；\n- **R8 混淆**：报错里的类名变成 `ph/ei3/a84`，没有对照表根本读不懂——这次正好有。\n\n### 修法与护栏\n1. 那一行改成 **getter**（`get() = vlcUsableState.value`）：用到时才取，顺序就不再重要；\n2. 新增**源码级护栏** `StartupPropertyOrderTest`：扫描启动关键文件，凡是\n   「带类型标注的属性初始化器里去读 `.value`」一律测试失败（已实证：把 0.1.27 的源码喂进去会红，修复后变绿）；\n3. 0.1.27 的\"独立进程错误页 + 启动自检\"保留——这次就是它把原因送出来的。\n\n### 装法（App 打不开，直接下载安装，别走应用内更新）\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.28/mediagate-0.1.28.apk`\n\n本版包含 0.1.22 起你点名要的全部功能：LibVLC 内核探针（改为按需触发）、任务入队去重、\n「准备中（加载模型…）」、已结束任务可 🗑 移除、极简模式、横滑调进度、预览缩略图。"
+  "versionCode": 30,
+  "versionName": "0.1.29",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.29/mediagate-0.1.29.apk",
+  "sizeBytes": 74618002,
+  "sha256": "89c2f68ba9df0c2d4632b6ea9b1025fd848b7d73e455eadf79184d72459421bd",
+  "notes": "## mediagate 0.1.29\n\n### 你反馈的两点，都处理了\n\n**① 「我没找到测试内核的地方」→ 现在它就摆在切换路径上**\n\n点「内核」要切到 LibVLC 时，弹窗的**主按钮**变成了「**先测试再切换**」：\n\n- 点它 → 探针在**独立进程**里试跑（不会影响当前播放，也绝不会把 App 带走）；\n- **测试通过** → 立刻切过去；\n- **测试失败** → 不切，并在弹窗上写明「测试失败：LibVLC 内核在本机起不来（已阻止切换）」；\n- 没得到结论（探针进程被系统回收）→ 如实说「可以稍后再试」；\n- 想直接切也仍然可以（「仍然直接切换」），但**测过一次不可用之后，就不再给切换按钮**了，只留「重新测试」。\n\n**② 「再次打开时会提示上次闪退是否仍然切换，这很棒」**\n\n这条保留，并且现在和上面的测试打通了：只要测出「本机跑不了」，弹窗就直接变成说明 + 「重新测试」，不再劝你冒险。\n\n### 说明\n- 探针**不在启动时跑**（0.1.27 的教训：启动瞬间拉一个可能原生崩溃的进程，用户看到的就是\"打不开\"），只在你要切 LibVLC 时按需跑；\n- 包名不变，可直接覆盖安装。"
 }
