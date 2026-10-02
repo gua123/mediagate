@@ -140,7 +140,12 @@ class UpdateCheckerTest {
             .check(UpdateSource(), currentVersionCode = 1L)
 
         assertEquals(UpdateFailure.HTTP, (result as UpdateCheckResult.Failed).kind)
-        assertEquals(2, transport.requested.size)
+        // 2026-10-03：新增了 jsDelivr 镜像（国内可达）⇒ 现在会依次试三个地址
+        assertEquals(3, transport.requested.size)
+        // 失败细节里要能看到"每个地址的结果"，用户据此判断是全部不通还是只有 raw 不通
+        val detail = result.detail.orEmpty()
+        assertTrue("细节应逐条列出尝试结果：" + detail, detail.contains("raw.githubusercontent.com"))
+        assertTrue("细节应包含镜像尝试：" + detail, detail.contains("cdn.jsdelivr.net"))
     }
 
     @Test
