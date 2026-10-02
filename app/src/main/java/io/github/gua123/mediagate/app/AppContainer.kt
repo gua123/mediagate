@@ -1034,16 +1034,18 @@ class AppContainer(context: Context) :
             runCatching {
                 VlcProbeService.reset(appContext)
                 VlcProbeService.start(appContext)
+                // 等它"跑完"（写 ok 或写 done），最多等 VLC_PROBE_TIMEOUT_MS；
+                // 两者都没等到 ⇒ 进程在初始化中途被带走了（判据见 vlcProbeVerdict）。
                 val deadline = System.currentTimeMillis() + VLC_PROBE_TIMEOUT_MS
-                while (System.currentTimeMillis() < deadline && !VlcProbeService.succeeded(appContext)) {
+                while (System.currentTimeMillis() < deadline &&
+                    !VlcProbeService.succeeded(appContext) && !VlcProbeService.finished(appContext)
+                ) {
                     delay(VLC_PROBE_POLL_MS)
                 }
-                // 崩掉时系统要过一会儿才把退出原因记下来，等一拍再判
-                if (!VlcProbeService.succeeded(appContext)) delay(VLC_PROBE_SETTLE_MS)
                 val verdict = vlcProbeVerdict(
                     started = VlcProbeService.started(appContext),
                     succeeded = VlcProbeService.succeeded(appContext),
-                    exitReason = VlcProbeService.lastProbeExitReason(appContext),
+                    finished = VlcProbeService.finished(appContext),
                 )
                 applyVlcVerdict(verdict)
             }.onFailure { AppLog.w(TAG, "LibVLC 启动探针执行失败", it) }

@@ -17,23 +17,23 @@ enum class VlcProbeVerdict {
 }
 
 /**
- * 从"探针留下的三个证据"推断结论（**纯函数**，JVM 单测穷举）。
+ * 从"探针留下的三个文件"推断结论（**纯函数**，JVM 单测穷举）。
  *
  * 探针跑在**独立进程**（`android:process=":vlcprobe"`）里，所以它崩了只会带走自己；
- * 主进程事后靠这三样判断：
- * - [started]：探针开始过（写了 start 标记）；
- * - [succeeded]：探针写下了 ok（说明 LibVLC 初始化返回了）；
- * - [exitReason]：系统记录的**探针进程**上次退出原因（-1 = 拿不到）。
+ * 主进程事后只看文件（**不再依赖 ApplicationExitInfo**——2026-10-03 真机：反射读它拿不到东西，
+ * 结果探针明明被带走了却报"没得到结论"，用户按了按钮还是不知道该不该切）：
+ * - [started]：写了 `start`（探针开始过）；
+ * - [succeeded]：写了 `ok`（LibVLC 初始化返回了）；
+ * - [finished]：写了 `done`（**这段代码执行到底**，无论成功还是抛了 Java 异常）。
  *
- * 为什么还要看退出原因：探针进程也可能是**被系统按低内存回收**的——那不是 LibVLC 的错，
- * 这种情况要给 [VlcProbeVerdict.UNKNOWN]（下次再测），不能误判成"本机不可用"。
+ * 判据：`start` 有、`ok` 没有、`done` 也没有 ⇒ 进程在初始化中途被带走了（原生崩溃/被信号杀），
+ * 就是"本机跑不了 LibVLC"。误判的代价可控：界面永远留着「重新测试」，下次会重跑一遍。
  */
-internal fun vlcProbeVerdict(started: Boolean, succeeded: Boolean, exitReason: Int): VlcProbeVerdict = when {
+internal fun vlcProbeVerdict(started: Boolean, succeeded: Boolean, finished: Boolean): VlcProbeVerdict = when {
     succeeded -> VlcProbeVerdict.OK
     !started -> VlcProbeVerdict.UNKNOWN
-    // 开始过、没有 ok：只有当系统记录的是"崩溃类"原因时才算不可用
-    isCrashLikeExit(exitReason) -> VlcProbeVerdict.FAILED
-    else -> VlcProbeVerdict.UNKNOWN
+    // 开始过、没写成 ok：跑到底了（Java 层抛异常）或中途被带走，两种都算"起不来"
+    else -> VlcProbeVerdict.FAILED
 }
 
 /** 崩溃类退出原因（原生崩溃 / Java 崩溃 / 被信号杀 / ANR）。 */

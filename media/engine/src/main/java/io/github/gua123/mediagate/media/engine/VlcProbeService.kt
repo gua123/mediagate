@@ -45,6 +45,10 @@ class VlcProbeService : Service() {
             // Java 层异常（UnsatisfiedLinkError 等）也算"起不来"，但只写日志、不写 ok
             AppLog.w(TAG, "LibVLC 启动探针：初始化抛异常", error)
         }
+        // **末尾标记**（2026-10-03 真机：探针报"没得到结论"）：能走到这里说明"这段代码执行到底了"，
+        // 于是"有 start、没有 done"就等价于**进程在初始化中途被带走了**（原生崩溃/被信号杀），
+        // 不必再依赖 ApplicationExitInfo（反射读它有时什么都拿不到，之前就因此判成了"未知"）。
+        runCatching { File(dir, FILE_DONE).writeText(System.currentTimeMillis().toString(), Charsets.UTF_8) }
         stopSelf()
         return START_NOT_STICKY
     }
@@ -59,6 +63,9 @@ class VlcProbeService : Service() {
         const val FILE_START = "start"
         const val FILE_OK = "ok"
 
+        /** 跑完（无论成败）都会写；**没写**就说明进程在初始化中途被带走了。 */
+        const val FILE_DONE = "done"
+
         /** 拉起探针（独立进程；用户从不知道它在跑，也不需要）。 */
         fun start(context: Context) {
             runCatching {
@@ -72,7 +79,11 @@ class VlcProbeService : Service() {
             val dir = probeDir(context)
             runCatching { File(dir, FILE_START).delete() }
             runCatching { File(dir, FILE_OK).delete() }
+            runCatching { File(dir, FILE_DONE).delete() }
         }
+
+        /** 跑完了吗（跑完＝这段代码执行到底；没跑完＝进程被带走）。 */
+        fun finished(context: Context): Boolean = File(probeDir(context), FILE_DONE).exists()
 
         /** 开始过？ */
         fun started(context: Context): Boolean = File(probeDir(context), FILE_START).exists()
