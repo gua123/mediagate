@@ -80,6 +80,7 @@ import io.github.gua123.mediagate.feature.player.video.LocalVideoPlayerEnvironme
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerRoutes
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
+import io.github.gua123.mediagate.app.formatThroughput
 import io.github.gua123.mediagate.app.ui.DiagnosticsSection
 import io.github.gua123.mediagate.app.ui.NetworkTuningSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
@@ -515,6 +516,11 @@ private fun SettingsRoute(
     val networkTuning by container.networkTuning.tuning.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
+    // 测速（2026-10-03）：调参有没有用，量一下就知道
+    var speedPath by remember { mutableStateOf("") }
+    var speedRunning by remember { mutableStateOf(false) }
+    var speedResult by remember { mutableStateOf<String?>(null) }
+
     // 已信任的 SFTP 主机指纹（R2）：TOFU 落库后要能看到、能忘掉
     val trustedHostKeys by container.trustedHostKeys.collectAsStateWithLifecycle()
 
@@ -575,6 +581,27 @@ private fun SettingsRoute(
                     scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
                 },
                 onReset = { scope.launch { container.networkTuning.reset() } },
+                speedPath = speedPath,
+                onSpeedPathChange = { speedPath = it },
+                speedRunning = speedRunning,
+                speedResult = speedResult,
+                onRunSpeedTest = {
+                    val target = speedPath.trim()
+                    if (target.isNotEmpty() && !speedRunning) {
+                        scope.launch {
+                            speedRunning = true
+                            val report = container.measureThroughput(target)
+                            speedResult = formatThroughput(
+                                report = report,
+                                path = target,
+                                parallelChunks = networkTuning.parallelChunks,
+                                chunkBytes = networkTuning.chunkBytes,
+                                readAheadSegments = networkTuning.readAheadSegments,
+                            )
+                            speedRunning = false
+                        }
+                    }
+                },
             )
             // 诊断（2026-10-03）：崩溃报告看得到、复制得走——真机闪退唯一的定位手段
             DiagnosticsSection(
