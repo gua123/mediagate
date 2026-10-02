@@ -178,7 +178,12 @@
   ② 纯函数 `VlcCrashHeuristic.vlcSwitchLooksCrashed`（+5 例）+ `vlcPreviouslyCrashed`/`vlcSuspectCrash`
   → 播放页再切 LibVLC 前弹确认（"仍然切换 / 先不切"，并提示可用「解码」档位换解码方式）；
   ③ 待用户回传 `exit-…` 报告里的 native 轨迹以定位到具体 .so/函数。
-  当前版本 **0.1.21 / versionCode 22**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.20）。
+- **M29 LibVLC 启动探针（2026-10-03，0.1.22）**：用户建议「启动后先测内核，跑不了就不让切，且测试本身不能崩 App」→
+  ① `:media:engine` 的 `VlcProbeService` 跑在**独立进程** `:vlcprobe`（写 `start` → 建 LibVLC+MediaPlayer → 写 `ok`），
+  崩了只带走它自己；② `:app` 的 `vlcProbeNow()` 轮询文件判结论（纯函数 `vlcProbeVerdict`，+5 例：
+  有 ok=OK、无 ok 且崩溃类=FAILED、被回收=UNKNOWN 不误判）→ 落 DataStore；③ 界面 `vlcUsable==false` 时
+  **不让切**，弹说明 + 「重新测试」，并提示用「解码」档位换解码方式；④ 启动即测一次。
+  当前版本 **0.1.22 / versionCode 23**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.21）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

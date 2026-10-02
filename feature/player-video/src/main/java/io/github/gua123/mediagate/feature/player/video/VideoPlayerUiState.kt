@@ -131,6 +131,8 @@ data class VideoPlayerUiState(
     val switchMessage: String? = null,
     /** 上次切 LibVLC 崩溃过（本机可能不兼容）：界面在再切之前给一句提示。 */
     val vlcSuspectCrash: Boolean = false,
+    /** LibVLC 在本机能不能跑；false = 启动探针被带走 → 不让切（2026-10-03 用户建议）。 */
+    val vlcUsable: Boolean? = null,
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,
     /** 失败分类；[VideoPlayerStatus.ERROR] 时非空。 */
