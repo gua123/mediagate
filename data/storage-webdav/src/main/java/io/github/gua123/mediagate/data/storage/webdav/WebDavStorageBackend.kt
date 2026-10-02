@@ -169,7 +169,20 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 .build()
             // 走我们自己的重定向跟随（不能让 OkHttp 把 PROPFIND 降级成 GET）；
             // 失败时把"收到了什么"一起带出来（真机排查用，见 probeFailureMessage 的注释）。
-            execute(request, probeClient).use { response ->
+            // 移动网络 / VPN 下"连接被掐断"很常见（unexpected end of stream 之类），
+            // 对瞬时 IO 错误重试一次再下结论（2026-10-03 真机：这类失败以前只显示"未知错误"）。
+            val response = run {
+                try {
+                    execute(request, probeClient)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: IOException) {
+                    AppLog.w(TAG, "probe 第一次失败，重试一次：" + e.message)
+                    Thread.sleep(PROBE_RETRY_DELAY_MS)
+                    execute(request, probeClient)
+                }
+            }
+            response.use { response ->
                 val total = elapsedMs(started)
                 updateRangeSupport(response, sentRange = false)
                 val snippet = if (response.isSuccessful) {
@@ -486,6 +499,9 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
     companion object {
         private const val TAG = "storage-webdav"
         private const val ID_PREFIX = "webdav:"
+
+        /** 探针遇到瞬时 IO 错误时的重试间隔（毫秒）。 */
+        private const val PROBE_RETRY_DELAY_MS = 400L
 
         /** 探针失败时最多回看多少字节的响应体（塞进提示里给用户看，见 [probeFailureMessage]）。 */
         private const val PROBE_SNIPPET_BYTES = 512L
