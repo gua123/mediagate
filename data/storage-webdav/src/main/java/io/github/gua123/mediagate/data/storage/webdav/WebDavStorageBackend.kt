@@ -167,10 +167,24 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 .method("PROPFIND", PROPFIND_BODY.toRequestBody(XML_MEDIA_TYPE))
                 .header("Depth", DEPTH_SELF.toString())
                 .build()
-            probeClient.newCall(request).execute().use { response ->
+            // 走我们自己的重定向跟随（不能让 OkHttp 把 PROPFIND 降级成 GET）；
+            // 失败时把"收到了什么"一起带出来（真机排查用，见 probeFailureMessage 的注释）。
+            execute(request, probeClient).use { response ->
                 val total = elapsedMs(started)
                 updateRangeSupport(response, sentRange = false)
-                val report = buildReport(response.code, listener, total, response.message)
+                val snippet = if (response.isSuccessful) {
+                    null
+                } else {
+                    runCatching { response.peekBody(PROBE_SNIPPET_BYTES).string() }.getOrNull()
+                }
+                val report = buildReport(
+                    code = response.code,
+                    listener = listener,
+                    totalMs = total,
+                    httpMessage = response.message,
+                    url = request.url.toString(),
+                    bodySnippet = snippet,
+                )
                 if (!report.ok) AppLog.w(TAG, "probe 失败：${config.requestBaseUrl} → ${report.message}")
                 report
             }
@@ -387,7 +401,14 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
     private fun elapsedMs(startedNanos: Long): Long = (System.nanoTime() - startedNanos) / 1_000_000L
 
     /** 按状态码给出 probe 结论（plan 4.5：207 或 200 算通，401 = 账号密码错）。 */
-    private fun buildReport(code: Int, listener: DavTimingListener, totalMs: Long, httpMessage: String): ProbeReport {
+    private fun buildReport(
+        code: Int,
+        listener: DavTimingListener,
+        totalMs: Long,
+        httpMessage: String,
+        url: String = "",
+        bodySnippet: String? = null,
+    ): ProbeReport {
         val dns = listener.dnsMs
         val connect = listener.connectMs
         val handshake = (totalMs - dns - connect).coerceAtLeast(0L)
@@ -397,7 +418,8 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
             403 -> "403 无访问权限（账号对该目录无读权限）"
             404 -> "404 路径不存在（检查根路径是否写对）"
             405, 501 -> "$code 服务器不支持 PROPFIND（可能不是 WebDAV 服务）"
-            else -> "HTTP $code $httpMessage"
+            // 其他状态（3xx/5xx/4xx 边角）把「请求地址 + 响应片段」带上：用户与我都能一眼定位
+            else -> probeFailureMessage(code, httpMessage, url, bodySnippet)
         }
         return ProbeReport(ok = message == null, dnsMs = dns, connectMs = connect, handshakeMs = handshake, message = message)
     }
@@ -464,6 +486,9 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
     companion object {
         private const val TAG = "storage-webdav"
         private const val ID_PREFIX = "webdav:"
+
+        /** 探针失败时最多回看多少字节的响应体（塞进提示里给用户看，见 [probeFailureMessage]）。 */
+        private const val PROBE_SNIPPET_BYTES = 512L
 
         /** Depth: 1 = 列子项；Depth: 0 = 只看自己。 */
         private const val DEPTH_CHILDREN = 1
