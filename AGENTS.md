@@ -45,7 +45,8 @@
 
     source scripts/env.sh                      # 进入本项目环境
     bash scripts/install-toolchain.sh          # 首次：装项目私有 JDK21 + SDK(platform 37.2/NDK/CMake) + Gradle 9.8 + wrapper 缓存
-    bash scripts/build-whisper-android.sh      # 需要音转字幕时：重建 ASR native 库（不进 git）
+    # 音转字幕（whisper）已于 0.1.41 整条移除，下面这个脚本不再需要，仅作历史保留
+    bash scripts/build-whisper-android.sh      # 【已废弃】重建 ASR native 库（不进 git）
     ./gradlew :app:assembleDebug               # 构建
     adb install -r app/build/outputs/apk/debug/app-debug.apk
 
@@ -220,6 +221,13 @@
   也算进去，播放页黑底整体内缩。0.1.31 四层保险：主题 `windowLayoutInDisplayCutoutMode=always`、
   播放/看图路由不吃 `innerPadding`、`Scaffold` 背后垫黑、播放期间 decorView 背景刷黑。
   **用户确认「左侧白条不在了」** ⇒ Plan B 不需要。
+- **M49 移除批量生成字幕（2026-10-03，0.1.41）**：用户原话「将生成字幕的功能去掉吧，手机端的性能不足以支持此功能」→
+  删除三个模块 `:media:asr` / `:feature:tasks` / `:feature:asr-model`、底部导航「任务」Tab、设置页「语音识别模型」卡片、
+  `AsrForegroundService`（含清单声明与通知）、`:app` 侧全部 ASR 装配（`AppContainer` 的 asr*/tasks* 成员、
+  `MediaGateApplication` 的 `AsrRuntimeHost` 实现、`AsrSettings`/`AsrQueueController`/`AsrTasksHost`/`TasksRootSelection`），
+  以及 whisper 的 4 个原生库（已核对包内 0 个）⇒ **APK 71.2 MB → 67.1 MB**。
+  **保留**：外挂字幕（srt/vtt/ass）全链路；**数据库 asr 表保留不动**（不改 schema = 无迁移风险）。
+  测试：全量 1452 例 0 失败（随模块删掉 3 例 TasksRootSelection 测试）。
 - **M37 连接测试可读性（2026-10-03，0.1.32–0.1.36）**：① 成功绿/失败红 + ✓/✗ 符号（用户口径原话
   「测试成功使用绿色，失败使用红色」；判定用纯函数 `testOutcomeOf`，不再用 `startsWith` 猜）；
   ② 失败提示能照做：补 3xx/5xx/4xx 分类、UNKNOWN 摊开原始原因；③「技术详情」弹窗（可复制）；

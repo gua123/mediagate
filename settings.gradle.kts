@@ -45,7 +45,6 @@ include(
     ":media:thumbnail",
     ":media:tsext",
     ":media:ffmpeg",
-    ":media:asr",
     ":media:subtitle",
 )
 
@@ -58,7 +57,5 @@ include(
     ":feature:viewer-image",
     ":feature:connections",
     ":feature:settings",
-    ":feature:tasks",
     ":feature:update",
-    ":feature:asr-model",
 )

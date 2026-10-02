@@ -105,16 +105,9 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!--
-          批量字幕任务中心（M7-B / R19）：前台服务 + 通知进度（可暂停/取消）。
-          foregroundServiceType=mediaProcessing 对应 manifest 顶部的
-          FOREGROUND_SERVICE_MEDIA_PROCESSING 权限；只由本应用自己启动，故 exported=false。
-        -->
-        <service
-            android:name="io.github.gua123.mediagate.app.AsrForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="mediaProcessing"
-            android:stopWithTask="false" />
+        <!-- **批量字幕（whisper 音转字幕）已整条移除**（2026-10-03 用户要求：手机端性能不足以支持）——
+             模块 :media:asr / :feature:tasks / :feature:asr-model 已删除，前台服务随之取消，
+             顺带省下 27 MB 的 whisper native 库。外挂字幕（srt/vtt/ass）不受影响。 -->
 
         <!--
           LibVLC 启动探针（2026-10-03 用户建议）：**必须跑在独立进程里**。

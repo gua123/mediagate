@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
@@ -83,8 +82,6 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
 import io.github.gua123.mediagate.app.ui.DiagnosticsSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
-import io.github.gua123.mediagate.feature.asrmodel.AsrModelSection
-import io.github.gua123.mediagate.feature.asrmodel.AsrModelViewModel
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
 import io.github.gua123.mediagate.feature.settings.SettingsNote
@@ -92,8 +89,6 @@ import io.github.gua123.mediagate.feature.settings.SettingsScreen
 import io.github.gua123.mediagate.feature.update.UpdateChecker
 import io.github.gua123.mediagate.feature.update.UpdateSection
 import io.github.gua123.mediagate.feature.update.UpdateViewModel
-import io.github.gua123.mediagate.feature.tasks.LocalTasksEnvironment
-import io.github.gua123.mediagate.feature.tasks.TasksScreen
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
@@ -115,7 +110,6 @@ private enum class TopLevelDestination(
     HOME("home", "home", R.string.nav_home, Icons.Default.Home),
     BROWSER(BrowserRoutes.BASE, BrowserRoutes.ROUTE, R.string.nav_browser, Icons.Default.FolderOpen),
     CONNECTIONS("connections", "connections", R.string.nav_connections, Icons.Default.Dns),
-    TASKS("tasks", "tasks", R.string.nav_tasks, Icons.AutoMirrored.Filled.Assignment),
     SETTINGS("settings", "settings", R.string.nav_settings, Icons.Default.Settings),
 }
 
@@ -266,8 +260,6 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             LocalVideoPlayerEnvironment provides container.videoPlayerEnvironment,
             // M4：连接管理（R6/R7/R8）的宿主能力（三张表 + Keystore 加密 + 当前连接 + 网络现场）
             LocalConnectionsEnvironment provides container.connectionsEnvironment,
-            // M7-B：批量字幕任务中心（R19）的宿主能力（队列 + 目录 + 模型 + 让路）
-            LocalTasksEnvironment provides container.tasksEnvironment,
         ) {
             // 这两个路由**不吃内边距**（其余页面照旧）——理由见外层 edgeToEdgeRoute 的注释。
             NavHost(
@@ -356,15 +348,6 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                             safPicker.launch(null)
                         },
                     )
-                }
-                // 批量字幕任务中心（M7-B，R19）：来源选择 → 多选/整文件夹 → 队列与进度。
-                // 首次进入时引导通知权限：后台生成的通知栏进度与「暂停/取消」按钮都要它（R18/R19）。
-                composable(TopLevelDestination.TASKS.navRoute) {
-                    LaunchedEffect(Unit) {
-                        ensureNotificationPermission()
-                        container.refreshAsrModels()
-                    }
-                    TasksScreen(onOpenSource = { navController.switchTopLevel(TopLevelDestination.BROWSER) })
                 }
                 // 设置（M4，R7/R8）：当前连接入口 + 网络切换策略说明（只读）
                 composable(TopLevelDestination.SETTINGS.navRoute) {
@@ -527,12 +510,6 @@ private fun SettingsRoute(
     }
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
 
-    // 语音识别模型（R14）：设置页里下载/删除/切换 whisper 档位
-    val asrModelViewModel: AsrModelViewModel = viewModel {
-        AsrModelViewModel(environment = container.asrModelEnvironment)
-    }
-    val asrModelState by asrModelViewModel.state.collectAsStateWithLifecycle()
-
     // 已信任的 SFTP 主机指纹（R2）：TOFU 落库后要能看到、能忘掉
     val trustedHostKeys by container.trustedHostKeys.collectAsStateWithLifecycle()
 
@@ -543,11 +520,7 @@ private fun SettingsRoute(
     // 没有崩溃报告时也要能说清"上次是怎么没的"（2026-10-03 用户反馈"没捕捉到崩溃日志"）
     var lastExit by remember { mutableStateOf(container.lastExitSummary()) }
     var breadcrumbs by remember { mutableStateOf(container.readBreadcrumbs()) }
-    LaunchedEffect(asrModelState.notice) {
-        val notice = asrModelState.notice ?: return@LaunchedEffect
-        onNotice(notice)
-        asrModelViewModel.dismissNotice()
-    }
+
     LaunchedEffect(updateState.notice) {
         val notice = updateState.notice ?: return@LaunchedEffect
         onNotice(notice)
@@ -611,14 +584,6 @@ private fun SettingsRoute(
                 onForgetAll = container::forgetAllHostKeys,
             )
             // 语音识别模型（R14）：档位、下载进度、删除、设为当前
-            AsrModelSection(
-                state = asrModelState,
-                onDownload = asrModelViewModel::download,
-                onCancel = asrModelViewModel::cancelDownload,
-                onDelete = asrModelViewModel::delete,
-                onSelect = asrModelViewModel::select,
-                onMirrorToggle = asrModelViewModel::setMirrorEnabled,
-            )
             // 应用内更新（R20）：检查 → 下载（断点续传）→ 签名校验 → 系统安装器
             UpdateSection(
                 state = updateState,
