@@ -490,40 +490,6 @@ class AppContainer(context: Context) :
     /** 预览帧专用抽帧器（主策略 MMR；失败就返回 null，不折腾 FFmpeg——预览不值得等）。 */
 
     /**
-     * **测速**（2026-10-03 用户实测公网 SFTP 0.9 MB/s、WebDAV 0.1 MB/s 后加的仪表）。
-     *
-     * 走**当前生效的远端后端**（即被分段缓存包着的那条真实播放路径），
-     * 所以它量出来的就是"播放时会拿到多少"。测一个新文件最准——已缓存的段不会过网。
-     *
-     * @param path 远端路径（相对连接根目录）。
-     * @param megabytes 读多少 MB（1..64）。
-     */
-    suspend fun measureThroughput(path: String, megabytes: Int = 8): ThroughputReport = withContext(Dispatchers.IO) {
-        val backend = _root.value?.backend
-            ?: return@withContext ThroughputReport(0L, 0L, "当前没有可用的根目录（先去连接页设一个）")
-        val want = megabytes.coerceIn(1, 64).toLong() * 1024 * 1024
-        var total = 0L
-        val started = System.nanoTime()
-        try {
-            backend.openRead(path, 0L, want).use { stream ->
-                val buffer = ByteArray(THROUGHPUT_BUFFER_BYTES)
-                while (total < want) {
-                    val wantNow = minOf(buffer.size.toLong(), want - total).toInt()
-                    val read = stream.read(buffer, 0, wantNow)
-                    if (read < 0) break
-                    total += read
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (t: Throwable) {
-            AppLog.w(TAG, "测速失败：" + path, t)
-            return@withContext ThroughputReport(total, (System.nanoTime() - started) / 1_000_000, ErrorText.of(t, "测速失败"))
-        }
-        ThroughputReport(total, (System.nanoTime() - started) / 1_000_000)
-    }
-
-    /**
      * 网络/缓冲可调参数（**2026-10-03 用户要求**：把并发数开放到设置里，他自己调）。
      *
      * 与 [videoPreferences] 同一考虑：容器构造时就开始读（Eagerly），界面一进来拿到的是真值。
@@ -1333,6 +1299,10 @@ class AppContainer(context: Context) :
                     maxBytes = networkTuning.tuning.value.maxBytes,
                     // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
                     readAheadSegments = networkTuning.tuning.value.readAheadSegments,
+                    // **按"连接"而不是"地址"分缓存**（2026-10-03 用户提问「局域网留了缓存，
+                    // 切公网还要重新缓存吗？」）：同一连接下的局域网/公网地址共用同一份段缓存，
+                    // 在家缓存过的部分，出门走公网直接复用。
+                    namespace = "conn:" + record.id,
                 ).also { remoteCache = it },
             )
         }.onFailure { t ->
@@ -1543,8 +1513,6 @@ class AppContainer(context: Context) :
 
 
 
-        /** 测速时的读缓冲（256 KB：够大，能把"每次调用的开销"淹掉）。 */
-        private const val THROUGHPUT_BUFFER_BYTES = 256 * 1024
 
 
         /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
