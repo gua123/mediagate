@@ -26,13 +26,11 @@ class ThroughputReportTest {
         val text = formatThroughput(
             report = ThroughputReport(bytes = 4L * 1024 * 1024, millis = 2000),
             path = "/video/a.mp4",
-            parallelChunks = 8,
-            chunkBytes = 512L * 1024,
+            segmentBytes = 4L * 1024 * 1024,
             readAheadSegments = 0,
         )
         assertTrue(text, text.contains("2.00 MB/s"))
-        assertTrue(text, text.contains("并发 8"))
-        assertTrue(text, text.contains("512 KB"))
+        assertTrue(text, text.contains("段 4.0 MB"))
         assertTrue(text, text.contains("/video/a.mp4"))
     }
 
@@ -41,8 +39,7 @@ class ThroughputReportTest {
         val text = formatThroughput(
             report = ThroughputReport(bytes = 0, millis = 300, error = "连接超时"),
             path = "/video/a.mp4",
-            parallelChunks = 4,
-            chunkBytes = 1024L * 1024,
+            segmentBytes = 1024L * 1024,
             readAheadSegments = 2,
         )
         assertTrue(text, text.contains("测速失败：连接超时"))

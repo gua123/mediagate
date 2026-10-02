@@ -24,18 +24,16 @@ data class ThroughputReport(
  * 把结果拼成一段可复制的话（**纯函数**，JVM 单测覆盖）。
  *
  * @param path 被测文件路径。
- * @param parallelChunks 当前并发块数（写进结果，方便对比不同设置）。
- * @param chunkBytes 当前块大小。
+ * @param segmentBytes 当前段大小。
  * @param readAheadSegments 当前预读段数。
  */
 fun formatThroughput(
     report: ThroughputReport,
     path: String,
-    parallelChunks: Int,
-    chunkBytes: Long,
+    segmentBytes: Long,
     readAheadSegments: Int,
 ): String {
-    val settings = "并发 " + parallelChunks + " · 块 " + humanBytes(chunkBytes) + " · 预读 " + readAheadSegments + " 段"
+    val settings = "段 " + humanBytes(segmentBytes) + " · 预读 " + readAheadSegments + " 段"
     if (report.error != null) {
         return "测速失败：" + report.error + "\n（文件：" + path + "；设置：" + settings + "）"
     }

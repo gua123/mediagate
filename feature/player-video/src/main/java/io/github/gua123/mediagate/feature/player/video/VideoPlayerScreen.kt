@@ -231,13 +231,12 @@ fun VideoPlayerScreen(
                 },
         )
 
-        // 横滑调进度的 HUD（带预览缩略图；抽不到帧就只显示时间）
+        // 横滑调进度的 HUD（只显示目标时间与位移量；预览缩略图已按用户要求移除）
         state.gestureSeekMs?.let { target ->
             SeekGestureHud(
                 targetMs = target,
                 startMs = state.gestureStartMs,
                 durationMs = state.durationMs,
-                frame = state.previewFrame,
                 modifier = Modifier.align(Alignment.Center),
             )
         }
@@ -418,10 +417,8 @@ private fun SeekGestureHud(
     targetMs: Long,
     startMs: Long,
     durationMs: Long,
-    frame: ByteArray?,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap = remember(frame) { frame?.let { decodePreviewFrame(it) } }
     Column(
         modifier = modifier
             .background(CONTROL_SCRIM, RoundedCornerShape(8.dp))
@@ -429,22 +426,6 @@ private fun SeekGestureHud(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.width(240.dp).heightIn(max = 180.dp),
-            )
-        } else {
-            // 2026-10-03 真机反馈「滑动没有预览图」：帧要抽一下才有，先如实说明在生成，
-            // 免得用户以为功能坏了（本地文件走"直读"路径，通常几百毫秒内就出来）。
-            Text(
-                text = "预览生成中…",
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
         Text(
             text = SeekGestureMath.deltaLabel(targetMs - startMs),
             color = Color.White,
@@ -457,11 +438,6 @@ private fun SeekGestureHud(
         )
     }
 }
-
-/** 预览帧字节 → 位图；解不出来返回 null（HUD 就不显示图）。 */
-private fun decodePreviewFrame(bytes: ByteArray): ImageBitmap? = runCatching {
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-}.getOrNull()
 
 /**
  * 播放页芯片的统一配色（**2026-10-03 用户要求**："字体需要白色不然看不清"）。

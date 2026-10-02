@@ -34,8 +34,6 @@ import io.github.gua123.mediagate.data.storage.api.CacheTuning
 @Composable
 fun NetworkTuningSection(
     tuning: CacheTuning,
-    onParallelChunks: (Int) -> Unit,
-    onChunkBytes: (Long) -> Unit,
     onReadAheadSegments: (Int) -> Unit,
     onSegmentBytes: (Long) -> Unit,
     onReset: () -> Unit,
@@ -55,41 +53,10 @@ fun NetworkTuningSection(
         ) {
             Text("网络与缓冲", style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "公网慢的时候可以调这几项试试；局域网一般不用动。" +
-                    "「段大小」在下次连接后生效，其余三项都是即时生效。",
+                text = "缓存按「段」存：正在看的这个文件的段不会被淘汰，所以下次打开同一个文件是直接读本地。" +
+                    "「段大小」在下次连接后生效，「预读段数」即时生效。",
                 style = MaterialTheme.typography.bodySmall,
             )
-
-            Text(
-                text = if (tuning.parallelChunks <= 1) {
-                    "并发块数：1（不并发，只开一条连接）"
-                } else {
-                    "并发块数：" + tuning.parallelChunks + "（同时下 " + tuning.parallelChunks + " 块）"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Slider(
-                value = tuning.parallelChunks.toFloat(),
-                onValueChange = { onParallelChunks(it.toInt()) },
-                valueRange = CacheTuning.MIN_PARALLEL_CHUNKS.toFloat()..CacheTuning.MAX_PARALLEL_CHUNKS.toFloat(),
-                steps = CacheTuning.MAX_PARALLEL_CHUNKS - CacheTuning.MIN_PARALLEL_CHUNKS - 1,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                text = "服务器对单条连接限速时，调大有效；整条链路带宽不够时，调大也没用。",
-                style = MaterialTheme.typography.bodySmall,
-            )
-
-            Text("块大小（每块多大）", style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CacheTuning.CHUNK_CHOICES.forEach { bytes ->
-                    FilterChip(
-                        selected = tuning.chunkBytes == bytes,
-                        onClick = { onChunkBytes(bytes) },
-                        label = { Text(labelOfBytes(bytes)) },
-                    )
-                }
-            }
 
             Text(
                 text = if (tuning.readAheadSegments == 0) {
@@ -125,7 +92,7 @@ fun NetworkTuningSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onReset) { Text("恢复默认") }
                 Text(
-                    text = "默认 4 MB 段 · 1 MB 块 · 4 并发 · 预读 2 段",
+                    text = "默认 4 MB 段 · 预读 2 段",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

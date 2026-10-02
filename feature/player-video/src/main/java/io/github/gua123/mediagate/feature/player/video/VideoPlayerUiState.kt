@@ -152,7 +152,6 @@ data class VideoPlayerUiState(
     /** 横滑起手时的位置（算位移用）。 */
     val gestureStartMs: Long = 0L,
     /** 预览帧（图片字节）；抽不到就是 null，HUD 退化成只显示时间。 */
-    val previewFrame: ByteArray? = null,
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,
     /** 失败分类；[VideoPlayerStatus.ERROR] 时非空。 */
@@ -358,7 +357,6 @@ sealed interface VideoPlayerEvent {
     data object GestureSeekEnded : VideoPlayerEvent
 
     /** 预览帧就绪（抽不到就不会发这个事件）。 */
-    data class PreviewFrameLoaded(val bytes: ByteArray) : VideoPlayerEvent
 
     /** LibVLC 内核探针：开始/结束（[usable] = null 表示没结论）。 */
     data class VlcProbeChanged(val running: Boolean, val usable: Boolean?, val message: String?) :
@@ -565,15 +563,13 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
     is VideoPlayerEvent.GestureSeekStarted -> copy(
         gestureStartMs = event.startMs,
         gestureSeekMs = event.startMs,
-        previewFrame = null,
     )
 
     is VideoPlayerEvent.GestureSeekMoved -> copy(gestureSeekMs = event.targetMs)
 
     // 结束：目标位置由 ViewModel 提交给内核，这里先把拖拽态收干净
-    VideoPlayerEvent.GestureSeekEnded -> copy(gestureSeekMs = null, previewFrame = null)
+    VideoPlayerEvent.GestureSeekEnded -> copy(gestureSeekMs = null)
 
-    is VideoPlayerEvent.PreviewFrameLoaded -> copy(previewFrame = event.bytes)
 
     is VideoPlayerEvent.VlcProbeChanged -> copy(
         vlcProbeRunning = event.running,
