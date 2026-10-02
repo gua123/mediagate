@@ -94,6 +94,16 @@ interface VideoPlayerPreferences {
     /** 记住控制层隐藏延时。 */
     suspend fun setControlsHideSeconds(seconds: Int) = Unit
 
+    /**
+     * **上一次播放时的屏幕方向**（2026-10-03 用户要求：「记住上一次播放时是横屏还是竖屏」）。
+     *
+     * null ＝没有记录（进播放页跟随系统）；有值时进播放页直接用它。
+     */
+    val lastOrientationValue: PlayerOrientation? get() = null
+
+    /** 记住这次的方向（点旋转按钮时写）。 */
+    suspend fun setLastOrientation(orientation: PlayerOrientation?) = Unit
+
     /** 字幕总开关（R14）；默认关。 */
     val subtitleEnabled: StateFlow<Boolean>
 
