@@ -490,6 +490,13 @@ class AppContainer(context: Context) :
     /** 预览帧专用抽帧器（主策略 MMR；失败就返回 null，不折腾 FFmpeg——预览不值得等）。 */
     private val previewExtractor: FrameExtractor = MediaMetadataRetrieverFrameExtractor()
 
+    /**
+     * 网络/缓冲可调参数（**2026-10-03 用户要求**：把并发数开放到设置里，他自己调）。
+     *
+     * 与 [videoPreferences] 同一考虑：容器构造时就开始读（Eagerly），界面一进来拿到的是真值。
+     */
+    val networkTuning = NetworkTuningSettings(appContext, ioScope)
+
     private val videoPreferences: VideoPlayerPreferences =
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
@@ -1339,6 +1346,10 @@ class AppContainer(context: Context) :
                     delegate = build(),
                     rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
                     readAheadScope = ioScope,
+                    // 段大小在构造时定（改它等于缓存作废，所以"下次连接生效"）…
+                    segmentBytes = networkTuning.tuning.value.segmentBytes,
+                    // …其余三项每次取块现读 ⇒ 用户在设置里一改就生效
+                    liveTuning = { networkTuning.tuning.value },
                 ),
             )
         }.onFailure { t ->
