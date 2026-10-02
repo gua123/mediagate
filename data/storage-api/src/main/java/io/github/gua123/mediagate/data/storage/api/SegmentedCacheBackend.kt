@@ -92,8 +92,9 @@ class SegmentedCacheBackend(
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
         // 记住"当前在读哪个文件"：淘汰时保护它的段（用户要求：保留单文件缓存，下次打开更快）
         activePath = path
-        val size = knownSize(path)
-        verifySizeOrDrop(path, size)
+        val stamp = knownStamp(path)
+        verifyStampOrDrop(path, stamp)
+        val size = stamp?.size ?: -1L
         return CachedStream(path = path, start = offset, size = size, requestedLength = length)
     }
 
@@ -103,16 +104,49 @@ class SegmentedCacheBackend(
      * 为什么要缓存：播放器每 seek 一次就会重开数据源，而 [openRead] 需要文件长度来算流长度；
      * 每次都 `stat` 等于给每次拖拽多加一个网络往返。文件在同一会话里几乎不会变。
      */
-    private suspend fun knownSize(path: String): Long {
-        synchronized(sizeCache) { sizeCache[path] }?.let { return it }
-        val size = delegate.stat(path).size
-        if (size >= 0L) synchronized(sizeCache) { sizeCache[path] = size }
-        return size
+    /**
+     * 文件指纹：大小 + 修改时间 + ETag（**2026-10-03 用户提问后加固**）。
+     *
+     * @param size 字节数；-1 = 未知。
+     * @param mtime 修改时间（Unix 毫秒）；0 = 未知。
+     * @param etag 内容版本标识；协议不支持时为 null。
+     */
+    private data class FileStamp(val size: Long, val mtime: Long, val etag: String?) {
+
+        /** 存进 `.size` 边车文件的一行文本（老版本只写大小，读取时按"仅比大小"兼容）。 */
+        fun encode(): String = size.toString() + "|" + mtime + "|" + (etag ?: "")
+
+        companion object {
+            /** 解析边车内容；解析不出来返回 null（当作"没有记录"）。 */
+            fun decode(raw: String): FileStamp? {
+                val parts = raw.trim().split("|")
+                val size = parts.getOrNull(0)?.toLongOrNull() ?: return null
+                // 老格式（只有大小）：mtime/etag 视为未知 ⇒ 只比大小
+                val mtime = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                val etag = parts.getOrNull(2)?.takeIf { it.isNotEmpty() }
+                return FileStamp(size, mtime, etag)
+            }
+        }
     }
 
-    /** 文件大小缓存（LRU 64 条）。 */
-    private val sizeCache = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean = size > 64
+    /**
+     * 取文件指纹（带缓存）。
+     *
+     * 只在第一次 `openRead` 时走一次 `stat`，之后同路径直接用缓存——
+     * 所以"加指纹"这件事**不额外增加任何网络请求**（这也是它值得做的原因）。
+     */
+    private suspend fun knownStamp(path: String): FileStamp? {
+        synchronized(stampCache) { stampCache[path] }?.let { return it }
+        val entry = runCatching { delegate.stat(path) }.getOrNull() ?: return null
+        if (entry.size < 0L) return null
+        val stamp = FileStamp(size = entry.size, mtime = entry.mtime, etag = entry.etag)
+        synchronized(stampCache) { stampCache[path] = stamp }
+        return stamp
+    }
+
+    /** 文件指纹缓存（LRU 64 条，值里含上一次 stat 的结果）。 */
+    private val stampCache = object : LinkedHashMap<String, FileStamp>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FileStamp>?): Boolean = size > 64
     }
 
     override suspend fun write(path: String, data: InputStream) = delegate.write(path, data)
@@ -169,7 +203,7 @@ class SegmentedCacheBackend(
             if (file.delete()) freed += length
         }
         // 目录留着（下次取段直接用），只清内容
-        synchronized(sizeCache) { sizeCache.clear() }
+        synchronized(stampCache) { stampCache.clear() }
         freed
     }
 
@@ -185,34 +219,50 @@ class SegmentedCacheBackend(
     /**
      * **过期缓存护栏**：同一个路径背后的文件可能被换掉（服务器上重新上传、同名不同内容）。
      *
-     * 做法极简：首次见到某个路径时把"文件大小"记进 `.size` 边车文件；以后每次打开都比对一次，
-     * 不一样就把该路径的段全部删掉重下（宁可多下一次，也不能拿旧字节当新视频播）。
+     * 做法：首次见到某个路径时把**文件指纹**（大小 + 修改时间 + ETag）写进 `.size` 边车文件；
+     * 以后每次打开都比对一次，指纹不一样就把该路径的段全部删掉重下
+     * （宁可多下一次，也不能拿旧字节当新视频播）。
      *
-     * 代价：一次 `stat` 的结果（已在 [knownSize] 缓存里）+ 一次本地小文件读写，可忽略。
+     * 三条口径：
+     * - **多比几个字段**：只比大小会漏掉"同名同大小但内容不同"（重新压制、换音轨）的情况；
+     * - **未知字段不参与判定**（协议不给 mtime/etag 时就是 0/null），避免"比不了就当成变了"而反复重下；
+     * - **老格式兼容**：边车里只有大小（旧版本写的）时，退化成只比大小。
+     *
+     * 代价：一次 `stat`（已在 [knownStamp] 缓存里，不额外发请求）+ 一次本地小文件读写。
      */
-    private suspend fun verifySizeOrDrop(path: String, size: Long) {
-        if (size < 0L) return
+    private suspend fun verifyStampOrDrop(path: String, stamp: FileStamp?) {
+        if (stamp == null || stamp.size < 0L) return
         val dir = dirFor(path)
-        val stamp = File(dir, SIZE_STAMP)
+        val stampFile = File(dir, SIZE_STAMP)
         val recorded = withContext(io) {
-            runCatching { stamp.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() }.getOrNull()
+            runCatching {
+                stampFile.takeIf { it.isFile }?.readText()?.let { FileStamp.decode(it) }
+            }.getOrNull()
         }
         if (recorded == null) {
-            withContext(io) {
-                runCatching {
-                    dir.mkdirs()
-                    stamp.writeText(size.toString())
-                }
-            }
+            writeStamp(dir, stampFile, stamp)
             return
         }
-        if (recorded == size) return
-        AppLog.w(TAG, "文件大小变了（" + recorded + " → " + size + "），丢掉旧缓存：" + path)
+        if (!differs(recorded, stamp)) return
+        AppLog.w(TAG, "文件指纹变了（" + recorded.encode() + " → " + stamp.encode() + "），丢掉旧缓存：" + path)
         clearFile(path)
+        writeStamp(dir, stampFile, stamp)
+    }
+
+    /** 指纹是否"实质性不同"（未知字段不参与判定）。 */
+    private fun differs(a: FileStamp, b: FileStamp): Boolean {
+        if (a.size != b.size) return true
+        if (a.mtime > 0L && b.mtime > 0L && a.mtime != b.mtime) return true
+        if (!a.etag.isNullOrEmpty() && !b.etag.isNullOrEmpty() && a.etag != b.etag) return true
+        return false
+    }
+
+    /** 落盘指纹（best-effort：写不进去也不影响播放）。 */
+    private suspend fun writeStamp(dir: File, stampFile: File, stamp: FileStamp) {
         withContext(io) {
             runCatching {
                 dir.mkdirs()
-                stamp.writeText(size.toString())
+                stampFile.writeText(stamp.encode())
             }
         }
     }
