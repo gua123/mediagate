@@ -1,8 +1,8 @@
 {
-  "versionCode": 36,
-  "versionName": "0.1.35",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.35/mediagate-0.1.35.apk",
-  "sizeBytes": 74618862,
-  "sha256": "5f8e38876a1be12632ba309c15f651912590cecbde01faf33b30721144b665d2",
-  "notes": "## mediagate 0.1.35\n\n### 先说结论：**你的服务器没问题**，而且我用你的凭据在开发机上把它验通了\n\n我拿 `.toolchain/real-server.properties` 里的账号密码，对**你截图里那个地址**跑了我们 App 会发的那条请求：\n\n| 请求 | 结果 |\n| --- | --- |\n| `PROPFIND http://vpn.gua233.top:20005/`（匿名） | **401** + `WWW-Authenticate: Basic realm=\"SYNO_WebDAV Storage\"` |\n| 同一条 + 账号密码 | **207 Multi-Status** ✅ |\n\n⇒ 地址、端口、账号密码、**以及我们发的那条 PROPFIND 请求本身**，全都是对的；\n服务器是群晖的 WebDAV、用的是 Basic 认证（我们客户端也是 Basic，对得上）。\n（顺带发现：本机存的测试配置里 WAN 地址还是旧端口 **25005**，那个端口现在连不上——你截图里的 20005 才是现行的。）\n\n所以问题在\"**App 实际发出去/收回来的是什么**\"这一环，而这件事以前看不出来。\n\n### 这一版让探针把话说清楚\n\n1. 失败信息现在带上 **请求的 URL + 响应状态行 + 响应体开头一小段**（群晖/Apache 的报错页往往直接写着原因）；\n2. 探针**自己跟随重定向**了（以前 OkHttp 的自动跟随会把 PROPFIND 降级成 GET，所以历史上我们干脆不跟随——\n   代价是碰到 301 就只报一句 \"HTTP 301\"；现在按原方法重发，并保留认证头）；\n3. 片段做了脱敏（URL 里的 `user:pass@` 会被抹掉）、压成单行、限长 160 字。\n\n### 请你做一件事\n\n装 0.1.35 → 「连接 → 新建/编辑连接 → 测试一下」→ 点「**技术详情**」→ 把那段发我（可「复制全部」）。\n有了状态码和响应片段，就能一次定位到底是认证、路径还是响应格式的问题。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.35/mediagate-0.1.35.apk`"
+  "versionCode": 37,
+  "versionName": "0.1.36",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.36/mediagate-0.1.36.apk",
+  "sizeBytes": 74618839,
+  "sha256": "b91c3d3b6f8b9b237f6b577171a46f6b70a3c75dff48628b7d75f12a3cae3b28",
+  "notes": "## mediagate 0.1.36\n\n### 你那句\"其他播放器已知 WebDAV 可用\"，我在开发机上又验了一遍（这次是变体矩阵）\n\n用 `.toolchain/real-server.properties` 里的账号密码，对 `http://vpn.gua233.top:20005/` 跑了 10 种变体：\n\n| 变体 | 结果 |\n| --- | --- |\n| 我们探针的原样（PROPFIND + Depth:0 + XML body） | **207** ✅ |\n| 再加 OkHttp 会带的 `Accept-Encoding: identity` / `User-Agent: okhttp` | **207** ✅ |\n| 不带 body | **207** ✅ |\n| `Depth: 1` | **207** ✅ |\n| 不带 `Depth` 头 | 403 |\n| `Depth: infinity` | 403 |\n| 普通 `GET /` | 404（正常） |\n| `OPTIONS /` | 200 |\n\n⇒ **我们发出去的请求形状是对的**（`Depth` 我们一直带、用的是 0/1），服务端也没问题。\n那 App 里那次失败只可能来自\"运行时的网络情况\"或\"它收到了别的东西\"。\n\n### 这一版针对\"手机上的网络中断\"\n\n1. 新增分类「**网络中途断开**」——以前这类失败（`unexpected end of stream`、`connection reset` 等）会兜底成\n   「请求失败」再落进「未知错误」，现在直接告诉你：\"连接被掐断了（移动网络/VPN 常见）：**重试一次多半就好**\"；\n2. 探针遇到**瞬时 IO 错误会自己重试一次**（间隔 400 ms）——VPN + 5G 这种链路上很常见，\n   以前一次失败就报错，现在多半能直接过。\n\n### 还是那句话（这次一定够定位了）\n\n装 0.1.36 → 「连接 → 编辑连接 → 测试一下」→ 点「技术详情」→ 复制发我。\n里面会写清：**请求的完整 URL、响应的状态行、响应体开头一段**——认证 / 路径 / 响应格式 / 网络中断，四选一立刻定。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.36/mediagate-0.1.36.apk`"
 }
