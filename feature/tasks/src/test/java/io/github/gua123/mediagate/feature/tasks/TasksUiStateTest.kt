@@ -288,6 +288,36 @@ class TasksUiStateTest {
         assertTrue("模型没装要给出下载指引", modelMissing.enqueueHint.orEmpty().contains("语音识别模型"))
     }
 
+    // ---------------------------------------------------------------- 入队去重
+
+    @Test
+    fun plan_skipsFilesAlreadyQueued() {
+        val candidates = listOf(
+            candidate("a.mp4"),
+            candidate("b.mp4"),
+            candidate("c.mp4"),
+        )
+        val planned = TasksPlan.plan(
+            candidates,
+            skipExisting = true,
+            alreadyQueued = setOf("b.mp4"),
+        )
+        assertEquals(listOf("a.mp4", "c.mp4"), planned.accepted.map { it.path })
+        assertEquals(listOf("b.mp4"), planned.duplicate.map { it.path })
+    }
+
+    @Test
+    fun plan_dedupesWithinTheSameBatch() {
+        val planned = TasksPlan.plan(
+            listOf(candidate("a.mp4"), candidate("a.mp4")),
+            skipExisting = true,
+        )
+        assertEquals(listOf("a.mp4"), planned.accepted.map { it.path })
+        assertEquals(1, planned.duplicate.size)
+    }
+
+    private fun candidate(path: String) = AsrCandidate(path = path, name = path.substringAfterLast('/'), size = 1_000L)
+
     // ---------------------------------------------------------------- 入队计划
 
     @Test

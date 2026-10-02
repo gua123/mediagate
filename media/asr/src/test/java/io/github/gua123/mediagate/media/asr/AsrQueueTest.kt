@@ -21,6 +21,29 @@ class AsrQueueTest {
     private fun queue(vararg items: AsrItem, concurrency: Int = 1) =
         AsrQueue.of(items.toList(), concurrency = concurrency)
 
+    // ---------------------------------------------------------------- 入队去重（2026-10-03 真机：同一文件排了三遍）
+
+    @Test
+    fun enqueue_ignoresDuplicatesOfUnfinishedTasks() {
+        var state = AsrQueue.enqueue(queue(), listOf(item(1, name = "a.mp4")))
+        // 同一个路径再来一次：忽略（队列里已有未结束的同名任务）
+        state = AsrQueue.enqueue(state, listOf(item(2, name = "a.mp4")))
+        assertEquals(1, state.items.size)
+
+        // 一批里自己重复也会被去掉
+        state = AsrQueue.enqueue(state, listOf(item(3, name = "b.mp4"), item(4, name = "b.mp4")))
+        assertEquals(2, state.items.size)
+        assertEquals(listOf("a.mp4", "b.mp4"), state.items.map { it.name })
+    }
+
+    @Test
+    fun enqueue_allowsRerunningFinishedFiles() {
+        val done = queue(item(1, state = AsrItemState.SUCCEEDED, name = "a.mp4"))
+        val next = AsrQueue.enqueue(done, listOf(item(2, name = "a.mp4")))
+        // 已成功的不拦：用户就是故意重跑
+        assertEquals(2, next.items.size)
+    }
+
     // ---------------------------------------------------------------- 入队与启动
 
     @Test

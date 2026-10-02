@@ -403,6 +403,17 @@ private fun QueueHeaderCard(state: TasksUiState, viewModel: TasksViewModel) {
     }
 }
 
+/**
+ * 队列条目的状态文案（**2026-10-03 真机截图**：刚入队时一直显示"识别中 0%"，看着像卡死）。
+ *
+ * 正在跑但进度还是 0 → 说明还在准备（加载模型 / 解出第一段音频），如实写出来。
+ */
+private fun queueStateLabel(item: AsrItem): String = when {
+    item.state == AsrItemState.RUNNING && item.progress.percent == 0 -> "准备中（加载模型…）"
+    item.state == AsrItemState.WRITING -> "正在写字幕文件"
+    else -> item.state.zhText
+}
+
 /** 队列里的一条任务。 */
 @Composable
 private fun QueueRow(item: AsrItem, viewModel: TasksViewModel, canReorder: Boolean) {
@@ -417,7 +428,9 @@ private fun QueueRow(item: AsrItem, viewModel: TasksViewModel, canReorder: Boole
                     )
                 }
                 Text(
-                    text = item.state.zhText,
+                    // 刚开始跑、进度还是 0 的时候，多半在加载模型（small 档模型 400+ MB）——
+                    // 只显示"识别中 0%"会被当成卡死（2026-10-03 真机截图）
+                    text = queueStateLabel(item),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
