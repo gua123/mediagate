@@ -76,6 +76,19 @@ class VideoPlayerPreferencesSettings(
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SIMPLE_MODE] = on }
     }
 
+    /**
+     * **切后台是否自动进画中画**（2026-10-03 用户要求）；默认开（与旧行为一致）。
+     */
+    val pipAutoEnter: StateFlow<Boolean> = context.videoPlayerDataStore.data
+        .map { preferences -> preferences[KEY_PIP_AUTO_ENTER] ?: true }
+        .stateIn(scope, SharingStarted.Eagerly, true)
+
+    override val pipAutoEnterEnabled: Boolean get() = pipAutoEnter.value
+
+    override suspend fun setPipAutoEnter(enabled: Boolean) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_PIP_AUTO_ENTER] = enabled }
+    }
+
     // ---------------------------- 音量 / 亮度（**2026-10-03 用户要求**：左右竖直滑动 + 音量 200% 上限）
 
     /** 记住的音量倍率；没有记录时为 1.0（原始音量）。 */
@@ -177,6 +190,9 @@ class VideoPlayerPreferencesSettings(
 
         /** 循环方式（2026-10-03）：存枚举名，认不出来就当不循环。 */
         val KEY_LOOP_MODE = stringPreferencesKey("video_loop_mode")
+
+        /** 切后台自动进画中画（2026-10-03）：默认开。 */
+        val KEY_PIP_AUTO_ENTER = booleanPreferencesKey("pip_auto_enter")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")

@@ -521,12 +521,25 @@ class AppContainer(context: Context) :
         ioScope.launch { runCatching { settings.setLastPlayedPath(path) } }
     }
 
+    /**
+     * **切后台是否自动进画中画**（2026-10-03 用户要求「可以设置软件在后台时是否显示画中画」）。
+     *
+     * 设置页直接绑它；播放页读同一份偏好（进页面时生效）。
+     */
+    // 用 getter：这个属性声明在 videoPreferences 之前，直接赋值会踩"属性初始化顺序"（本项目有过 P0）
+    val pipAutoEnterSetting: StateFlow<Boolean> get() = videoPreferences.pipAutoEnter
+
+    /** 改画中画开关（落盘）。 */
+    suspend fun updatePipAutoEnter(enabled: Boolean) {
+        videoPreferences.setPipAutoEnter(enabled)
+    }
+
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
 
     /** 清空缓存，返回释放的字节数。 */
     suspend fun clearRemoteCache(): Long = remoteCache?.clearAll() ?: 0L
 
-    private val videoPreferences: VideoPlayerPreferences =
+    private val videoPreferences: VideoPlayerPreferencesSettings =
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
     /**

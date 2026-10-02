@@ -83,6 +83,7 @@ class VideoPlayerViewModel(
             volume = PlayerEngine.sanitizeVolume(environment.preferences.playerVolume),
             brightness = environment.preferences.screenBrightness,
             loopMode = environment.preferences.loopMode,
+            pipAutoEnter = environment.preferences.pipAutoEnterEnabled,
         ),
     )
 
@@ -164,10 +165,20 @@ class VideoPlayerViewModel(
     private fun attachHosts() {
         applyVolumeToEngine()
         environment.pip.setActionSink(VideoPipActionSink(::onPipAction))
+        // 通知栏/锁屏的上一集/下一集（2026-10-03 用户要求）：复用页面自己的队列逻辑
+        environment.playback.setSessionActionSink(
+            object : VideoSessionActionSink {
+                override fun onPrevious() = previous()
+                override fun onNext() = next()
+            },
+        )
         hostJob = viewModelScope.launch {
             state.collect { snapshot ->
                 environment.pip.updateActions(VideoPipMath.showsPauseAction(snapshot))
-                environment.pip.setAutoEnterEnabled(VideoPipMath.autoEnterEnabled(snapshot))
+                // 用户开关（设置 → 播放）与"当前状态允许吗"两个条件都要满足
+                environment.pip.setAutoEnterEnabled(
+                    _state.value.pipAutoEnter && VideoPipMath.autoEnterEnabled(snapshot),
+                )
                 environment.playback.setActive(isPlaybackActive(snapshot))
             }
         }
@@ -912,6 +923,7 @@ class VideoPlayerViewModel(
         // R13/R18/R19：退出播放页要把宿主那一侧也收干净（不自动进 PIP、不发会话、放开让路）
         hostJob?.cancel()
         environment.pip.setActionSink(null)
+        environment.playback.setSessionActionSink(null)
         environment.pip.setAutoEnterEnabled(false)
         environment.pip.updateActions(false)
         environment.playback.setActive(false)

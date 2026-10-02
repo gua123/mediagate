@@ -83,6 +83,7 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerScreen
 import io.github.gua123.mediagate.core.download.FileDownloader
 import io.github.gua123.mediagate.app.ui.DiagnosticsSection
 import io.github.gua123.mediagate.app.ui.NetworkTuningSection
+import io.github.gua123.mediagate.app.ui.PlaybackSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
@@ -621,6 +622,12 @@ private fun SettingsRoute(
             container.keepAlive.setConfirmed(kind, confirmed)
         },
         extraSections = {
+            // 播放（2026-10-03 用户要求：「可以设置软件在后台时是否显示画中画」）
+            val pipAutoEnterNow by container.pipAutoEnterSetting.collectAsStateWithLifecycle()
+            PlaybackSection(
+                pipAutoEnter = pipAutoEnterNow,
+                onPipAutoEnter = { enabled -> scope.launch { container.updatePipAutoEnter(enabled) } },
+            )
             // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
             NetworkTuningSection(
                 tuning = networkTuning,
