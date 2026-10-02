@@ -151,6 +151,18 @@ data class VideoPlayerUiState(
     val gestureSeekMs: Long? = null,
     /** 横滑起手时的位置（算位移用）。 */
     val gestureStartMs: Long = 0L,
+
+    /** **音量倍率**（2026-10-03 用户要求：右侧上下滑，上限 200%）。 */
+    val volume: Float = 1f,
+
+    /** **屏幕亮度**（2026-10-03 用户要求：左侧上下滑；0..1，-1 = 跟随系统）。 */
+    val brightness: Float = -1f,
+
+    /** 正在竖直拖动的是哪个区（null = 没有）；界面据此显示亮度/音量 HUD。 */
+    val verticalZone: PlayerGestureZone? = null,
+
+    /** 竖直拖动的实时值（音量倍率或亮度，看 [verticalZone]）。 */
+    val verticalValue: Float = 0f,
     /** 预览帧（图片字节）；抽不到就是 null，HUD 退化成只显示时间。 */
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,

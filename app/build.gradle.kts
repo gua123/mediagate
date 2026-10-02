@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 53
-        versionName = "0.1.52"
+        versionCode = 54
+        versionName = "0.1.53"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

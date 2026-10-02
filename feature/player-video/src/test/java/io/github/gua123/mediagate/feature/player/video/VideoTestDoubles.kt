@@ -80,6 +80,19 @@ internal class FakePlayerEngine(
 
     override val speed: Float get() = speedValue
 
+    /** 音量真身（同上，setVolume 是接口方法）。 */
+    var volumeValue: Float = 1f
+
+    override val volume: Float get() = volumeValue
+
+    /** 记录每一次音量设置，便于断言"切内核后音量被重新套上"。 */
+    val volumeCalls = mutableListOf<Float>()
+
+    override fun setVolume(volume: Float) {
+        volumeValue = PlayerEngine.sanitizeVolume(volume)
+        volumeCalls += volumeValue
+    }
+
     /** 解码档位真身（同上，setDecoderMode 是接口方法）。 */
     var decoderModeValue: DecoderMode = DecoderMode.AUTO_HW
 

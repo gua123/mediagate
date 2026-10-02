@@ -355,9 +355,13 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 composable(route = VideoPlayerRoutes.ROUTE, arguments = VideoPlayerRoutes.arguments) { entry ->
                     // 播放页沉浸式全屏（2026-10-03 真机截图：横屏看视频时状态栏还占着一条）
                     ImmersiveWhilePlaying()
+                    // 亮度：播放页把值报上来，这里写成窗口属性（退出播放页 WindowBrightness 会恢复系统亮度）
+                    var playerBrightness by remember { mutableStateOf(-1f) }
+                    WindowBrightness(playerBrightness)
                     VideoPlayerScreen(
                         path = VideoPlayerRoutes.pathOf(entry.arguments?.getString(VideoPlayerRoutes.ARG_PATH)),
                         onBack = { navController.backToBrowser(lastBrowsedPath) },
+                        onBrightnessChanged = { playerBrightness = it },
                     )
                 }
 
@@ -393,6 +397,31 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
  * 进播放页隐藏状态栏与导航栏，从边缘上滑可临时唤出（BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE）；
  * 离开播放页恢复——只在播放页生效，不影响其它页面。
  */
+/**
+ * **窗口亮度跟随播放页状态**（2026-10-03 用户要求：左侧上下滑调亮度）。
+ *
+ * 三条口径：① 拖动过程中实时改（[brightness] 一变就写窗口属性）；
+ * ② **退出播放页恢复系统亮度**（`screenBrightness = -1`，用户原话「在不播放视频时需要恢复」）；
+ * ③ 记住的值由播放页偏好负责，下次进来 [brightness] 一开始就是上次那个值。
+ */
+@Composable
+private fun WindowBrightness(brightness: Float) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    // 只在播放页存在期间生效：离开时恢复"跟随系统"
+    DisposableEffect(activity) {
+        onDispose {
+            val window = activity?.window ?: return@onDispose
+            window.attributes = window.attributes.apply { screenBrightness = -1f }
+        }
+    }
+    LaunchedEffect(activity, brightness) {
+        val window = activity?.window ?: return@LaunchedEffect
+        if (brightness < 0f) return@LaunchedEffect
+        window.attributes = window.attributes.apply { screenBrightness = brightness.coerceIn(0.01f, 1f) }
+    }
+}
+
 @Composable
 private fun ImmersiveWhilePlaying() {
     val context = LocalContext.current

@@ -9,6 +9,10 @@ import androidx.compose.animation.fadeOut
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.fillMaxHeight
+import io.github.gua123.mediagate.media.engine.PlayerEngine
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
@@ -149,6 +153,13 @@ fun VideoPlayerScreen(
     path: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * **亮度变化回调**（2026-10-03 用户要求：左侧上下滑调亮度）。
+     *
+     * 亮度是"窗口属性"，只有 :app 拿得到 Activity，所以本模块只把值报上去；
+     * 默认空实现，单测/预览不必提供。
+     */
+    onBrightnessChanged: (Float) -> Unit = {},
 ) {
     val environment = LocalVideoPlayerEnvironment.current
     val viewModel: VideoPlayerViewModel = viewModel(key = path) {
@@ -157,6 +168,9 @@ fun VideoPlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val output by viewModel.videoOutput.collectAsStateWithLifecycle()
     val subtitleCue by viewModel.subtitleCue.collectAsStateWithLifecycle()
+
+    // 亮度：值一变就报给宿主（宿主负责写窗口属性；退出播放页由宿主恢复系统亮度）
+    LaunchedEffect(state.brightness) { onBrightnessChanged(state.brightness) }
 
     // R13：是否在画中画里（由 :app 的宿主能力给出，页面只读）
     val inPip by environment.pip.isInPip.collectAsStateWithLifecycle()
@@ -208,9 +222,35 @@ fun VideoPlayerScreen(
         // 2) 点按显隐控制层 + **横滑调进度**（2026-10-03 用户要求：「不弹出控制也能左右滑动调整进度条」）
         //    横滑走独立的手势检测，只更新画面中央的 HUD，不把控制层弹出来
         val dragAccum = remember { FloatArray(1) }
+        // **竖直手势**（2026-10-03 用户要求）：左 1/3 调亮度、右 1/3 调音量。
+        // 三个区各挂各的手势检测，互不抢事件（中间仍是横滑调进度）。
+        val zoneHeight = remember { FloatArray(1) }
+        val startValue = remember { FloatArray(1) }
+        val verticalDrag = remember { FloatArray(1) }
+        val onVerticalStart = { zone: PlayerGestureZone ->
+            verticalDrag[0] = 0f
+            viewModel.beginVerticalGesture(zone)
+            startValue[0] = when (zone) {
+                PlayerGestureZone.VOLUME -> state.volume
+                else -> if (state.brightness < 0f) 0.5f else state.brightness
+            }
+        }
+        val onVerticalDrag = { zone: PlayerGestureZone, delta: Float ->
+            verticalDrag[0] += delta
+            viewModel.updateVerticalGesture(
+                PlayerGestureMath.applyVerticalDrag(
+                    start = startValue[0],
+                    deltaPx = verticalDrag[0],
+                    height = zoneHeight[0].toInt(),
+                    min = if (zone == PlayerGestureZone.VOLUME) 0f else 0.01f,
+                    max = if (zone == PlayerGestureZone.VOLUME) PlayerEngine.MAX_VOLUME else 1f,
+                ),
+            )
+        }
         Box(
             modifier = Modifier
                 .matchParentSize()
+                .onSizeChanged { zoneHeight[0] = it.height.toFloat() }
                 .pointerInput(Unit) {
                     detectTapGestures { controlsVisible = !controlsVisible }
                 }
@@ -230,6 +270,50 @@ fun VideoPlayerScreen(
                     )
                 },
         )
+
+        // 亮度区（左 1/3）与音量区（右 1/3）：竖直拖动，各自独立检测
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(1f / 3f)
+                .align(Alignment.CenterStart)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { onVerticalStart(PlayerGestureZone.BRIGHTNESS) },
+                        onVerticalDrag = { change, delta ->
+                            change.consume()
+                            onVerticalDrag(PlayerGestureZone.BRIGHTNESS, delta)
+                        },
+                        onDragEnd = { viewModel.commitVerticalGesture() },
+                        onDragCancel = { viewModel.commitVerticalGesture() },
+                    )
+                },
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(1f / 3f)
+                .align(Alignment.CenterEnd)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { onVerticalStart(PlayerGestureZone.VOLUME) },
+                        onVerticalDrag = { change, delta ->
+                            change.consume()
+                            onVerticalDrag(PlayerGestureZone.VOLUME, delta)
+                        },
+                        onDragEnd = { viewModel.commitVerticalGesture() },
+                        onDragCancel = { viewModel.commitVerticalGesture() },
+                    )
+                },
+        )
+
+        // 竖直手势的 HUD：拖动时显示「亮度 40%」「音量 180%」
+        state.verticalZone?.let { zone ->
+            VerticalGestureHud(
+                text = PlayerGestureMath.label(zone, state.verticalValue),
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
 
         // 横滑调进度的 HUD（只显示目标时间与位移量；预览缩略图已按用户要求移除）
         state.gestureSeekMs?.let { target ->
@@ -412,6 +496,19 @@ private fun PipBadge(modifier: Modifier = Modifier) {
  *
  * 预览帧由 :app 抽（拿不到就只显示"±位移 + 目标时间"，拖动本身照常可用）。
  */
+/** 竖直手势（亮度/音量）的中央提示：一行字，和其它 HUD 一样半透明黑底白字。 */
+@Composable
+private fun VerticalGestureHud(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.Black.copy(alpha = 0.6f))
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    ) {
+        Text(text = text, color = Color.White, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
 @Composable
 private fun SeekGestureHud(
     targetMs: Long,

@@ -2,6 +2,7 @@ package io.github.gua123.mediagate.media.engine
 
 import android.content.Context
 import android.graphics.Color
+import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.view.View
 import androidx.media3.common.C
@@ -20,6 +21,8 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import kotlin.math.log10
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -78,6 +81,14 @@ class ExoPlayerEngine(
     private var playbackSpeed: Float = EngineSwitchPlanner.DEFAULT_SPEED
 
     override val speed: Float get() = playbackSpeed
+
+    /** 音量倍率（0..200%）；>100% 的部分由 [loudness] 增益补齐。 */
+    private var playbackVolume: Float = 1f
+
+    override val volume: Float get() = playbackVolume
+
+    /** 软件增益（LoudnessEnhancer）：100% 以上才用得到，懒建、释放时清掉。 */
+    private var loudness: LoudnessEnhancer? = null
 
     private var media: MediaSourceRef? = null
 
@@ -143,6 +154,8 @@ class ExoPlayerEngine(
 
     override fun play() {
         player.play()
+        // 声轨在真正开播后才有 sessionId：把 >100% 的增益在这里补一次
+        applyBoost(playbackVolume)
     }
 
     override fun pause() {
@@ -156,6 +169,36 @@ class ExoPlayerEngine(
     override fun setSpeed(x: Float) {
         playbackSpeed = EngineSwitchPlanner.sanitizeSpeed(x)
         player.setPlaybackParameters(PlaybackParameters(playbackSpeed))
+    }
+
+    /**
+     * 音量：0~100% 交给 ExoPlayer；100%~200% 用 [LoudnessEnhancer] 加增益。
+     *
+     * 为什么不用 ExoPlayer 直接放大：它只支持 0..1（再大就是削波失真），
+     * 超过原始音量的部分**只能靠系统音效链**——LoudnessEnhancer 正是干这个的（200% ≈ +6 dB）。
+     */
+    override fun setVolume(volume: Float) {
+        val v = PlayerEngine.sanitizeVolume(volume)
+        playbackVolume = v
+        player.volume = v.coerceAtMost(1f)
+        applyBoost(v)
+    }
+
+    /** 把 100% 以上的部分换算成 dB 增益；声轨还没建立时先不发（[play] 里会再补一次）。 */
+    private fun applyBoost(volume: Float) {
+        val gainDb = if (volume <= 1f) 0 else (20.0 * log10(volume.toDouble())).roundToInt()
+        try {
+            val sessionId = player.audioSessionId
+            if (sessionId == C.AUDIO_SESSION_ID_UNSET || sessionId == 0) return
+            val enhancer = loudness ?: LoudnessEnhancer(sessionId).also {
+                it.setEnabled(true)
+                loudness = it
+            }
+            enhancer.setTargetGain(gainDb)
+        } catch (t: RuntimeException) {
+            // 个别机型/音轨不支持音效链：退化成"最大 100%"，不影响播放
+            AppLog.w(TAG, "音量增益不可用（仍按 100% 播放）", t)
+        }
     }
 
     override fun setResizeMode(mode: ResizeMode) {
@@ -194,6 +237,12 @@ class ExoPlayerEngine(
     override fun release() {
         media = null
         appliedSubtitleUri = null
+        try {
+            loudness?.release()
+        } catch (t: RuntimeException) {
+            AppLog.w(TAG, "释放音量增益时出错", t)
+        }
+        loudness = null
         player.removeListener(listener)
         player.release()
         playerView?.setPlayer(null)

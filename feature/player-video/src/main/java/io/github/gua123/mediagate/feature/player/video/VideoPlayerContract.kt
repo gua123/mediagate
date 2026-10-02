@@ -43,6 +43,26 @@ interface VideoPlayerPreferences {
     /** 记住极简模式（默认什么都不做，JVM 单测与没有持久化的场景行为不变）。 */
     suspend fun setSimpleMode(on: Boolean) = Unit
 
+    /**
+     * 记住的音量倍率（**2026-10-03 用户要求**：右侧上下滑调音量，上限 200%）。
+     *
+     * 默认 1.0（原始音量）；实现方负责持久化，下次播放沿用。
+     */
+    val playerVolume: Float get() = 1f
+
+    /** 记住音量（拖动结束才写，避免每一帧都落盘）。 */
+    suspend fun setPlayerVolume(volume: Float) = Unit
+
+    /**
+     * 记住的屏幕亮度（**2026-10-03 用户要求**：左侧上下滑调亮度，退出播放要恢复、下次播放要记住）。
+     *
+     * 取值 0..1；**-1 = 跟随系统**（用户没调过，或退出播放页后已恢复）。
+     */
+    val screenBrightness: Float get() = -1f
+
+    /** 记住亮度（同样是拖动结束才写）。 */
+    suspend fun setScreenBrightness(brightness: Float) = Unit
+
     /** 字幕总开关（R14）；默认关。 */
     val subtitleEnabled: StateFlow<Boolean>
 
@@ -115,6 +135,15 @@ interface VideoPlayerEnvironment {
 
     /** 重新测一次（提示对话框里的「重新测试」）。默认什么都不做。 */
     fun retestVlc() = Unit
+
+    /**
+     * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
+     *
+     * 播放页一确定要播这个文件就调它：宿主在后台把**开头几段**先拉进分段缓存，
+     * 于是"起播时才开始拉第一段"变成"打开的过程中已经在拉"——第一帧来得更快。
+     * 默认什么都不做（JVM 单测与没有缓存层的场景行为不变）。
+     */
+    fun prefetchHead(path: String) = Unit
 
 
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */

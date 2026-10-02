@@ -16,6 +16,7 @@ import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.proxy.MediaUriCodec
+import kotlin.math.roundToInt
 
 /**
  * LibVLC（libvlc-all 3.7.6）兜底内核——plan 4.6 引擎对照表第二行（R9/R10/R3）。
@@ -67,6 +68,11 @@ class VlcEngine(
     private var playbackSpeed: Float = EngineSwitchPlanner.DEFAULT_SPEED
 
     override val speed: Float get() = playbackSpeed
+
+    /** 音量倍率（0..200%）：LibVLC 音量单位就是百分比，原生支持到 200。 */
+    private var playbackVolume: Float = 1f
+
+    override val volume: Float get() = playbackVolume
 
     private var media: MediaSourceRef? = null
 
@@ -170,6 +176,20 @@ class VlcEngine(
     override fun setSpeed(x: Float) {
         playbackSpeed = EngineSwitchPlanner.sanitizeSpeed(x)
         player.rate = playbackSpeed
+    }
+
+    /**
+     * 音量：LibVLC 自己就支持 0..200（单位是百分比），所以 200% 上限在这里是原生能力，
+     * 不需要像 Media3 那样外挂音效增益。
+     */
+    override fun setVolume(volume: Float) {
+        val v = PlayerEngine.sanitizeVolume(volume)
+        playbackVolume = v
+        try {
+            player.volume = (v * 100f).roundToInt().coerceIn(0, 200)
+        } catch (t: RuntimeException) {
+            AppLog.w(TAG, "设置 LibVLC 音量失败", t)
+        }
     }
 
     override fun setResizeMode(mode: ResizeMode) {
