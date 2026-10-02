@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.feature.browser
 
 import androidx.compose.runtime.staticCompositionLocalOf
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.media.thumbnail.ThumbnailRepository
@@ -76,6 +77,19 @@ interface BrowserEnvironment {
      * null / 空串 ＝没有记录（此时列表里谁都不变色）；默认 null，单测与预览不必提供。
      */
     val lastPlayedPath: String? get() = null
+
+    /**
+     * 同上的**流**版本：冷启动时它是异步读出来的，页面要能"等它到了再跳过去"
+     * （**2026-10-03 真机**：用户反馈"重新打开软件时并没有自动跳转到最后一次播放的文件夹内"——
+     * 根因之一就是同步读这一刻还是空值）。默认一直给 null。
+     */
+    val lastPlayedPathFlow: StateFlow<String?> get() = MutableStateFlow(null)
+
+    /** 最后一次浏览的目录（没有播放记录时的兜底；退出重开还能回到原来那个文件夹）。 */
+    val lastBrowsedPathFlow: StateFlow<String?> get() = MutableStateFlow(null)
+
+    /** 记住当前浏览的目录（页面每次换目录都写一次）。 */
+    suspend fun setLastBrowsedPath(path: String) = Unit
 
     /** 改排序并落盘。 */
     suspend fun setSort(sort: EntrySort)

@@ -293,6 +293,48 @@ class BrowserViewModelTest {
         assertEquals(EntrySortMode.SIZE, environment.sort.value.mode)
     }
 
+    @Test
+    fun `首帧就落在上次播放文件所在文件夹`() = runTest {
+        // **2026-10-03 真机**：用户反馈"重新打开软件时并没有自动跳转到最后一次播放的文件夹内"。
+        // 根因之一是首帧用了路由里的 initialPath（空）而不是算好的 startPath。
+        val environment = FakeEnvironment()
+        environment.lastPlayedPathFlow.value = "/tv/shows/s01/e01.mp4"
+        val backend = FakeBackend(
+            mapOf(
+                "" to listOf(dir("tv")),
+                "tv" to listOf(dir("tv/shows", path = "tv/shows")),
+                "tv/shows" to listOf(dir("tv/shows/s01", path = "tv/shows/s01")),
+                "tv/shows/s01" to listOf(file("tv/shows/s01/e01.mp4")),
+            ),
+        )
+        val vm = BrowserViewModel(environment, initialPath = "", io = dispatcher)
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+
+        // 路径是**后端相对**的（与浏览页一致，不带前导斜杠）
+        assertEquals("应进到播放文件所在的文件夹", "tv/shows/s01", vm.state.value.path)
+    }
+
+    @Test
+    fun `记住的目录迟到时会补跳一次_但用户已经进过目录就不再打扰`() = runTest {
+        val environment = FakeEnvironment()
+        val backend = FakeBackend(
+            mapOf(
+                "" to listOf(dir("media")),
+                "media" to listOf(file("media/movie.mkv")),
+            ),
+        )
+        val vm = BrowserViewModel(environment, initialPath = "", io = dispatcher)
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+        assertEquals("一开始还在根目录", "", vm.state.value.path)
+
+        // 异步读盘结束，记住的目录到了 ⇒ 补跳
+        environment.lastPlayedPathFlow.value = "/media/movie.mkv"
+        advanceUntilIdle()
+        assertEquals("media", vm.state.value.path)
+    }
+
     /** 假环境：根目录可手动切换（模拟用户在首页换目录）。 */
     private class FakeEnvironment : BrowserEnvironment {
 
@@ -300,6 +342,17 @@ class BrowserViewModelTest {
 
         /** 排序（2026-10-03）：假环境里可手动改，验证"改排序后列表跟着变"。 */
         override val sort = MutableStateFlow(EntrySort())
+
+        /** 记住的路径（2026-10-03 真机修复）：测试里可注入"上次播放的文件"。 */
+        override val lastPlayedPathFlow = MutableStateFlow<String?>(null)
+
+        override val lastBrowsedPathFlow = MutableStateFlow<String?>(null)
+
+        override val lastPlayedPath: String? get() = lastPlayedPathFlow.value
+
+        override suspend fun setLastBrowsedPath(path: String) {
+            lastBrowsedPathFlow.value = path
+        }
 
         override suspend fun setSort(sort: EntrySort) {
             this.sort.value = sort

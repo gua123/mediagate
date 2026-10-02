@@ -399,6 +399,17 @@ class AppContainer(context: Context) :
     /** 「上次播放」高亮的数据源（2026-10-03 用户要求）：同步读内存那份，进入浏览页就有值。 */
     override val lastPlayedPath: String? get() = lastPlayed.value
 
+    /** 冷启动是异步读的：浏览页订阅它，值到了再"补跳"到那个文件夹（2026-10-03 真机修复）。 */
+    override val lastPlayedPathFlow: StateFlow<String?> get() = lastPlayed
+
+    /** 上次浏览的目录（没有播放记录时的兜底）。 */
+    override val lastBrowsedPathFlow: StateFlow<String?> get() = _lastBrowsedPath
+
+    /** 浏览页每次换目录写一次。 */
+    override suspend fun setLastBrowsedPath(path: String) {
+        rememberLastBrowsed(path)
+    }
+
     /** 改排序并落盘。 */
     override suspend fun setSort(sort: EntrySort) {
         settings.setSort(sort)
@@ -520,6 +531,16 @@ class AppContainer(context: Context) :
     private val _lastPlayedPath = MutableStateFlow<String?>(null)
 
     val lastPlayed: StateFlow<String?> = _lastPlayedPath.asStateFlow()
+
+    /** 最后一次浏览的目录（内存一份给界面同步读，异步写盘）。 */
+    private val _lastBrowsedPath = MutableStateFlow<String?>(null)
+
+    /** 记住当前浏览的目录（浏览页每次换目录都会调）。 */
+    fun rememberLastBrowsed(path: String) {
+        if (_lastBrowsedPath.value == path) return
+        _lastBrowsedPath.value = path
+        ioScope.launch { runCatching { settings.setLastBrowsedPath(path) } }
+    }
 
     private fun rememberLastPlayed(path: String) {
         if (path.isBlank() || _lastPlayedPath.value == path) return
@@ -1181,6 +1202,7 @@ class AppContainer(context: Context) :
         // 冷启动先把"最后一次播放的文件"读进内存：浏览页高亮与"恢复上次文件夹"都要它
         ioScope.launch {
             runCatching { settings.lastPlayedPath.first() }.getOrNull()?.let { _lastPlayedPath.value = it }
+            runCatching { settings.lastBrowsedPath.first() }.getOrNull()?.let { _lastBrowsedPath.value = it }
         }
         ioScope.launch {
             rootConfig.collect { config -> applyConfig(config) }

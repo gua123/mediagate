@@ -328,7 +328,11 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                             }
                         },
                         onRequestRootAccess = { safPicker.launch(null) },
-                        onPathChanged = { lastBrowsedPath = it },
+                        onPathChanged = { path ->
+                            // 记住"最后一次浏览的文件夹"（2026-10-03 真机修复：重开 App 回到这里）
+                            lastBrowsedPath = path
+                            container.rememberLastBrowsed(path)
+                        },
                     )
                 }
 
