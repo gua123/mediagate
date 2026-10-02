@@ -40,6 +40,14 @@ sealed class StorageException(
     class Auth(message: String? = null, cause: Throwable? = null) :
         StorageException(message ?: "认证失败", cause)
 
+    /**
+     * **操作超时**（2026-10-03 真机"放后台再回来就卡住"）：
+     * 由 [TimeoutStorageBackend] 在超过上限时抛出，界面据此给出"超时 + 重试"，
+     * 而不是永远停在"刷新中"。
+     */
+    class Timeout(message: String? = null, cause: Throwable? = null) :
+        StorageException(message ?: "操作超时", cause)
+
     /** 其余未分类的底层 I/O 错误（保留原始 cause 便于诊断）。 */
     class Unknown(message: String? = null, cause: Throwable? = null) :
         StorageException(message ?: "存储操作失败", cause)

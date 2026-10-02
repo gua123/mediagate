@@ -222,6 +222,11 @@ class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/*
         is StorageException.Network ->
             DataSourceException(this, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED)
 
+        // 超时（2026-10-03 加的 TimeoutStorageBackend）：归到"网络连接失败"一类，
+        // Media3 会走它自己的重试/错误上报，界面显示中文原因而不是一直转圈。
+        is StorageException.Timeout ->
+            DataSourceException(this, PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT)
+
         is StorageException.Auth ->
             DataSourceException(this, PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)
 

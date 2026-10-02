@@ -37,6 +37,7 @@ import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.core.network.SelectableAddress
 import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
+import io.github.gua123.mediagate.data.storage.api.TimeoutStorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.ftp.FtpStorageBackend
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
@@ -1376,8 +1377,11 @@ class AppContainer(context: Context) :
                 // WebDAV、无 REST 的 FTP）因此也能被拖拽 seek；支持随机读的也省掉重复过网
                 // 分段缓存：段内**并发取块** + 读到某段后**预读后面几段**（2026-10-03 用户问「缓冲能不能多线程」）。
                 // readAheadScope 传 ioScope：预读任务挂在应用级作用域上，播放页退出也能跑完。
+                // **超时保险**（2026-10-03 真机"放后台再回来像卡住"）：
+                // 网络层的阻塞实现在链路悄悄断掉后可能一直等——那会让界面永远停在"刷新中"。
+                // 先给原始后端套一层超时（任何操作超过上限就抛中文超时错误），再套分段缓存。
                 backend = SegmentedCacheBackend(
-                    delegate = build(),
+                    delegate = TimeoutStorageBackend(build()),
                     rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
                     readAheadScope = ioScope,
                     // 段大小在构造时定（改它等于缓存作废，所以"下次连接生效"）…

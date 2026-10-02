@@ -257,12 +257,11 @@ class SegmentedCacheBackend(
     }
 
     /** 下载一个段：**拆块并发取**，各自写到临时文件的对应偏移，最后改名。 */
-    private suspend fun downloadSegment(path: String, index: Long, file: File): File =
-        segmentLock.withLock {
-            if (file.isFile && file.length() > 0L) {
-                file.setLastModified(System.currentTimeMillis())
-                return@withLock file
-            }
+    private suspend fun downloadSegment(path: String, index: Long, file: File): File {
+        if (file.isFile && file.length() > 0L) {
+            file.setLastModified(System.currentTimeMillis())
+            return file
+        }
             val start = index * segmentBytes
             val length = segmentBytes.coerceAtLeast(1L)
             file.parentFile?.mkdirs()
@@ -315,8 +314,8 @@ class SegmentedCacheBackend(
                 temporary.delete()
                 throw t
             }
-            file
-        }
+        return file
+    }
 
     /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
     private fun scheduleReadAhead(path: String, index: Long) {
@@ -417,7 +416,6 @@ class SegmentedCacheBackend(
         }
     }
 
-    private val segmentLock = Mutex()
 
     companion object {
 
