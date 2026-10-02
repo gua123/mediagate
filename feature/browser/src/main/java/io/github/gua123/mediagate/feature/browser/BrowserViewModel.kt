@@ -48,7 +48,14 @@ class BrowserViewModel(
      * 谁都没有记录才回根目录。网络不通时照旧由根目录装载流程给出中文错误与重试。
      */
     private val startPath: String = initialPath.ifBlank {
-        BrowserPaths.parentOf(environment.lastPlayedPath.orEmpty()).orEmpty()
+        rememberedStartPath()
+    }
+
+    /** 有播放记录就进它所在的文件夹；否则回到上次浏览的目录；都没有就回根目录。 */
+    private fun rememberedStartPath(): String {
+        val playedDir = BrowserPaths.parentOf(environment.lastPlayedPath.orEmpty()).orEmpty()
+        if (playedDir.isNotBlank()) return playedDir
+        return environment.lastBrowsedPathFlow.value.orEmpty()
     }
 
     private val _state = MutableStateFlow(
@@ -77,6 +84,30 @@ class BrowserViewModel(
         viewModelScope.launch {
             environment.sort.collect { sort -> _state.update { it.reduce(BrowserEvent.SortChanged(sort)) } }
         }
+        // **2026-10-03 真机修复**：记住的目录是**异步**从 DataStore 读出来的，
+        // 冷启动时构造这个 VM 那一刻往往还是空 ⇒ 先按根目录渲染，等它到了再"补跳"一次。
+        // 只在用户还没自己进过任何目录（path 仍为空）且路由没指定路径时才跳，绝不打断用户。
+        if (initialPath.isBlank()) {
+            viewModelScope.launch {
+                environment.lastPlayedPathFlow.collect { played ->
+                    val dir = BrowserPaths.parentOf(played.orEmpty()).orEmpty()
+                    if (dir.isNotBlank()) jumpIfStillAtRoot(dir)
+                }
+            }
+            viewModelScope.launch {
+                environment.lastBrowsedPathFlow.collect { browsed ->
+                    if (!browsed.isNullOrBlank()) jumpIfStillAtRoot(browsed)
+                }
+            }
+        }
+    }
+
+    /** 只在"还停在根目录、且没有任何在途/已完成的用户导航"时补跳一次。 */
+    private fun jumpIfStillAtRoot(dir: String) {
+        val current = _state.value
+        if (current.path.isNotEmpty()) return
+        if (current.status == BrowserStatus.LOADING) return
+        load(dir, refreshing = false)
     }
 
     /**
@@ -125,7 +156,8 @@ class BrowserViewModel(
         }
         val sameBackend = previousBackend === root.backend
         val path = when {
-            awaitingFirstRoot -> initialPath
+            // 首帧用**算好的**起始目录（曾经这里写成 initialPath ⇒ 路由没带路径时永远回根目录）
+            awaitingFirstRoot -> startPath
             sameBackend -> _state.value.path
             else -> ""
         }

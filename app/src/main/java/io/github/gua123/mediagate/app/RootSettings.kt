@@ -62,6 +62,20 @@ class RootSettings(private val context: Context) {
      */
     val lastPlayedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_PLAYED] }
 
+    /**
+     * **最后一次浏览的目录**（2026-10-03 真机修复配套）：没有播放记录时的兜底，
+     * 也用于"退出重开还在原来那个文件夹"。
+     */
+    val lastBrowsedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_BROWSED] }
+
+    /** 记下当前浏览的目录（空串 = 清掉）。 */
+    suspend fun setLastBrowsedPath(path: String?) {
+        context.rootDataStore.edit { preferences ->
+            if (path.isNullOrBlank()) preferences.remove(KEY_LAST_BROWSED)
+            else preferences[KEY_LAST_BROWSED] = path
+        }
+    }
+
     /** 记下最后一次播放的文件（空串 = 清掉）。 */
     suspend fun setLastPlayedPath(path: String?) {
         context.rootDataStore.edit { preferences ->
@@ -133,6 +147,9 @@ class RootSettings(private val context: Context) {
 
         /** 最后一次播放的文件路径（2026-10-03）：启动恢复目录 + 浏览页高亮共用。 */
         val KEY_LAST_PLAYED = stringPreferencesKey("last_played_path")
+
+        /** 最后一次浏览的目录（2026-10-03）：重开 App 回到这里。 */
+        val KEY_LAST_BROWSED = stringPreferencesKey("last_browsed_path")
 
         /** 列表排序（2026-10-03）：方式 + 升降序。 */
         val KEY_SORT_MODE = stringPreferencesKey("list_sort_mode")
