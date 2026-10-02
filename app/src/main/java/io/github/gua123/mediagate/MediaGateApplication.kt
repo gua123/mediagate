@@ -97,14 +97,24 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoS
         // 再补一刀：Java 处理器抓不到**原生崩溃**（MediaCodec/ffmpeg 的 .so 会让进程直接消失），
         // 用系统记录的进程退出原因补上；放子线程，不给启动添延迟
         Thread { runCatching { CrashReporter.captureLastExit(this) } }.start()
+        // 启动阶段的自检（2026-10-03 第二版）：容器构造这类"启动即崩"以前只在用户那里表现为"打不开"，
+        // 什么都没有留下；现在失败会落盘 + 弹出独立进程的错误页，用户截图/复制就能把原因带出来。
+        var stage = "面包屑"
         // 面包屑落盘（原生崩溃时内存日志会没，只有它留得下）
         Breadcrumbs.sink = { text -> CrashReporter.breadcrumb(this, text) }
         Breadcrumbs.mark("应用启动（versionName " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() + "）")
         // 容器一建好就会自己把 LibVLC 启动探针跑起来（在 AppContainer 的 init 里，见那边的注释）——
         // **不要在这里调 container 的任何方法**：`container` 是 lateinit，写在赋值之前会
         // 直接抛 UninitializedPropertyAccessException，表现就是"更新后打不开"（0.1.22 起踩过）。
-        container = AppContainer(this)
-        AppLog.i(TAG, "MediaGate 启动：" + versionText())
+        stage = "容器构造"
+        try {
+            container = AppContainer(this)
+            stage = "容器就绪"
+            AppLog.i(TAG, "MediaGate 启动：" + versionText())
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "启动失败（阶段：" + stage + "）", t)
+            runCatching { CrashReporter.showStartupFailure(this, stage, t) }
+        }
     }
 
     /** 启动日志里带上真实版本（别再写死——之前写死的 0.1.0 在排查时很误导）。 */

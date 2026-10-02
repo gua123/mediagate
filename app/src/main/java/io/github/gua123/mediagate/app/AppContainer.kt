@@ -1710,19 +1710,10 @@ class AppContainer(context: Context) :
         return name.ifEmpty { appContext.getString(R.string.root_label_internal_storage) }
     }
 
-    /**
-     * 容器建好后的自启动动作（**2026-10-03 P0 修复**）。
-     *
-     * 以前这行写在 `MediaGateApplication.onCreate` 里、**在 `container = AppContainer(this)` 之前**，
-     * `lateinit` 未初始化直接抛异常 ⇒ 每次启动即崩（"更新后打不开"，0.1.22–0.1.25 都是这个）。
-     * 现在放在容器自己的 init 里：只要对象建出来，顺序就不可能错。
-     */
-    init {
-        // LibVLC 启动探针（用户建议：跑不了的内核就别让切）。独立进程跑，崩了只带走它自己；
-        // 结论 OK/FAILED 落盘，判"未知"时不动已有状态，所以不会把上一次的结论冲掉。
-        runCatching { vlcProbeNow() }
-            .onFailure { AppLog.w(TAG, "启动探针调度失败", it) }
-    }
+    // **2026-10-03 第二版教训**：LibVLC 探针**不再在启动时自动跑**。
+    // 它跑在独立进程里，但"启动瞬间就拉一个会原生崩溃的进程"这件事本身在真机上会表现成
+    // "打开 App 就看到崩溃提示"（用户报的就是"更新后打不开"）。现在改成**按需**：
+    // 用户在播放页点内核/点「重新测试」时才跑（`VlcProbeService` 与 `vlcProbeNow()` 都留着）。
 
     private companion object {
         const val TAG = "app-container"

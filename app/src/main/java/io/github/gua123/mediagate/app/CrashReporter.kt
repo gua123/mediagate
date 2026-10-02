@@ -31,7 +31,19 @@ object CrashReporter {
         val app = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            // 先把文本渲染出来（写盘失败也要有得显示），落盘，再把原因**摆到屏幕上**
+            // （独立进程的 CrashActivity：主进程随后死掉也不影响它显示）
+            val rendered = runCatching {
+                renderCrash(thread, throwable, deviceInfo(app), AppLog.snapshot())
+            }.getOrDefault("=== MediaGate 崩溃 ===\n" + throwable.stackTraceToString())
             runCatching { write(app, thread, throwable) }
+            runCatching {
+                io.github.gua123.mediagate.CrashActivity.show(
+                    app,
+                    "MediaGate 崩溃了（" + runCatching { versionNameOf(app) }.getOrDefault("") + "）",
+                    rendered,
+                )
+            }
             // 交回系统/上一个处理器：不吞异常，该显示系统崩溃提示就显示
             previous?.uncaughtException(thread, throwable)
         }
@@ -39,6 +51,81 @@ object CrashReporter {
 
     /** 崩溃目录。 */
     fun dir(context: Context): File = File(context.filesDir, DIR_NAME)
+
+    /**
+     * **启动失败**：把原因落盘 + 摆到屏幕上（**2026-10-03 P0 第二版**）。
+     *
+     * 之前 0.1.22–0.1.25 启动即崩，用户只看到"打不开"，什么线索都没有；
+     * 现在 `Application.onCreate` 里任何一步失败都会走这里——**页面在独立进程**，
+     * 所以哪怕主进程随后又崩了，用户也能把原因截图/复制发出来。
+     */
+    fun showStartupFailure(context: Context, stage: String, throwable: Throwable) {
+        val app = context.applicationContext
+        val text = renderStartupFailure(stage, throwable, deviceInfo(app), AppLog.snapshot())
+        runCatching {
+            val directory = dir(app)
+            if (!directory.exists()) directory.mkdirs()
+            File(directory, "startup-" + System.currentTimeMillis() + ".txt")
+                .writeText(text, Charsets.UTF_8)
+        }
+        runCatching {
+            io.github.gua123.mediagate.CrashActivity.show(
+                app,
+                "MediaGate 启动失败（" + runCatching { versionNameOf(app) }.getOrDefault("") + "）",
+                text,
+            )
+        }
+    }
+
+    /** 版本号（错误页标题里带上，免得又出现"不知道是哪个版本"的情况）。 */
+    fun versionNameOf(context: Context): String =
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+
+    /** 启动失败文本（**纯函数**，单测直接打）。 */
+    fun renderStartupFailure(
+        stage: String,
+        throwable: Throwable,
+        device: DeviceInfo,
+        logLines: List<String>,
+    ): String = buildString {
+        appendLine("=== MediaGate 启动失败 ===")
+        appendLine("阶段：" + stage)
+        appendLine("版本：" + device.versionName + "(" + device.versionCode + ")")
+        appendLine("设备：" + device.manufacturer + " " + device.model + " / Android " + device.release + " (SDK " + device.sdkInt + ")")
+        appendLine("异常：" + throwable.javaClass.name)
+        appendLine("消息：" + (throwable.message ?: "（无）"))
+        appendLine()
+        appendLine("[堆栈]")
+        appendLine(throwable.stackTraceToString())
+        if (logLines.isNotEmpty()) {
+            appendLine()
+            appendLine("[应用日志（最后 " + logLines.size + " 行）]")
+            logLines.forEach { appendLine(it) }
+        }
+    }
+
+    /** 崩溃文本（纯函数；写盘失败时用它兜底显示）。 */
+    fun renderCrash(
+        thread: Thread,
+        throwable: Throwable,
+        device: DeviceInfo,
+        logLines: List<String>,
+    ): String = buildString {
+        appendLine("=== MediaGate 崩溃 ===")
+        appendLine("线程：" + thread.name)
+        appendLine("版本：" + device.versionName + "(" + device.versionCode + ")")
+        appendLine("设备：" + device.manufacturer + " " + device.model + " / Android " + device.release + " (SDK " + device.sdkInt + ")")
+        appendLine("异常：" + throwable.javaClass.name)
+        appendLine("消息：" + (throwable.message ?: "（无）"))
+        appendLine()
+        appendLine("[堆栈]")
+        appendLine(throwable.stackTraceToString())
+        if (logLines.isNotEmpty()) {
+            appendLine()
+            appendLine("[应用日志（最后 " + logLines.size + " 行）]")
+            logLines.forEach { appendLine(it) }
+        }
+    }
 
     /**
      * 抓上一次进程退出的原因（**Android 11+ 的 ApplicationExitInfo**）。
