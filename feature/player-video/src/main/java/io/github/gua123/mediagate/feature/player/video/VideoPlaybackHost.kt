@@ -39,6 +39,16 @@ data class VideoSession(
  *
  * 线程约定：两个方法都在主线程调用，实现不得做阻塞 IO（起服务只发 Intent）。
  */
+/** 通知栏/锁屏会打到播放页上的两个动作。 */
+interface VideoSessionActionSink {
+
+    /** 上一集（队列里往前一个）。 */
+    fun onPrevious()
+
+    /** 下一集（队列里往后一个）。 */
+    fun onNext()
+}
+
 interface VideoPlaybackHost {
 
     /**
@@ -54,6 +64,15 @@ interface VideoPlaybackHost {
      * 实现应当：非 null 时确保视频会话服务已起（通知栏可控），null 时停掉它并释放唤醒锁。
      */
     fun bindSession(session: VideoSession?)
+
+    /**
+     * **通知栏/锁屏「上一集 / 下一集」的落点**（2026-10-03 用户要求：「始终在状态栏中可以控制
+     * 上一个下一个，暂停/播放」）。
+     *
+     * 页面在挂载时注册、退出时传 null 注销；命令从服务 → 宿主 → 这里 → 页面的队列逻辑
+     * （因此"下一集"遵守排序与循环规则，和页面上点按钮完全一致）。默认什么都不做。
+     */
+    fun setSessionActionSink(sink: VideoSessionActionSink?) = Unit
 }
 
 /**

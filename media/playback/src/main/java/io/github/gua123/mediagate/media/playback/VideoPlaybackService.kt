@@ -11,8 +11,12 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
+import android.os.Bundle
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -63,6 +67,15 @@ interface VideoSessionSource {
 
     /** 定位到 [positionMs]（通知栏进度拖拽、锁屏快退快进）。 */
     fun seekTo(positionMs: Long)
+
+    /**
+     * **通知栏/锁屏的「上一集」**（2026-10-03 用户要求：「始终在状态栏中可以控制上一个下一个，
+     * 暂停/播放」）。默认什么都不做（没有队列的场景行为不变）。
+     */
+    fun previous() = Unit
+
+    /** **通知栏/锁屏的「下一集」**；默认什么都不做。 */
+    fun next() = Unit
 }
 
 /**
@@ -100,6 +113,12 @@ interface VideoSessionHost {
  * 真机才能验证的：澎湃 OS 下的后台存活时长、息屏 30 分钟不中断、锁屏/蓝牙控制。
  */
 @UnstableApi
+/** 通知栏/锁屏「上一集」的自定义命令（2026-10-03 用户要求）。 */
+private const val COMMAND_PREVIOUS = "io.github.gua123.mediagate.PREVIOUS"
+
+/** 通知栏/锁屏「下一集」的自定义命令。 */
+private const val COMMAND_NEXT = "io.github.gua123.mediagate.NEXT"
+
 class VideoPlaybackService : MediaSessionService() {
 
     private val handler = Handler(Looper.getMainLooper())
@@ -139,6 +158,11 @@ class VideoPlaybackService : MediaSessionService() {
         val session = try {
             MediaSession.Builder(this, player)
                 .setSessionActivity(openAppIntent())
+                // 通知栏/锁屏的「上一集 / 下一集」：用**自定义按钮 + 自定义命令**而不是 Media3 的
+                // playlist 语义——我们的"上一集/下一集"由播放页的队列决定（还要遵守排序与循环），
+                // 单条 playlist 上假装有 next 会让 Media3 的状态一致性断言把服务带走。
+                .setCustomLayout(sessionButtons())
+                .setCallback(SessionCallback())
                 .build()
         } catch (t: Throwable) {
             AppLog.e(TAG, "创建视频会话失败：退化为无会话（播放页本身仍能播）", t)
@@ -219,6 +243,58 @@ class VideoPlaybackService : MediaSessionService() {
     private fun releaseWakeLock() {
         val current = wakeLock ?: return
         if (current.isHeld) runCatching { current.release() }
+    }
+
+    /**
+     * 通知栏/锁屏上的两个自定义按钮：上一集、下一集。
+     *
+     * 图标直接用系统自带的媒体图标（不额外造资源）；命令名带包名前缀，避免与系统命令撞车。
+     */
+    private fun sessionButtons(): List<CommandButton> = listOf(
+        CommandButton.Builder()
+            .setDisplayName("上一集")
+            .setIconResId(android.R.drawable.ic_media_previous)
+            .setSessionCommand(SessionCommand(COMMAND_PREVIOUS, Bundle.EMPTY))
+            .build(),
+        CommandButton.Builder()
+            .setDisplayName("下一集")
+            .setIconResId(android.R.drawable.ic_media_next)
+            .setSessionCommand(SessionCommand(COMMAND_NEXT, Bundle.EMPTY))
+            .build(),
+    )
+
+    /**
+     * 会话回调：只接自己的两个自定义命令，其余交给默认实现（播放/暂停/seek 走代理播放器）。
+     */
+    private inner class SessionCallback : MediaSession.Callback {
+
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            // 自定义按钮的命令必须显式声明为"这个控制器可用"，否则通知栏点了会报不支持
+            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
+                .add(SessionCommand(COMMAND_PREVIOUS, Bundle.EMPTY))
+                .add(SessionCommand(COMMAND_NEXT, Bundle.EMPTY))
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(commands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            when (customCommand.customAction) {
+                COMMAND_PREVIOUS -> currentSource()?.previous()
+                COMMAND_NEXT -> currentSource()?.next()
+                else -> return super.onCustomCommand(session, controller, customCommand, args)
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
     }
 
     /** 通知栏点回 App（单实例，不新建 Activity）。 */
@@ -352,6 +428,7 @@ internal class VideoSessionPlayer(
 
         /** 锁屏/PIP 快进快退的步长：与 R13 的 10 秒保持一致。 */
         const val SEEK_INCREMENT_MS = 10_000L
+
 
         /**
          * 会话对外暴露的能力。

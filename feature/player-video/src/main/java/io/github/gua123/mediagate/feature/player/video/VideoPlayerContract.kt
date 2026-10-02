@@ -73,6 +73,16 @@ interface VideoPlayerPreferences {
     /** 记住循环方式。 */
     suspend fun setLoopMode(mode: VideoLoopMode) = Unit
 
+    /**
+     * **切后台时是否自动进入画中画**（2026-10-03 用户要求：「可以设置软件在后台时是否显示画中画」）。
+     *
+     * 默认 true（与旧行为一致）；关掉之后按 Home/切后台只是继续后台播放，不会有小窗。
+     */
+    val pipAutoEnterEnabled: Boolean get() = true
+
+    /** 记住画中画开关。 */
+    suspend fun setPipAutoEnter(enabled: Boolean) = Unit
+
     /** 字幕总开关（R14）；默认关。 */
     val subtitleEnabled: StateFlow<Boolean>
 

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost
+import io.github.gua123.mediagate.feature.player.video.VideoSessionActionSink
 import io.github.gua123.mediagate.feature.player.video.VideoSession
 import io.github.gua123.mediagate.media.playback.VideoPlaybackService
 import io.github.gua123.mediagate.media.playback.VideoSessionHost
@@ -72,6 +73,14 @@ class VideoSessionController(
     override fun setActive(active: Boolean) {
         _active.value = active
     }
+
+    /** 通知栏/锁屏的上一集/下一集落到播放页注册的 sink 上（2026-10-03 用户要求）。 */
+    override fun setSessionActionSink(sink: VideoSessionActionSink?) {
+        sessionActionSink = sink
+    }
+
+    /** 页面注册进来的会话动作落点；退出播放页会置空。 */
+    private var sessionActionSink: VideoSessionActionSink? = null
 
     override fun bindSession(session: VideoSession?) {
         if (session == null) {
@@ -169,6 +178,16 @@ class VideoSessionController(
 
         override fun pause() {
             runCatching { session.engine.pause() }.onFailure { AppLog.w(TAG, "会话暂停失败", it) }
+        }
+
+        /** 通知栏/锁屏「上一集」：交给播放页的队列逻辑（它会处理排序/循环与换集兜底）。 */
+        override fun previous() {
+            sessionActionSink?.onPrevious()
+        }
+
+        /** 通知栏/锁屏「下一集」。 */
+        override fun next() {
+            sessionActionSink?.onNext()
         }
 
         override fun seekTo(positionMs: Long) {
