@@ -85,17 +85,24 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoS
         super.onCreate()
         // 崩溃捕获要**最先装**：容器构造/数据库迁移之类早期崩溃也得留下报告（2026-10-03 真机闪退之后加的）
         CrashReporter.install(this)
+
+        // **只给主进程建容器**（2026-10-03 P0 修复）：本类在每个进程都会跑一遍，而 LibVLC 探针服务
+        // 跑在独立进程 :vlcprobe 里——那个进程不需要、也不该建整个容器（Room/DataStore/服务在副进程里
+        // 没有任何意义，出问题只会表现为"莫明其妙崩溃"）。
+        if (Application.getProcessName() != packageName) {
+            AppLog.i(TAG, "副进程启动，跳过容器初始化：" + Application.getProcessName())
+            return
+        }
+
         // 再补一刀：Java 处理器抓不到**原生崩溃**（MediaCodec/ffmpeg 的 .so 会让进程直接消失），
         // 用系统记录的进程退出原因补上；放子线程，不给启动添延迟
         Thread { runCatching { CrashReporter.captureLastExit(this) } }.start()
         // 面包屑落盘（原生崩溃时内存日志会没，只有它留得下）
         Breadcrumbs.sink = { text -> CrashReporter.breadcrumb(this, text) }
         Breadcrumbs.mark("应用启动（versionName " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() + "）")
-        // LibVLC 启动探针（2026-10-03 用户建议）：**在独立进程里试跑**，不能跑就不让用户切过去。
-        // 只在"结论未知"时自动跑；用户也能在播放页的提示里手动重测。
-        // 每次都跑一遍（几百毫秒、独立进程）：结论 OK/FAILED 会落盘；判断"未知"时不动已有状态，
-        // 所以不会把上一次的结论冲掉。
-        container.vlcProbeNow()
+        // 容器一建好就会自己把 LibVLC 启动探针跑起来（在 AppContainer 的 init 里，见那边的注释）——
+        // **不要在这里调 container 的任何方法**：`container` 是 lateinit，写在赋值之前会
+        // 直接抛 UninitializedPropertyAccessException，表现就是"更新后打不开"（0.1.22 起踩过）。
         container = AppContainer(this)
         AppLog.i(TAG, "MediaGate 启动：" + versionText())
     }
