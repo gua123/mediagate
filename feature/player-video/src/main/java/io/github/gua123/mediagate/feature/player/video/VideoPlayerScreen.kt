@@ -285,16 +285,13 @@ fun VideoPlayerScreen(
                     },
                     onOpenPlaylist = { playlistVisible = true },
                     onRequestSwitchEngine = {
-                        when {
-                            // 探针说本机跑不了 → 不让切，解释原因并给「重新测试」
-                            state.otherEngine == EngineKind.VLC && state.vlcUsable == false -> {
-                                vlcUnavailableVisible = true
-                            }
-                            // 上次切它把进程带走过 → 先告知再切
-                            state.otherEngine == EngineKind.VLC && state.vlcSuspectCrash -> {
-                                vlcWarningVisible = true
-                            }
-                            else -> viewModel.switchEngine()
+                        // 判定收敛在纯函数里（VlcSwitchDecision，有单测）：
+                        // 已验证可用 → 直接切；未知（含"上次崩过"）→ 弹窗，主按钮是「先测试再切换」；
+                        // 已验证不可用 → 弹窗说明原因，不给切换按钮。
+                        when (vlcKernelTap(state.otherEngine == EngineKind.VLC, state.vlcUsable)) {
+                            VlcKernelTap.DIRECT -> viewModel.switchEngine()
+                            VlcKernelTap.ASK_WITH_TEST -> vlcWarningVisible = true
+                            VlcKernelTap.BLOCKED -> vlcUnavailableVisible = true
                         }
                     },
                 )
@@ -322,23 +319,45 @@ fun VideoPlayerScreen(
                 )
             }
 
-            // LibVLC 风险提示（2026-10-03 真机：点内核 → 切 LibVLC → 进程被带走）
+            // 切 LibVLC 前的提示（2026-10-03 真机：点内核 → 切 LibVLC → 进程被带走）
+            // 主按钮改成「先测试再切换」——用户反馈「我没找到测试内核的地方」，这里就是最自然的入口。
             if (vlcWarningVisible) {
                 AlertDialog(
                     onDismissRequest = { vlcWarningVisible = false },
                     title = { Text(stringResource(R.string.video_vlc_warning_title)) },
-                    text = { Text(stringResource(R.string.video_vlc_warning_body)) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(R.string.video_vlc_warning_body))
+                            if (state.vlcProbeRunning) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Text(stringResource(R.string.video_vlc_probe_running))
+                                }
+                            }
+                            state.vlcProbeMessage?.let { message -> Text(message) }
+                        }
+                    },
                     confirmButton = {
                         TextButton(
-                            onClick = {
-                                vlcWarningVisible = false
-                                viewModel.switchEngine()
-                            },
-                        ) { Text(stringResource(R.string.video_vlc_warning_continue)) }
+                            onClick = { viewModel.probeThenSwitch() },
+                            enabled = !state.vlcProbeRunning,
+                        ) { Text(stringResource(R.string.video_vlc_probe_and_switch)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { vlcWarningVisible = false }) {
-                            Text(stringResource(R.string.video_vlc_warning_cancel))
+                        Row {
+                            TextButton(
+                                onClick = {
+                                    vlcWarningVisible = false
+                                    viewModel.switchEngine()
+                                },
+                                enabled = !state.vlcProbeRunning,
+                            ) { Text(stringResource(R.string.video_vlc_warning_continue)) }
+                            TextButton(onClick = { vlcWarningVisible = false }) {
+                                Text(stringResource(R.string.video_vlc_warning_cancel))
+                            }
                         }
                     },
                 )
