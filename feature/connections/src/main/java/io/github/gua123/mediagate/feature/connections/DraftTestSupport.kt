@@ -80,6 +80,33 @@ object DraftTestSupport {
     }
 }
 
+/** 测试结果的三种结局（**2026-10-03 真机**：截图里「测试通过」被染成了红色）。 */
+enum class TestOutcome(val mark: String) {
+
+    /** 至少一个地址通了。 */
+    PASSED("✓"),
+
+    /** 全都没通。 */
+    FAILED("✗"),
+
+    /** 连地址都没填，谈不上通不通。 */
+    NOT_APPLICABLE("•"),
+}
+
+/**
+ * 把 [DraftTestSupport.summarize] 产出的那句话分类（**纯函数**）。
+ *
+ * 为什么要有它：界面原来用 `result.startsWith("测试通过")` 判断颜色，而真实文案是
+ * `〔使用：已保存的密码〕测试通过：sftp://…（1209 ms）`——**开头是"〔使用：…〕"**，
+ * 所以 `startsWith` 永远为假，**"测试通过"被染成了错误的红色**（用户截图里看得一清二楚）。
+ * 现在只认"文案里出现「测试通过」/「测试失败」"，并且**有单测把真机那串原文钉住**。
+ */
+fun testOutcomeOf(result: String): TestOutcome = when {
+    result.contains("测试通过") -> TestOutcome.PASSED
+    result.contains("测试失败") -> TestOutcome.FAILED
+    else -> TestOutcome.NOT_APPLICABLE
+}
+
 /** 本次测试用的是哪份密码（真机自查的关键提示，见 [DraftTestSupport.summarize]）。 */
 enum class PasswordSource(val zhText: String) {
 

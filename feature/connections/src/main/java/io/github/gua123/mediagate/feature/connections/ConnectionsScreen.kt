@@ -56,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardOptions
@@ -763,13 +764,16 @@ private fun ConnectionEditorScreen(
             }
             state.draftTestResult?.let { result ->
                 Spacer(modifier = Modifier.height(6.dp))
+                // 结局用纯函数判定（testOutcomeOf，有单测钉住真机原文），不再 startsWith 猜——
+                // 之前因为文案开头是「〔使用：…〕」，"测试通过"被误染成红色。
+                val outcome = testOutcomeOf(result)
                 Text(
-                    text = result,
+                    text = outcome.mark + " " + result,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (result.startsWith("测试通过")) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
+                    color = when (outcome) {
+                        TestOutcome.PASSED -> ConnectionResultPassed
+                        TestOutcome.FAILED -> MaterialTheme.colorScheme.error
+                        TestOutcome.NOT_APPLICABLE -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
             }
@@ -937,6 +941,13 @@ private fun AddressEditor(
         }
     }
 }
+
+/**
+ * 「测试通过」的颜色（**2026-10-03 真机截图**：成功结果被染成错误色，看着像失败）。
+ *
+ * M3 配色里没有"成功色"，这里给一个对比度足够的深绿；失败仍用 `colorScheme.error`。
+ */
+private val ConnectionResultPassed = Color(0xFF1B5E20)
 
 /** 内部存储的标准路径（「使用内部存储」一键填它，配合「所有文件访问」权限使用）。 */
 private const val INTERNAL_STORAGE_PATH = "/storage/emulated/0"
