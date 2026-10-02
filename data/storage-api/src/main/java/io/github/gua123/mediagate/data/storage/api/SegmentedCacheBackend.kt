@@ -146,6 +146,24 @@ class SegmentedCacheBackend(
         segmentFiles().sumOf { it.length() }
     }
 
+    /**
+     * **清空所有缓存段**（2026-10-03 设置页新增「缓存上限」时一并给的出口：
+     * 用户把上限调小、或想立刻释放空间时，不必去系统设置里清 App 数据）。
+     *
+     * @return 实际删掉的字节数。
+     */
+    suspend fun clearAll(): Long = withContext(io) {
+        val files = segmentFiles()
+        var freed = 0L
+        for (file in files) {
+            val length = file.length()
+            if (file.delete()) freed += length
+        }
+        // 目录留着（下次取段直接用），只清内容
+        synchronized(sizeCache) { sizeCache.clear() }
+        freed
+    }
+
     /** 丢弃某个文件的全部缓存段（换根目录 / 文件已变时调用）。 */
     suspend fun clearFile(path: String) {
         withContext(io) {

@@ -540,6 +540,10 @@ private fun SettingsRoute(
 
     // 测速（2026-10-03）：调参有没有用，量一下就知道
     var speedPath by remember { mutableStateOf("") }
+
+    // 缓存用量（2026-10-03 用户要求「设置里增加缓存大小按 GB」）：进设置页读一次，清空后刷新
+    var cacheUsedBytes by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(Unit) { cacheUsedBytes = container.remoteCacheBytes() }
     var speedRunning by remember { mutableStateOf(false) }
     var speedResult by remember { mutableStateOf<String?>(null) }
 
@@ -599,6 +603,14 @@ private fun SettingsRoute(
                 onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
                 onSegmentBytes = { value ->
                     scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
+                },
+                onCacheBytes = { value -> scope.launch { container.networkTuning.setCacheGb((value / (1024 * 1024 * 1024)).toInt()) } },
+                cacheUsedBytes = cacheUsedBytes,
+                onClearCache = {
+                    scope.launch {
+                        container.clearRemoteCache()
+                        cacheUsedBytes = container.remoteCacheBytes()
+                    }
                 },
                 onReset = { scope.launch { container.networkTuning.reset() } },
                 speedPath = speedPath,

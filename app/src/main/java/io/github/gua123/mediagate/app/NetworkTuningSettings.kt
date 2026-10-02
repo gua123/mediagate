@@ -31,6 +31,7 @@ class NetworkTuningSettings(
         .map { prefs ->
             CacheTuning.fromStored(
                 segmentMb = prefs[KEY_SEGMENT_MB],
+                cacheGb = prefs[KEY_CACHE_GB],
                 readAheadSegments = prefs[KEY_READ_AHEAD],
             )
         }
@@ -38,6 +39,11 @@ class NetworkTuningSettings(
 
     suspend fun setSegmentMb(value: Int) {
         context.networkTuningDataStore.edit { it[KEY_SEGMENT_MB] = value }
+    }
+
+    /** 缓存总上限（**GB**，用户要求按 GB 给选项）。 */
+    suspend fun setCacheGb(value: Int) {
+        context.networkTuningDataStore.edit { it[KEY_CACHE_GB] = value }
     }
 
     suspend fun setReadAheadSegments(value: Int) {
@@ -48,12 +54,14 @@ class NetworkTuningSettings(
     suspend fun reset() {
         context.networkTuningDataStore.edit { prefs ->
             prefs.remove(KEY_SEGMENT_MB)
+            prefs.remove(KEY_CACHE_GB)
             prefs.remove(KEY_READ_AHEAD)
         }
     }
 
     private companion object {
         val KEY_SEGMENT_MB = intPreferencesKey("segment_mb")
+        val KEY_CACHE_GB = intPreferencesKey("cache_gb")
         val KEY_READ_AHEAD = intPreferencesKey("read_ahead_segments")
     }
 }
