@@ -108,7 +108,8 @@ object AudioPlayerMath {
     /**
      * 目录项 → 音频队列（R1）：只留音频文件，按名称（大小写不敏感）排序。
      *
-     * 与浏览页的排序口径一致，所以「浏览页里第 3 个音频」在播放页仍是第 3 首。
+     * ⚠️ 名称排序只是**兜底**：调用方（:app）会再按**用户选定的排序设置**排一次
+     * （2026-10-03 用户要求「播放时的列表也需要按照新的排序」）。
      */
     fun audioEntries(entries: List<RemoteEntry>): List<RemoteEntry> = entries
         .filterNot { it.isDirectory }
