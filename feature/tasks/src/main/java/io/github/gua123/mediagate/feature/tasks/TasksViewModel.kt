@@ -184,6 +184,9 @@ class TasksViewModel(
     /** 清空已落定的任务。 */
     fun clearFinished() = environment.clearFinished()
 
+    /** 移除一条**已结束**的任务（从列表与库里删掉；没结束的请先取消）。 */
+    fun remove(id: Long) = environment.removeTask(id)
+
     private fun dispatch(event: TasksEvent) {
         _state.update { TasksReduce.reduce(it, event) }
     }

@@ -184,6 +184,17 @@
   有 ok=OK、无 ok 且崩溃类=FAILED、被回收=UNKNOWN 不误判）→ 落 DataStore；③ 界面 `vlcUsable==false` 时
   **不让切**，弹说明 + 「重新测试」，并提示用「解码」档位换解码方式；④ 启动即测一次。
   当前版本 **0.1.22 / versionCode 23**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.21）。
+- **M30 任务队列去重与进度文案（2026-10-03，0.1.23）**：用户任务中心截图暴露两件事——同一文件排了三遍、
+  「识别中 0%」看着像卡死 → ① `AsrSelection.plan` 加 `alreadyQueued` 去重（同批内也去重，
+  `AsrSelectionResult` 增 `duplicate`）、`AsrQueue.enqueue` 再兜一道（只拦未结束的同路径；
+  已成功/已取消/已失败放行——那是故意重跑）、提示写「跳过重复 M 项」；
+  ② 正在跑但进度为 0 时显示「准备中（加载模型…）」（small 档 400+ MB，加载期必然 0%）。
+  测试：:feature:tasks +2、:media:asr +2。
+- **M31 已取消任务删不掉（2026-10-03，0.1.24）**：用户问「任务列表的已取消能不能去掉」→
+  根因：`clearFinished()` 只清内存快照，而 `publish()` 只 upsert 变化项、**从不删库** → 重启后 `restore()` 又读回来。
+  修：`AsrDao.deleteTasks(ids)` + 纯函数 `AsrQueue.removedIds(before, after)`（+2 例）+ `AsrQueueController.remove(id)`；
+  界面终态条目 ✕→**🗑 移除**，「清空已结束（N）」带数量且无可清项时禁用（`finishedCount`/`hasFinished`，+2 例）。
+  当前版本 **0.1.24 / versionCode 25**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.23）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。

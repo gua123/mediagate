@@ -31,6 +31,8 @@
     <string name="tasks_action_cancel_all">全部取消</string>
     <string name="tasks_action_retry_all">重试全部失败项</string>
     <string name="tasks_action_clear">清空已结束</string>
+    <string name="tasks_action_clear_count">清空已结束（%1$d）</string>
+    <string name="tasks_action_remove">移除</string>
     <string name="tasks_action_up">上移</string>
     <string name="tasks_action_down">下移</string>
     <string name="tasks_action_retry">重试</string>

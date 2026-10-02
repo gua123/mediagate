@@ -21,6 +21,27 @@ class AsrQueueTest {
     private fun queue(vararg items: AsrItem, concurrency: Int = 1) =
         AsrQueue.of(items.toList(), concurrency = concurrency)
 
+    // ---------------------------------------------------------------- 清理已结束（2026-10-03 用户问"已取消能不能去掉"）
+
+    @Test
+    fun removedIds_listsWhatGotDroppedSoTheRowsCanBeDeleted() {
+        val before = queue(
+            item(1, state = AsrItemState.SUCCEEDED),
+            item(2, state = AsrItemState.CANCELLED),
+            item(3, state = AsrItemState.QUEUED),
+        )
+        val after = AsrQueue.clearFinished(before)
+        assertEquals(listOf(3L), after.items.map { it.id })
+        // 关键：清掉的那两条要能被识别出来（否则只清了内存、重启又回来）
+        assertEquals(listOf(1L, 2L), AsrQueue.removedIds(before, after))
+    }
+
+    @Test
+    fun removedIds_isEmptyWhenNothingWasRemoved() {
+        val before = queue(item(1, state = AsrItemState.QUEUED))
+        assertEquals(emptyList<Long>(), AsrQueue.removedIds(before, before))
+    }
+
     // ---------------------------------------------------------------- 入队去重（2026-10-03 真机：同一文件排了三遍）
 
     @Test

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Movie
@@ -376,10 +377,17 @@ private fun QueueHeaderCard(state: TasksUiState, viewModel: TasksViewModel) {
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(stringResource(R.string.tasks_action_retry_all))
                 }
-                OutlinedButton(onClick = { viewModel.clearFinished() }) {
+                OutlinedButton(onClick = { viewModel.clearFinished() }, enabled = state.hasFinished) {
                     Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.tasks_action_clear))
+                    // 带上数量（真机反馈：按钮在队列卡片上方，滚到列表就看不着了；写清"会清掉几项"更好找）
+                    Text(
+                        if (state.finishedCount > 0) {
+                            stringResource(R.string.tasks_action_clear_count, state.finishedCount)
+                        } else {
+                            stringResource(R.string.tasks_action_clear)
+                        },
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -484,8 +492,17 @@ private fun QueueRow(item: AsrItem, viewModel: TasksViewModel, canReorder: Boole
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.tasks_action_retry))
                 }
-                IconButton(onClick = { viewModel.cancel(item.id) }, enabled = !item.state.isTerminal) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.tasks_action_cancel))
+                // 没结束的：✕ = 取消（留在列表里可重试）；已结束的：🗑 = 从列表和库里移除
+                // （2026-10-03 用户问「任务列表的已取消能不能去掉」——以前这里的 ✕ 只把任务变成"已取消"，
+                //   既不消失也没提示，用户自然以为去不掉）
+                if (item.state.isTerminal) {
+                    IconButton(onClick = { viewModel.remove(item.id) }) {
+                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.tasks_action_remove))
+                    }
+                } else {
+                    IconButton(onClick = { viewModel.cancel(item.id) }) {
+                        Icon(Icons.Default.Close, contentDescription = stringResource(R.string.tasks_action_cancel))
+                    }
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 if (item.state.isActive) {

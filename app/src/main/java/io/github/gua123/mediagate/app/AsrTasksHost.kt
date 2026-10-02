@@ -91,6 +91,8 @@ class AsrTasksHost(
 
     override fun clearFinished() = controller.clearFinished()
 
+    override fun removeTask(id: Long) = controller.remove(id)
+
     private fun requireBackend(): StorageBackend =
         backendProvider() ?: throw StorageException.AccessDenied("还没有可用的来源，请先在首页选择目录或连接")
 

@@ -187,6 +187,16 @@ data class TasksUiState(
     /** 能不能取消全部：还有没落定的任务。 */
     val canCancelAll: Boolean get() = queue.items.any { !it.state.isTerminal }
 
+    /**
+     * 已结束（可清理/可移除）的条目数：成功 / 失败 / 跳过 / 已取消。
+     *
+     * 界面上「清空已结束（N）」与每条终态任务的「移除」都靠它（**2026-10-03 用户问"已取消能不能去掉"**）。
+     */
+    val finishedCount: Int get() = queue.items.count { it.state.isTerminal }
+
+    /** 有没有可清掉的已结束任务（没有时按钮禁用，别让用户点了没反应）。 */
+    val hasFinished: Boolean get() = finishedCount > 0
+
     /** 还能不能上移（队列里有排队中的任务）。 */
     val canReorder: Boolean get() = queue.items.count { it.state == AsrItemState.QUEUED } > 1
 }
