@@ -28,6 +28,14 @@ import java.io.IOException
 data class UpdateSource(
     val manifestUrl: String = DEFAULT_MANIFEST_URL,
     val mirrorManifestUrl: String? = DEFAULT_MIRROR_MANIFEST_URL,
+    /**
+     * **国内可达的镜像清单**（2026-10-03 用户反馈「网络正常，但软件内连不上 GitHub」后新增）。
+     *
+     * jsDelivr 直接托管 GitHub 仓库里的文件，国内通常可达（不需要代理）；
+     * 代价是**有缓存**（分支引用大约半天级别），所以它排在 raw 后面：
+     * raw 通就用最新的，raw 不通才用它——两边都读时按 versionCode 取高者，不会"用旧的盖新的"。
+     */
+    val cdnManifestUrl: String? = DEFAULT_CDN_MANIFEST_URL,
     val apkHeaders: Map<String, String> = mapOf("Accept" to "application/octet-stream"),
 ) {
 
@@ -36,6 +44,9 @@ data class UpdateSource(
 
     /** 备用清单请求。 */
     fun mirrorManifestRequest(): HttpRequest? = mirrorManifestUrl?.let { HttpRequest(it) }
+
+    /** 镜像（CDN）清单请求。 */
+    fun cdnManifestRequest(): HttpRequest? = cdnManifestUrl?.let { HttpRequest(it) }
 
     companion object {
 
@@ -55,6 +66,16 @@ data class UpdateSource(
          */
         const val DEFAULT_MIRROR_MANIFEST_URL: String =
             "https://raw.githubusercontent.com/gua123/mediagate/refs/heads/main/update.json"
+
+        /**
+         * 国内可达的镜像清单地址（jsDelivr 托管的同一份 update.json）。
+         *
+         * 为什么需要（2026-10-03 真机）：用户「网络为正常，但软件内网络无法连通到 github」——
+         * raw.githubusercontent.com 在国内经常不可达，而他的代理/VPN 未必覆盖这个域名。
+         * jsDelivr 走的是通用 CDN，通常不需要代理即可读到清单。
+         */
+        const val DEFAULT_CDN_MANIFEST_URL: String =
+            "https://cdn.jsdelivr.net/gh/gua123/mediagate@main/update.json"
 
         /** 发布页（设置页里给用户的"手动下载"出口）。 */
         const val RELEASES_PAGE: String = "https://github.com/gua123/mediagate/releases"
@@ -113,28 +134,44 @@ class UpdateChecker(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
 
+    /** 取 URL 的主机名（外加上路径里最后一段，方便区分两条 raw 路径）。 */
+    private fun hostOf(url: String): String {
+        val host = url.substringAfter("://").substringBefore("/")
+        val tail = url.substringAfterLast("/")
+        return if (url.contains("refs/heads")) host + "/refs" else host + "/" + tail
+    }
+
     suspend fun check(
         source: UpdateSource,
         currentVersionCode: Long,
     ): UpdateCheckResult = withContext(io) {
-        val requests = listOfNotNull(source.manifestRequest(), source.mirrorManifestRequest())
-            .distinctBy { it.url }
+        val requests = listOfNotNull(
+            source.manifestRequest(),
+            source.mirrorManifestRequest(),
+            source.cdnManifestRequest(),
+        ).distinctBy { it.url }
         var newest: UpdateManifest? = null
         var failure: UpdateCheckResult.Failed? = null
+        // 每个地址试过之后记一行（成功也说、失败说原因）——故障时这一行就是"证据"
+        val attempts = mutableListOf<String>()
 
         for (request in requests) {
             when (val result = fetch(request)) {
                 is Fetch.Ok -> {
+                    attempts += "✓ " + hostOf(request.url) + " → " + result.manifest.versionName
                     if (newest == null || result.manifest.versionCode > newest.versionCode) {
                         newest = result.manifest
                     }
-                    // 已经确认有新版本就不必再问第二个地址
+                    // 已经确认有新版本就不必再问后面的地址
                     if (result.manifest.isNewerThan(currentVersionCode)) {
                         return@withContext UpdateCheckResult.Available(result.manifest)
                     }
                 }
 
-                is Fetch.Err -> if (failure == null) failure = result.failure
+                is Fetch.Err -> {
+                    attempts += "✗ " + hostOf(request.url) + " → " + result.failure.kind.zhText
+                    if (failure == null) failure = result.failure
+                }
             }
         }
 
@@ -145,8 +182,18 @@ class UpdateChecker(
 
             manifest != null -> UpdateCheckResult.UpToDate(currentVersionCode)
 
-            // 一条都没读成：报第一条（主地址）的失败原因，它最能说明问题
-            else -> failure ?: UpdateCheckResult.Failed(UpdateFailure.BAD_MANIFEST)
+            // 一条都没读成：报第一条（主地址）的失败原因，并把"每个地址的结果"一起带上——
+            // 用户一看就知道是"全部不通"还是"只有 raw 不通、镜像也不通"（2026-10-03 用户反馈后加的）
+            else -> {
+                // 原有细节（例如 HTTP 500）**不能丢**，把"逐地址结果"接在后面
+                val base = failure ?: UpdateCheckResult.Failed(UpdateFailure.BAD_MANIFEST)
+                val attemptsText = attempts.joinToString("；")
+                base.copy(
+                    detail = listOfNotNull(base.detail?.takeIf { it.isNotBlank() }, attemptsText.ifBlank { null })
+                        .joinToString("；")
+                        .ifBlank { null },
+                )
+            }
         }
     }
 
