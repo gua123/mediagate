@@ -666,27 +666,62 @@ class AppContainer(context: Context) :
         override suspend fun previewFrame(path: String, positionMs: Long): ByteArray? = withContext(Dispatchers.IO) {
             val key = path + "@" + (positionMs / PREVIEW_BUCKET_MS)
             previewCache.get(key)?.let { return@withContext it }
-            val backend = videoBackend.value ?: return@withContext null
+            // **本地真实文件走直读**（2026-10-03 真机「滑动没有预览图」）：
+            // 给 MMR 一个文件路径比让它通过 MediaDataSource 一点点 readAt 快一个量级，
+            // 滑动手势要的是即时反馈，慢一步就等于"没有"。
+            val local = path.takeIf { !it.startsWith("content://") }?.let { File(it) }?.takeIf { it.isFile }
             val bytes = runCatching {
-                backend.openRead(path).use { stream ->
-                    val source = stream.asRandomAccessSource(
-                        knownSize = if (stream.length > 0) stream.length else -1L,
-                    )
-                    previewExtractor.extract(
-                        source = source,
-                        mimeHint = null,
-                        positionMs = positionMs,
-                        targetWidth = PREVIEW_WIDTH_PX,
-                    )
+                // 直读失败（返回 null）也要回退到通用路径，不能直接放弃
+                val direct = local?.let { previewExtractor.extractFromFile(it, positionMs, PREVIEW_WIDTH_PX) }
+                if (direct != null) {
+                    direct
+                } else {
+                    val backend = videoBackend.value ?: return@withContext null
+                    backend.openRead(path).use { stream ->
+                        val source = stream.asRandomAccessSource(
+                            knownSize = if (stream.length > 0) stream.length else -1L,
+                        )
+                        previewExtractor.extract(
+                            source = source,
+                            mimeHint = null,
+                            positionMs = positionMs,
+                            targetWidth = PREVIEW_WIDTH_PX,
+                        )
+                    }
                 }
             }.onFailure { AppLog.w(TAG, "取预览帧失败：" + path + " @" + positionMs, it) }.getOrNull()
             if (bytes != null && bytes.isNotEmpty()) {
                 previewCache.put(key, bytes)
+                // 本地文件顺手把前后各一个桶也抽出来（下一次拖动直接命中，几乎瞬时）
+                if (local != null) warmNeighbourPreviews(local, positionMs, key)
                 bytes
             } else {
                 null
             }
         }
+
+    /**
+     * 预热相邻预览桶（±1 个 [PREVIEW_BUCKET_MS]）。
+     *
+     * 只在**本地文件**上做：远端每抽一帧都要过网拉数据，预热反而拖慢当前这次拖动。
+     * best-effort：失败只记日志，不影响任何界面行为。
+     */
+    private fun warmNeighbourPreviews(local: File, positionMs: Long, currentKey: String) {
+        val bucket = positionMs / PREVIEW_BUCKET_MS
+        for (step in longArrayOf(-1L, 1L)) {
+            val target = (bucket + step).coerceAtLeast(0L)
+            if (target == bucket) continue
+            val key = local.path + "@" + target
+            if (key == currentKey || previewCache.get(key) != null) continue
+            ioScope.launch {
+                val at = target * PREVIEW_BUCKET_MS
+                val bytes = runCatching {
+                    previewExtractor.extractFromFile(local, at, PREVIEW_WIDTH_PX)
+                }.getOrNull()
+                if (bytes != null && bytes.isNotEmpty()) previewCache.put(key, bytes)
+            }
+        }
+    }
 
     /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
         override fun exitRepairRoot() {

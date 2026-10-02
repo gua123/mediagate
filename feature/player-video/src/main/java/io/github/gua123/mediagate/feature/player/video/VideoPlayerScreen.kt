@@ -429,12 +429,20 @@ private fun SeekGestureHud(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        bitmap?.let { image ->
+        if (bitmap != null) {
             Image(
-                bitmap = image,
+                bitmap = bitmap,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.width(240.dp).heightIn(max = 180.dp),
+            )
+        } else {
+            // 2026-10-03 真机反馈「滑动没有预览图」：帧要抽一下才有，先如实说明在生成，
+            // 免得用户以为功能坏了（本地文件走"直读"路径，通常几百毫秒内就出来）。
+            Text(
+                text = "预览生成中…",
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodySmall,
             )
         }
         Text(

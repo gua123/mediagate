@@ -25,6 +25,14 @@ interface FrameExtractor {
      * @param targetWidth 期望宽度（像素）；<=0 表示按原始尺寸。
      * @return 图片字节；失败返回 null（不抛异常）。
      */
+    /**
+     * **本地文件直读取帧**（可选能力）：给实现一个"文件路径"的机会，比 [extract] 的 MediaDataSource
+     * 路径快一个量级——滑动手势要即时反馈，慢一步就等于没有（2026-10-03 真机反馈后新增）。
+     *
+     * 默认实现返回 null（表示"不支持"），调用方据此回退到 [extract]。
+     */
+    suspend fun extractFromFile(file: java.io.File, positionMs: Long, targetWidth: Int): ByteArray? = null
+
     suspend fun extract(
         source: RandomAccessSource,
         mimeHint: String?,
