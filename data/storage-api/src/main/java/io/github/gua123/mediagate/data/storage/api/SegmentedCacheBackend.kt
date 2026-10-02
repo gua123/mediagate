@@ -50,6 +50,14 @@ class SegmentedCacheBackend(
     private val segmentBytes: Long = DEFAULT_SEGMENT_BYTES,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * **缓存命名空间**（2026-10-03 用户提问：「同一个文件在局域网留了缓存，切到公网还要重新缓存吗？」）。
+     *
+     * 默认用后端 id（含主机端口），也就是"按地址"分家——那样**局域网缓存到公网要重下**。
+     * :app 现在传**连接 id**：同一个连接下的多个地址（局域网 / 公网）共用同一份缓存，
+     * 在家用局域网缓存过的文件，出门切公网直接复用已缓存的部分。
+     */
+    private val namespace: String = delegate.id,
     /** 读到某段后**顺手预读**后面几段（0 = 关闭）。 */
     private val readAheadSegments: Int = DEFAULT_READ_AHEAD_SEGMENTS,
     /** 预读用的作用域；为 null 时不做预读（单测与其它调用方不受影响）。 */
@@ -85,6 +93,7 @@ class SegmentedCacheBackend(
         // 记住"当前在读哪个文件"：淘汰时保护它的段（用户要求：保留单文件缓存，下次打开更快）
         activePath = path
         val size = knownSize(path)
+        verifySizeOrDrop(path, size)
         return CachedStream(path = path, start = offset, size = size, requestedLength = length)
     }
 
@@ -171,7 +180,42 @@ class SegmentedCacheBackend(
         }
     }
 
-    private fun dirFor(path: String): File = File(rootDir, hash(delegate.id + "|" + path))
+    private fun dirFor(path: String): File = File(rootDir, hash(namespace + "|" + path))
+
+    /**
+     * **过期缓存护栏**：同一个路径背后的文件可能被换掉（服务器上重新上传、同名不同内容）。
+     *
+     * 做法极简：首次见到某个路径时把"文件大小"记进 `.size` 边车文件；以后每次打开都比对一次，
+     * 不一样就把该路径的段全部删掉重下（宁可多下一次，也不能拿旧字节当新视频播）。
+     *
+     * 代价：一次 `stat` 的结果（已在 [knownSize] 缓存里）+ 一次本地小文件读写，可忽略。
+     */
+    private suspend fun verifySizeOrDrop(path: String, size: Long) {
+        if (size < 0L) return
+        val dir = dirFor(path)
+        val stamp = File(dir, SIZE_STAMP)
+        val recorded = withContext(io) {
+            runCatching { stamp.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() }.getOrNull()
+        }
+        if (recorded == null) {
+            withContext(io) {
+                runCatching {
+                    dir.mkdirs()
+                    stamp.writeText(size.toString())
+                }
+            }
+            return
+        }
+        if (recorded == size) return
+        AppLog.w(TAG, "文件大小变了（" + recorded + " → " + size + "），丢掉旧缓存：" + path)
+        clearFile(path)
+        withContext(io) {
+            runCatching {
+                dir.mkdirs()
+                stamp.writeText(size.toString())
+            }
+        }
+    }
 
     private fun segmentFile(path: String, index: Long): File = File(dirFor(path), index.toString() + SEGMENT_SUFFIX)
 
@@ -412,6 +456,9 @@ class SegmentedCacheBackend(
 
         /** 默认预读段数（读到某段后顺手拉后面几段）。 */
         const val DEFAULT_READ_AHEAD_SEGMENTS: Int = 2
+
+        /** 记录"首次见到这个路径时的文件大小"的边车文件名（用于发现文件被换掉）。 */
+        private const val SIZE_STAMP = ".size"
 
         /** 默认上限：1 GB（手机上比 plan 里的 4 GB 保守，避免挤爆缓存分区）。 */
         const val DEFAULT_MAX_BYTES: Long = 1024L * 1024 * 1024

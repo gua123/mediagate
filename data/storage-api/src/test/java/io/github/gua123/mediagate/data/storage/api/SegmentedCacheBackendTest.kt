@@ -140,6 +140,71 @@ class SegmentedCacheBackendTest {
     }
 
     @Test
+    fun `同一连接的两个地址共用缓存（局域网缓存过，公网不必重下）`() = runTest {
+        // 2026-10-03 用户提问：「同一个文件，在局域网留了缓存，切换到公网还需要重新缓存吗？」
+        // 答：按连接命名空间分家后 **不需要**——同一连接的不同地址命中同一份段缓存。
+        val fetchesA = mutableListOf<Pair<Long, Long>>()
+        val dir = tmp.newFolder()
+        val lan = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, fetchesA),
+            rootDir = dir,
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.Unconfined,
+            namespace = "connection-1",
+        )
+        val s1 = lan.openRead("/movie.ts", offset = 0L, length = 16L)
+        s1.read(ByteArray(16), 0, 16)
+        s1.close()
+        assertEquals("局域网先下了一次", 1, fetchesA.size)
+
+        // 换成"同一个连接的公网地址"：不同 delegate（不同 id），但同一 namespace
+        val fetchesB = mutableListOf<Pair<Long, Long>>()
+        val wan = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, fetchesB),
+            rootDir = dir,
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.Unconfined,
+            namespace = "connection-1",
+        )
+        val s2 = wan.openRead("/movie.ts", offset = 0L, length = 16L)
+        s2.read(ByteArray(16), 0, 16)
+        s2.close()
+        assertEquals("公网不该再过网", 0, fetchesB.size)
+    }
+
+    @Test
+    fun `不同连接不共用缓存（避免同名文件串味）`() = runTest {
+        val dir = tmp.newFolder()
+        val fetchesA = mutableListOf<Pair<Long, Long>>()
+        val a = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, fetchesA),
+            rootDir = dir,
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.Unconfined,
+            namespace = "connection-1",
+        )
+        val s1 = a.openRead("/movie.ts", offset = 0L, length = 16L)
+        s1.read(ByteArray(16), 0, 16)
+        s1.close()
+        val fetchesB = mutableListOf<Pair<Long, Long>>()
+        val b = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, fetchesB),
+            rootDir = dir,
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.Unconfined,
+            namespace = "connection-2",
+        )
+        val s2 = b.openRead("/movie.ts", offset = 0L, length = 16L)
+        s2.read(ByteArray(16), 0, 16)
+        s2.close()
+        assertEquals("另一个连接要自己下", 1, fetchesB.size)
+    }
+
+    @Test
     fun `清空缓存会把段全删掉`() = runTest {
         val cache = backend()
         val stream = cache.openRead("/movie.ts", offset = 0L, length = 16L)

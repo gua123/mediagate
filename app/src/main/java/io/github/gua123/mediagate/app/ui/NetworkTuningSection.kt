@@ -18,7 +18,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import io.github.gua123.mediagate.app.humanBytes
 import io.github.gua123.mediagate.data.storage.api.CacheTuning
 
 /**
@@ -43,13 +42,6 @@ fun NetworkTuningSection(
     cacheUsedBytes: Long?,
     onClearCache: () -> Unit,
     onReset: () -> Unit,
-    /** 测速：要测的文件路径（相对连接根目录）。 */
-    speedPath: String,
-    onSpeedPathChange: (String) -> Unit,
-    speedRunning: Boolean,
-    /** 测速结果文本（可整段选中复制）。 */
-    speedResult: String?,
-    onRunSpeedTest: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier.fillMaxWidth()) {
@@ -120,34 +112,16 @@ fun NetworkTuningSection(
                 )
             }
 
-            // ---------------- 测速（2026-10-03）：调参有没有用，量一下就知道
-            Text("测速", style = MaterialTheme.typography.bodyMedium)
-            Text(
-                text = "走真实的播放路径（含分段缓存与上面的并发设置）读 8 MB。",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            OutlinedTextField(
-                value = speedPath,
-                onValueChange = onSpeedPathChange,
-                label = { Text("远端文件路径（相对连接根目录）") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onRunSpeedTest,
-                    enabled = !speedRunning && speedPath.isNotBlank(),
-                ) {
-                    Text(if (speedRunning) "测速中…" else "开始测速")
-                }
-            }
-            speedResult?.let { text ->
-                SelectionContainer {
-                    Text(text, style = MaterialTheme.typography.bodySmall)
-                }
-            }
         }
     }
+}
+
+/** 字节数 → 人话（缓存用量显示用；原来在测速文件里，测速删掉后搬到这里）。 */
+private fun humanBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024 * 1024 -> "%.2f GB".format(bytes / 1073741824.0)
+    bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / 1048576.0)
+    bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+    else -> bytes.toString() + " B"
 }
 
 /** 字节数 → GB 口径（1 GB / 2 GB / 4 GB / 8 GB）。 */
