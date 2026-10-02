@@ -38,6 +38,14 @@ class WebDavProbeMessageTest {
     }
 
     @Test
+    fun `经代理时要写明（真机 503 就是代理挡的）`() {
+        assertEquals("（经系统代理 10.0.0.1:8080）", proxyNote("10.0.0.1:8080"))
+        assertEquals("", proxyNote(null))
+        assertEquals("", proxyNote(""))
+        assertEquals("", proxyNote("DIRECT"))
+    }
+
+    @Test
     fun `没有响应体时只给状态与地址`() {
         val message = probeFailureMessage(404, "Not Found", "http://h:1/", null)
         assertEquals("HTTP 404 Not Found（请求：http://h:1/）", message)

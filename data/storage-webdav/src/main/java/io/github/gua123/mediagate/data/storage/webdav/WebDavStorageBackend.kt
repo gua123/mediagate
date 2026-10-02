@@ -432,7 +432,7 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
             404 -> "404 路径不存在（检查根路径是否写对）"
             405, 501 -> "$code 服务器不支持 PROPFIND（可能不是 WebDAV 服务）"
             // 其他状态（3xx/5xx/4xx 边角）把「请求地址 + 响应片段」带上：用户与我都能一眼定位
-            else -> probeFailureMessage(code, httpMessage, url, bodySnippet)
+            else -> probeFailureMessage(code, httpMessage, url, bodySnippet) + proxyNote(systemProxyFor(url))
         }
         return ProbeReport(ok = message == null, dnsMs = dns, connectMs = connect, handshakeMs = handshake, message = message)
     }
