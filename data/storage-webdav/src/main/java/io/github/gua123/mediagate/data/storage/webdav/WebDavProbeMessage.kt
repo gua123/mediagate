@@ -42,3 +42,24 @@ internal fun sanitizeSnippet(raw: String, max: Int = MAX_SNIPPET): String {
 
 /** 片段上限（字符）。 */
 internal const val MAX_SNIPPET: Int = 160
+
+/**
+ * 失败提示里补一句「经系统代理 …」。
+ *
+ * **2026-10-03 真机定位**：手机测公网 WebDAV 得 `HTTP 503 Service Unavailable`，而我在开发机上
+ * **直连**同一个地址拿的是 **207**、**经代理**（系统里配的 http 代理）拿的正是 **503**——
+ * 也就是说请求在链路中间被代理挡了，跟 App 与服务端都没关系。
+ * 把这一条写进提示，用户一眼就能想到"是不是手机开着 VPN / 设了 Wi-Fi 代理"。
+ */
+internal fun proxyNote(proxy: String?): String =
+    if (proxy.isNullOrBlank() || proxy.equals("DIRECT", ignoreCase = true)) "" else "（经系统代理 " + proxy + "）"
+
+/** 读系统代理（OkHttp 默认就会用它；这里只为把线索写进提示）。 */
+internal fun systemProxyFor(url: String): String? = runCatching {
+    val uri = java.net.URI(url)
+    val selected = java.net.ProxySelector.getDefault()?.select(uri)?.firstOrNull() ?: return null
+    when (selected.type()) {
+        java.net.Proxy.Type.DIRECT -> null
+        else -> (selected.address() as? java.net.InetSocketAddress)?.let { it.hostString + ":" + it.port }
+    }
+}.getOrNull()
