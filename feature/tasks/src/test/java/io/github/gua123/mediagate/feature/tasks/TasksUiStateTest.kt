@@ -288,6 +288,34 @@ class TasksUiStateTest {
         assertTrue("模型没装要给出下载指引", modelMissing.enqueueHint.orEmpty().contains("语音识别模型"))
     }
 
+    // ---------------------------------------------------------------- 清空已结束 / 单条移除
+
+    @Test
+    fun finishedCount_countsTerminalItemsOnly() {
+        val state = TasksUiState(
+            queue = AsrQueueSnapshot(
+                items = listOf(
+                    item(1, AsrItemState.SUCCEEDED),
+                    item(2, AsrItemState.CANCELLED),
+                    item(3, AsrItemState.FAILED),
+                    item(4, AsrItemState.QUEUED),
+                    item(5, AsrItemState.RUNNING),
+                ),
+            ),
+        )
+        assertEquals(3, state.finishedCount)
+        assertTrue(state.hasFinished)
+    }
+
+    @Test
+    fun hasFinished_isFalseWhenEverythingIsStillActive() {
+        val state = TasksUiState(
+            queue = AsrQueueSnapshot(items = listOf(item(1, AsrItemState.QUEUED), item(2, AsrItemState.RUNNING))),
+        )
+        assertEquals(0, state.finishedCount)
+        assertFalse("没有已结束的项时按钮该禁用", state.hasFinished)
+    }
+
     // ---------------------------------------------------------------- 入队去重
 
     @Test

@@ -288,6 +288,15 @@ interface AsrDao {
     @Update
     suspend fun updateTask(task: AsrTaskEntity)
 
+    /**
+     * 从库里**删掉**这些任务（**2026-10-03 真机**：用户问"已取消能不能去掉"）。
+     *
+     * 之前"清空已结束"只清了内存快照，行还留在库里——重启后它们会**原样回来**，
+     * 用户看到的就是"去不掉"。
+     */
+    @Query("DELETE FROM asr_task WHERE id IN (:ids)")
+    suspend fun deleteTasks(ids: List<Long>)
+
     /** 只更新会变的那几列（状态 / 进度 / 结果 / 顺序）。 */
     @Query(
         "UPDATE asr_task SET state = :state, progressMs = :progressMs, durationMs = :durationMs, " +

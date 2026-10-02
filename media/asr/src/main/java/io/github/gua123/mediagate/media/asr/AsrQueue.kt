@@ -494,6 +494,16 @@ object AsrQueue {
     fun clearFinished(queue: AsrQueueSnapshot): AsrQueueSnapshot =
         queue.copy(items = queue.items.filterNot { it.state.isTerminal })
 
+    /**
+     * 前后两份快照里**被移除的任务 id**（落库时要把这些行删掉，否则重启会"复活"）。
+     *
+     * 2026-10-03 真机：用户问"已取消能不能去掉"——根因就是清空只动了内存、没删库。
+     */
+    fun removedIds(before: AsrQueueSnapshot, after: AsrQueueSnapshot): List<Long> {
+        val kept = after.items.mapTo(HashSet()) { it.id }
+        return before.items.filterNot { it.id in kept }.map { it.id }
+    }
+
     private fun update(queue: AsrQueueSnapshot, id: Long, transform: (AsrItem) -> AsrItem): AsrQueueSnapshot {
         var changed = false
         val items = queue.items.map { item ->

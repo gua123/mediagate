@@ -86,6 +86,13 @@ interface TasksEnvironment {
 
     /** 清空已落定的任务。 */
     fun clearFinished()
+
+    /**
+     * 移除单条已结束的任务（**2026-10-03 用户问"已取消能不能去掉"**）。
+     *
+     * 只对终态有效：正在跑/排队的要先取消，避免"还在跑却被删掉"的错觉。
+     */
+    fun removeTask(id: Long)
 }
 
 /**

@@ -190,7 +190,42 @@ class AsrQueueController(
 
     fun skip(id: Long, reason: String) = publish(AsrQueue.skip(_snapshot.value, id, reason), null)
 
-    fun clearFinished() = publish(AsrQueue.clearFinished(_snapshot.value), null)
+    /**
+     * 清空已结束的任务（成功 / 失败 / 跳过 / 已取消）。
+     *
+     * **2026-10-03 真机修**：以前只清了内存快照，**行还留在库里** → 重启后"已取消"原样回来，
+     * 用户看到的就是"去不掉"。现在同时把这些行从库里删掉。
+     */
+    fun clearFinished() {
+        val before = _snapshot.value
+        val after = AsrQueue.clearFinished(before)
+        if (after == before) return
+        val removed = AsrQueue.removedIds(before, after)
+        publish(after, null)
+        if (removed.isNotEmpty()) {
+            scope.launch {
+                runCatching { dao.deleteTasks(removed) }
+                    .onFailure { AppLog.w(TAG, "清理已结束任务失败", it) }
+            }
+        }
+    }
+
+    /**
+     * 移除**单条**任务（界面在已结束的条目上给「移除」按钮）。
+     *
+     * 只允许移除已结束的：正在跑/排队的要先取消（避免"看着还在跑却被删掉"的错觉）。
+     */
+    fun remove(id: Long) {
+        val before = _snapshot.value
+        val item = before.item(id) ?: return
+        if (!item.state.isTerminal) return
+        val after = before.copy(items = before.items.filterNot { it.id == id })
+        publish(after, null)
+        scope.launch {
+            runCatching { dao.deleteTasks(listOf(id)) }
+                .onFailure { AppLog.w(TAG, "移除任务失败：$id", it) }
+        }
+    }
 
     /** 队列里还有没有活（服务据此决定要不要继续跑 / 停自己）。 */
     val hasWork: Boolean
