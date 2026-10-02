@@ -11,7 +11,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
@@ -62,12 +61,14 @@ class VideoPlayerPreferencesSettings(
     /**
      * 极简模式（**2026-10-03 用户要求**）：只留进度条与播放键；默认关。
      *
-     * 用 `runBlocking` 读一次首值不划算——播放页进页面时读一次即可，所以这里同步暴露一个值。
+     * 走 StateFlow（Eagerly + 初值 false）：**不在主线程读盘**——播放页进页面时取 `.value`，
+     * 首帧可能还是默认值，但下一帧就会被真实值替换（比 runBlocking 卡主线程安全得多）。
      */
-    override val simpleMode: Boolean
-        get() = runCatching {
-            kotlinx.coroutines.runBlocking { context.videoPlayerDataStore.data.first() }[KEY_SIMPLE_MODE] ?: false
-        }.getOrDefault(false)
+    private val simpleModeFlow: StateFlow<Boolean> = context.videoPlayerDataStore.data
+        .map { preferences -> preferences[KEY_SIMPLE_MODE] ?: false }
+        .stateIn(scope, SharingStarted.Eagerly, false)
+
+    override val simpleMode: Boolean get() = simpleModeFlow.value
 
 
     override suspend fun setSimpleMode(on: Boolean) {
