@@ -248,20 +248,43 @@ class VideoPlayerViewModel(
      * 探针跑在**独立进程**里，所以测的时候不会把 App 弄崩；这里轮询几次把结论反映到界面
      * （成功/失败都会很快有值，最长等 [VLC_RETEST_TIMEOUT_MS]）。
      */
-    fun retestVlc() {
+    fun retestVlc() = runVlcProbe(switchWhenUsable = false)
+
+    /**
+     * **先测试再切换**（2026-10-03 用户反馈「我没找到测试内核的地方」）。
+     *
+     * 用户点内核要切 LibVLC 时，弹窗里给的主按钮就是它：探针跑通 → 立刻切过去；
+     * 探针被带走 → **拒绝切换**并把原因写在弹窗上（用户原话：「不能运行此内核，就别让切，并给出提示」）。
+     */
+    fun probeThenSwitch() = runVlcProbe(switchWhenUsable = true)
+
+    /**
+     * 跑一次 LibVLC 探针（独立进程，绝不会把主进程带走），把过程与结论写进界面状态。
+     *
+     * @param switchWhenUsable 测试通过时是否顺手切过去。
+     */
+    private fun runVlcProbe(switchWhenUsable: Boolean) {
+        if (_state.value.vlcProbeRunning) return
+        _state.update {
+            it.reduce(VideoPlayerEvent.VlcProbeChanged(running = true, usable = null, message = null))
+        }
         viewModelScope.launch {
             environment.retestVlc()
             val deadline = System.currentTimeMillis() + VLC_RETEST_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
+            var usable: Boolean? = environment.vlcUsable
+            while (usable == null && System.currentTimeMillis() < deadline) {
                 delay(VLC_RETEST_POLL_MS)
-                val usable = environment.vlcUsable
-                if (usable != null) {
-                    _state.update {
-                        it.copy(vlcUsable = usable, vlcSuspectCrash = environment.vlcPreviouslyCrashed)
-                    }
-                    return@launch
-                }
+                usable = environment.vlcUsable
             }
+            val message = when (usable) {
+                true -> "测试通过：本机可以运行 LibVLC 内核"
+                false -> "测试失败：LibVLC 内核在本机起不来（已阻止切换）"
+                null -> "这次没得到结论（探针进程可能被系统回收了），可以稍后再试"
+            }
+            _state.update {
+                it.reduce(VideoPlayerEvent.VlcProbeChanged(running = false, usable = usable, message = message))
+            }
+            if (usable == true && switchWhenUsable) switchEngine()
         }
     }
 

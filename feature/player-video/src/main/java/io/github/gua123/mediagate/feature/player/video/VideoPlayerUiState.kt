@@ -131,8 +131,12 @@ data class VideoPlayerUiState(
     val switchMessage: String? = null,
     /** 上次切 LibVLC 崩溃过（本机可能不兼容）：界面在再切之前给一句提示。 */
     val vlcSuspectCrash: Boolean = false,
-    /** LibVLC 在本机能不能跑；false = 启动探针被带走 → 不让切（2026-10-03 用户建议）。 */
+    /** LibVLC 在本机能不能跑；false = 探针被带走 → 不让切（2026-10-03 用户建议）。 */
     val vlcUsable: Boolean? = null,
+    /** 正在跑 LibVLC 内核探针（独立进程；界面显示「正在测试…」）。 */
+    val vlcProbeRunning: Boolean = false,
+    /** 探针结果文案（测试通过 / 失败原因 / 没结论）。 */
+    val vlcProbeMessage: String? = null,
     /**
      * 极简模式（**2026-10-03 用户要求**：「做成极简模式」）：只留进度条与播放键，
      * 标题/内核/档位芯片全部收起（点一下仍可唤出这条细细的栏）。
@@ -356,6 +360,10 @@ sealed interface VideoPlayerEvent {
     /** 预览帧就绪（抽不到就不会发这个事件）。 */
     data class PreviewFrameLoaded(val bytes: ByteArray) : VideoPlayerEvent
 
+    /** LibVLC 内核探针：开始/结束（[usable] = null 表示没结论）。 */
+    data class VlcProbeChanged(val running: Boolean, val usable: Boolean?, val message: String?) :
+        VideoPlayerEvent
+
     /** 黑屏/切换提示到时间收掉。 */
     data object SwitchHintCleared : VideoPlayerEvent
 
@@ -566,6 +574,12 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
     VideoPlayerEvent.GestureSeekEnded -> copy(gestureSeekMs = null, previewFrame = null)
 
     is VideoPlayerEvent.PreviewFrameLoaded -> copy(previewFrame = event.bytes)
+
+    is VideoPlayerEvent.VlcProbeChanged -> copy(
+        vlcProbeRunning = event.running,
+        vlcUsable = event.usable ?: vlcUsable,
+        vlcProbeMessage = event.message,
+    )
 
     is VideoPlayerEvent.SwitchFailed -> copy(
         status = VideoPlayerStatus.ERROR,
