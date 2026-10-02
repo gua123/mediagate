@@ -32,6 +32,7 @@ import io.github.gua123.mediagate.media.subtitle.SubtitleFormat
 import io.github.gua123.mediagate.media.subtitle.SubtitleSource
 import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 import io.github.gua123.mediagate.media.subtitle.SubtitleTimeline
+import kotlin.random.Random
 
 /** 日志 TAG。 */
 private const val TAG = "player-video"
@@ -81,6 +82,7 @@ class VideoPlayerViewModel(
             // 记住的音量/亮度（2026-10-03 用户要求）：进入播放页就按上次的值来
             volume = PlayerEngine.sanitizeVolume(environment.preferences.playerVolume),
             brightness = environment.preferences.screenBrightness,
+            loopMode = environment.preferences.loopMode,
         ),
     )
 
@@ -97,6 +99,12 @@ class VideoPlayerViewModel(
     val videoOutput: StateFlow<View?> = _videoOutput.asStateFlow()
 
     private var engine: PlayerEngine? = null
+
+    /**
+     * 已经为哪些文件触发过"播完自动续播"（防止同一集被重复触发：采样每 500 ms 一次，
+     * 而 Ended 状态会持续若干次采样）。
+     */
+    private val advancedEpisodes = mutableSetOf<String>()
 
     /** 当前播放源（断点续播的 key 与换集都要它）。 */
     private var source: MediaSourceRef? = null
@@ -341,6 +349,47 @@ class VideoPlayerViewModel(
     private fun applyVolumeToEngine() {
         val v = _state.value.volume
         runCatching { engine?.setVolume(v) }
+    }
+
+    /**
+     * 点一下循环按钮：不循环 → 文件夹循环 → 单曲循环 → 随机播放 → 不循环（**2026-10-03 用户要求**）。
+     */
+    fun cycleLoopMode() {
+        val next = _state.value.loopMode.next()
+        _state.update { it.copy(loopMode = next) }
+        viewModelScope.launch { runCatching { environment.preferences.setLoopMode(next) } }
+    }
+
+    /**
+     * 播完之后按当前循环方式续播（用户原话：「没有此文件夹循环、单曲循环、随机播放」）。
+     *
+     * 判定是纯函数 [VideoLoopDecision]，这里只负责把它落到"播哪一个"。
+     */
+    private fun autoAdvanceOnEnded() {
+        val snapshot = _state.value
+        if (!snapshot.ended) return
+        if (advancedEpisodes.contains(snapshot.path)) return
+        val decision = VideoLoopDecision.onEnded(
+            mode = snapshot.loopMode,
+            currentIndex = snapshot.siblingIndex,
+            size = snapshot.siblingPaths.size,
+            randomPick = Random.nextInt(),
+        ) ?: return
+        advancedEpisodes += snapshot.path
+        when (decision) {
+            VideoLoopDecision.REPLAY -> replayCurrent()
+            else -> openEpisode(decision)
+        }
+    }
+
+    /** 单曲循环：回到开头接着播。 */
+    private fun replayCurrent() {
+        val target = engine ?: return
+        runCatching {
+            target.seekTo(0L)
+            target.play()
+            _state.update { it.copy(ended = false) }
+        }
     }
 
     fun toggleSimpleMode() {
@@ -1055,6 +1104,8 @@ class VideoPlayerViewModel(
         if (_state.value.switching) return
         val current = _state.value
         val path = current.siblingPaths.getOrNull(index) ?: return
+        // 手动/自动换集都到这里：把新目标从"已触发"里清掉，它播完还能继续往下续
+        advancedEpisodes.remove(path)
         val backendId = source?.backendId ?: environment.backend.value?.id ?: return
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -1234,6 +1285,8 @@ class VideoPlayerViewModel(
             ended = engineState is EngineState.Ended,
         )
         _state.update { it.reduce(tick) }
+        // 播完 → 按循环方式续播（单曲重播 / 文件夹下一个 / 随机一个）
+        if (tick.ended) autoAdvanceOnEnded()
         // 字幕覆盖层跟着采样点走（±0.5 s 微调在 refreshSubtitleCue 里应用）
         refreshSubtitleCue()
         return tick

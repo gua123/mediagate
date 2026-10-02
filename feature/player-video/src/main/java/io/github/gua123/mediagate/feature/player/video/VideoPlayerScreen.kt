@@ -940,6 +940,13 @@ private fun ChipsRow(
             colors = playerChipColors(),
             border = playerChipBorder(),
         )
+        // 循环方式（**2026-10-03 用户要求**：文件夹循环 / 单曲循环 / 随机播放）——点一下换一档
+        AssistChip(
+            onClick = viewModel::cycleLoopMode,
+            label = { Text("循环：" + state.loopMode.zhText) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
+        )
         // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
         AssistChip(
             onClick = onOpenPlaylist,

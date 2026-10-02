@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -78,6 +79,7 @@ import io.github.gua123.mediagate.core.common.VlcCrashHeuristic
 import io.github.gua123.mediagate.media.engine.VlcProbeService
 import kotlinx.coroutines.delay
 import io.github.gua123.mediagate.feature.browser.EntrySort
+import io.github.gua123.mediagate.feature.browser.EntrySorter
 import io.github.gua123.mediagate.feature.player.video.TsIndexInfo
 import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
 import io.github.gua123.mediagate.feature.update.SignatureCheck
@@ -393,6 +395,9 @@ class AppContainer(context: Context) :
     override val sort: StateFlow<EntrySort> =
         settings.sort.stateIn(ioScope, SharingStarted.Eagerly, EntrySort())
 
+    /** 「上次播放」高亮的数据源（2026-10-03 用户要求）：同步读内存那份，进入浏览页就有值。 */
+    override val lastPlayedPath: String? get() = lastPlayed.value
+
     /** 改排序并落盘。 */
     override suspend fun setSort(sort: EntrySort) {
         settings.setSort(sort)
@@ -501,6 +506,21 @@ class AppContainer(context: Context) :
     private var remoteCache: SegmentedCacheBackend? = null
 
     /** 缓存当前占用字节数（用户要求"设置里增加缓存大小按 GB"，用量一并显示）。 */
+    /**
+     * **最后一次播放的文件路径**（2026-10-03 用户要求）：启动恢复目录与浏览页高亮都读它。
+     *
+     * 内存里放一份 StateFlow（界面要同步读），同时写进 DataStore 供下次启动用。
+     */
+    private val _lastPlayedPath = MutableStateFlow<String?>(null)
+
+    val lastPlayed: StateFlow<String?> = _lastPlayedPath.asStateFlow()
+
+    private fun rememberLastPlayed(path: String) {
+        if (path.isBlank() || _lastPlayedPath.value == path) return
+        _lastPlayedPath.value = path
+        ioScope.launch { runCatching { settings.setLastPlayedPath(path) } }
+    }
+
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
 
     /** 清空缓存，返回释放的字节数。 */
@@ -681,6 +701,8 @@ class AppContainer(context: Context) :
          * 段级"单飞"保证这次预取与起播的真实请求不会重复拉同一段。
          */
         override fun prefetchHead(path: String) {
+            // 顺手记下"最后一次播放"（这条路正是"这个文件已经被打开要播了"的唯一入口）
+            rememberLastPlayed(path)
             val cache = remoteCache ?: return
             val bytes = networkTuning.tuning.value.segmentBytes * PREFETCH_HEAD_SEGMENTS
             ioScope.launch {
@@ -750,8 +772,16 @@ class AppContainer(context: Context) :
          *
          * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），播放页按分类给中文提示。
          */
+        /**
+         * 同目录可播列表（上下集队列）。
+         *
+         * **2026-10-03 用户要求**：「播放时的下一个和上一个需要根据排序后的文件顺序，而不是默认排序的
+         * 文件顺序」⇒ 这里就按**浏览页当前的排序设置**（名称/大小/时间/类型 + 升降序）排一遍，
+         * 于是"下一集"与列表里看到的下一行永远一致。
+         */
         override suspend fun siblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
-            VideoPlayerMath.playableEntries(currentBackend().list(parentOf(path), null))
+            val entries = VideoPlayerMath.playableEntries(currentBackend().list(parentOf(path), null))
+            EntrySorter.sort(entries, settings.sort.first())
         }
     }
 
@@ -1119,6 +1149,10 @@ class AppContainer(context: Context) :
     private fun parentOf(path: String): String = path.substringBeforeLast('/', "")
 
     init {
+        // 冷启动先把"最后一次播放的文件"读进内存：浏览页高亮与"恢复上次文件夹"都要它
+        ioScope.launch {
+            runCatching { settings.lastPlayedPath.first() }.getOrNull()?.let { _lastPlayedPath.value = it }
+        }
         ioScope.launch {
             rootConfig.collect { config -> applyConfig(config) }
         }

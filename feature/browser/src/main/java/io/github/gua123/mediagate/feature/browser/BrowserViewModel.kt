@@ -40,9 +40,20 @@ class BrowserViewModel(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
+    /**
+     * 打开时从哪个目录开始。
+     *
+     * **2026-10-03 用户要求**：「在重新打开软件时，如果网络通畅，自动打开到最后一次播放的文件夹」
+     * ⇒ 路由没带路径（＝从底部导航进来的）时，退回"**最后一次播放文件所在的那个文件夹**"；
+     * 谁都没有记录才回根目录。网络不通时照旧由根目录装载流程给出中文错误与重试。
+     */
+    private val startPath: String = initialPath.ifBlank {
+        BrowserPaths.parentOf(environment.lastPlayedPath.orEmpty()).orEmpty()
+    }
+
     private val _state = MutableStateFlow(
-        BrowserUiState(filter = initialFilter).reduce(
-            BrowserEvent.LoadStarted(path = initialPath, rootLabel = ""),
+        BrowserUiState(filter = initialFilter, lastPlayedPath = environment.lastPlayedPath).reduce(
+            BrowserEvent.LoadStarted(path = startPath, rootLabel = ""),
         ),
     )
 
