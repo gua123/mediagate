@@ -190,16 +190,15 @@ class ConnectionsViewModel(
                     handshakes = StorageConnectionHandshakes.forConnection(record, secret),
                     io = io,
                 )
-                DraftTestSupport.summarize(
-                    tester.testAll(record.protocol ?: ProtocolKind.LOCAL, record.selectableAddresses()),
-                    source,
-                )
+                val results = tester.testAll(record.protocol ?: ProtocolKind.LOCAL, record.selectableAddresses())
+                // 一句话给人看 + 技术详情可复制（用户问过「在哪里查看详情」）
+                DraftTestSupport.summarize(results, source) to DraftTestSupport.detailOf(results, source)
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                "测试失败：" + friendly(t)
+                ("测试失败：" + friendly(t)) to null
             }
-            _state.update { it.reduce(ConnectionsEvent.DraftTestFinished(result)) }
+            _state.update { it.reduce(ConnectionsEvent.DraftTestFinished(result.first, result.second)) }
         }
     }
 

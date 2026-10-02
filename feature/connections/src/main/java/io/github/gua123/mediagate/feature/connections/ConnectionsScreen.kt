@@ -24,6 +24,10 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -509,6 +513,37 @@ private fun ConnectionCard(
     }
 }
 
+/**
+ * 「技术详情」弹窗（**2026-10-03 用户问「在哪里查看详情」**）。
+ *
+ * 以前那句「未知错误 · 查看详情」是**空话**——界面上没有任何可点的东西。
+ * 现在把原始信息摆出来（阶段/分类/原始 message/耗时），并且可以整段复制走。
+ */
+@Composable
+private fun TestDetailDialog(detail: String, onClose: () -> Unit) {
+    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(stringResource(R.string.connections_test_detail)) },
+        text = {
+            SelectionContainer {
+                Text(text = detail, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    runCatching {
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("mediagate-test-detail", detail))
+                    }
+                    onClose()
+                },
+            ) { Text(stringResource(R.string.connections_test_detail_copy)) }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text(stringResource(R.string.connections_cancel)) } },
+    )
+}
+
 /** 一个地址的三段耗时与错误分类（R8 的核心展示）。 */
 @Composable
 private fun AddressResultRow(result: AddressTestUi) {
@@ -577,6 +612,8 @@ private fun ConnectionEditorScreen(
 ) {
     val draft = state.editor ?: return
     val errors = state.editorErrors
+    // 「技术详情」弹窗开关（2026-10-03：用户问「在哪里查看详情」——现在有个真能点的地方了）
+    var showTestDetail by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier,
@@ -777,6 +814,15 @@ private fun ConnectionEditorScreen(
                         TestOutcome.NOT_APPLICABLE -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+                // 「技术详情」（2026-10-03 用户问「在哪里查看详情」：以前那句提示里根本没有可点的东西）
+                state.draftTestDetail?.let { detail ->
+                    TextButton(onClick = { showTestDetail = true }) {
+                        Text(stringResource(R.string.connections_test_detail))
+                    }
+                    if (showTestDetail) {
+                        TestDetailDialog(detail = detail, onClose = { showTestDetail = false })
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
