@@ -11,11 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import java.io.ByteArrayOutputStream
-import java.io.RandomAccessFile
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -54,44 +50,16 @@ class SegmentedCacheBackend(
     private val segmentBytes: Long = DEFAULT_SEGMENT_BYTES,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    /** 单块大小：段会被拆成若干块**并发**取（见 [chunkRanges]）。 */
-    private val chunkBytes: Long = DEFAULT_CHUNK_BYTES,
-    /** 同一段的并发块数上限。 */
-    private val parallelChunks: Int = DEFAULT_PARALLEL_CHUNKS,
     /** 读到某段后**顺手预读**后面几段（0 = 关闭）。 */
     private val readAheadSegments: Int = DEFAULT_READ_AHEAD_SEGMENTS,
     /** 预读用的作用域；为 null 时不做预读（单测与其它调用方不受影响）。 */
     private val readAheadScope: CoroutineScope? = null,
-    /**
-     * **实时参数**（2026-10-03 用户要求把并发数开放到设置里）：每次取块/预读现读一次。
-     *
-     * 为什么不直接用构造参数：用户改设置后不该等到"重新连接"才生效——块大小、并发块数、
-     * 预读段数都能中途改（段大小不行，它决定磁盘上段文件的切分方式，见 [CacheTuning] 的说明）。
-     */
-    private val liveTuning: () -> CacheTuning = {
-        CacheTuning(
-            segmentBytes = segmentBytes,
-            chunkBytes = chunkBytes,
-            parallelChunks = parallelChunks,
-            readAheadSegments = readAheadSegments,
-        ).normalized()
-    },
 ) : StorageBackend {
 
     init {
         require(segmentBytes > 0L) { "segmentBytes 必须为正：$segmentBytes" }
         require(maxBytes >= segmentBytes) { "maxBytes 不能小于一个段：$maxBytes < $segmentBytes" }
-        require(chunkBytes > 0L) { "chunkBytes 必须为正：$chunkBytes" }
-        require(parallelChunks >= 1) { "parallelChunks 至少为 1：$parallelChunks" }
     }
-
-    /**
-     * 并发许可池：**容量固定为上限**，每次取块按当前设置请求若干许可。
-     *
-     * 这样"把并发数调小"能立刻生效（下次取块就少要几个许可），调大也不用重建对象；
-     * 跨段共用同一个池，避免手机上一口气开太多连接。
-     */
-    private val chunkPermits = Semaphore(CacheTuning.MAX_PARALLEL_CHUNKS)
 
     /** 正在下载的段（单飞：同一段不会被下两次，不同段可以同时下——预读才有意义）。 */
     private val inFlight = mutableMapOf<String, Deferred<File>>()
@@ -114,6 +82,8 @@ class SegmentedCacheBackend(
     override suspend fun stat(path: String): RemoteEntry = delegate.stat(path)
 
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+        // 记住"当前在读哪个文件"：淘汰时保护它的段（用户要求：保留单文件缓存，下次打开更快）
+        activePath = path
         val size = knownSize(path)
         return CachedStream(path = path, start = offset, size = size, requestedLength = length)
     }
@@ -224,8 +194,14 @@ class SegmentedCacheBackend(
         }
     }
 
-    /** 正在下载的块数（用于执行"当前并发数"这个用户可调的限制）。 */
-    private val inFlightChunks = java.util.concurrent.atomic.AtomicInteger()
+    /**
+     * **当前正在读的文件**（2026-10-03 用户要求：「保留单文件缓存，下次加载时可快速打开」）。
+     *
+     * 淘汰时**跳过它的段**：正在播放/浏览的这个文件的缓存不许被别的文件挤掉，
+     * 这样"退出去再进来"就是直接命中本地，秒开。
+     */
+    @Volatile
+    private var activePath: String? = null
 
     /**
      * 按"当前并发数"取块：[limit] 由用户随时可改，所以不能用固定容量的信号量直接表达。
@@ -237,26 +213,13 @@ class SegmentedCacheBackend(
      * 反过来（用固定容量信号量直接当限制用）会导致"一个块抢走全部许可、其余块排队"，
      * 也就是并发退化成串行——那是错的（已在单测里暴露过）。
      */
-    private suspend fun <T> withChunkLimit(limit: Int, block: suspend () -> T): T {
-        val soft = limit.coerceIn(1, CacheTuning.MAX_PARALLEL_CHUNKS)
-        chunkPermits.acquire()
-        try {
-            while (true) {
-                val current = inFlightChunks.get()
-                if (current < soft && inFlightChunks.compareAndSet(current, current + 1)) break
-                kotlinx.coroutines.delay(CHUNK_SLOT_POLL_MS)
-            }
-            return try {
-                block()
-            } finally {
-                inFlightChunks.decrementAndGet()
-            }
-        } finally {
-            chunkPermits.release()
-        }
-    }
-
-    /** 下载一个段：**拆块并发取**，各自写到临时文件的对应偏移，最后改名。 */
+    /**
+     * 下载一个段：**一个请求、顺序写完**（2026-10-03 用户要求「把并发也去掉」）。
+     *
+     * 原来的"段内拆块并发"在高延迟链路上收益有限（瓶颈是往返次数而不是连接数），
+     * 却引入了并发限制、许可池、随机写入这一堆复杂度——现在回到单请求顺序下载，
+     * 行为更好预测，也少一层出错的可能。
+     */
     private suspend fun downloadSegment(path: String, index: Long, file: File): File {
         if (file.isFile && file.length() > 0L) {
             file.setLastModified(System.currentTimeMillis())
@@ -267,34 +230,20 @@ class SegmentedCacheBackend(
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, file.name + TMP_SUFFIX)
             try {
-                val tuning = liveTuning()
-                val chunks = chunkRanges(start, length, tuning.chunkBytes)
                 val written = withContext(io) {
-                    RandomAccessFile(temporary, "rw").use { raf ->
-                        coroutineScope {
-                            val jobs = chunks.mapIndexed { i, chunk ->
-                                async {
-                                    withChunkLimit(tuning.parallelChunks) {
-                                        delegate.openRead(path, chunk.offset, chunk.length).use { stream ->
-                                            val buffer = ByteArray(COPY_BUFFER_BYTES)
-                                            val bytes = ByteArrayOutputStream(chunk.length.toInt())
-                                            while (bytes.size() < chunk.length) {
-                                                val want = minOf(buffer.size.toLong(), chunk.length - bytes.size()).toInt()
-                                                val read = stream.read(buffer, 0, want)
-                                                if (read < 0) break
-                                                bytes.write(buffer, 0, read)
-                                            }
-                                            val data = bytes.toByteArray()
-                                            synchronized(raf) {
-                                                raf.seek((chunk.offset - start))
-                                                raf.write(data)
-                                            }
-                                            data.size.toLong()
-                                        }
-                                    }
-                                }
+                    delegate.openRead(path, start, length).use { stream ->
+                        temporary.outputStream().use { output ->
+                            val buffer = ByteArray(COPY_BUFFER_BYTES)
+                            var total = 0L
+                            while (total < length) {
+                                val want = minOf(buffer.size.toLong(), length - total).toInt()
+                                val read = stream.read(buffer, 0, want)
+                                if (read < 0) break
+                                output.write(buffer, 0, read)
+                                total += read
                             }
-                            jobs.sumOf { it.await() }
+                            output.flush()
+                            total
                         }
                     }
                 }
@@ -320,7 +269,7 @@ class SegmentedCacheBackend(
     /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
     private fun scheduleReadAhead(path: String, index: Long) {
         val scope = readAheadScope ?: return
-        val ahead = liveTuning().readAheadSegments
+        val ahead = readAheadSegments
         if (ahead <= 0) return
         for (step in 1..ahead) {
             val target = index + step
@@ -341,11 +290,30 @@ class SegmentedCacheBackend(
         val files = segmentFiles().sortedBy { it.lastModified() }
         var total = files.sumOf { it.length() }
         if (total <= maxBytes) return
+        // **优先保住"当前正在读的那个文件"**（2026-10-03 用户要求「保留单文件缓存，
+        // 下次加载时可快速打开」）：第一轮只淘汰别的文件，这个文件的段留着，
+        // 于是"退出去再进来"直接命中本地、秒开。
+        val keepDir = activePath?.let { dirFor(it).absolutePath }
+        total = evictPass(files, total, skipDir = keepDir)
+        // 第二轮**不再保护**：如果光淘汰别的文件还是超上限（比如就一个超大文件在放），
+        // 那就连它最旧的段一起淘汰——缓存必须有界，否则会吃满用户存储。
+        if (total > maxBytes) evictPass(files, total, skipDir = null)
+    }
+
+    /**
+     * 按 LRU 淘汰一轮，返回剩余总字节数。
+     *
+     * @param skipDir 该目录下的段本轮跳过；传 null 表示不跳过任何目录。
+     */
+    private fun evictPass(files: List<File>, startedTotal: Long, skipDir: String?): Long {
+        var total = startedTotal
         for (file in files) {
             if (total <= maxBytes) break
+            if (skipDir != null && file.parentFile?.absolutePath == skipDir) continue
             val length = file.length()
             if (file.delete()) total -= length
         }
+        return total
     }
 
     // ------------------------------------------------------------ 流实现
@@ -423,6 +391,9 @@ class SegmentedCacheBackend(
 
         /** 默认段大小：4 MB（plan 4.1「分段缓存」；一次请求够大又不至于拖太久）。 */
         const val DEFAULT_SEGMENT_BYTES: Long = 4L * 1024 * 1024
+
+        /** 默认预读段数（读到某段后顺手拉后面几段）。 */
+        const val DEFAULT_READ_AHEAD_SEGMENTS: Int = 2
 
         /** 默认上限：1 GB（手机上比 plan 里的 4 GB 保守，避免挤爆缓存分区）。 */
         const val DEFAULT_MAX_BYTES: Long = 1024L * 1024 * 1024

@@ -150,10 +150,10 @@ class SegmentedCacheBackendTest {
         )
     }
 
-    // ---------------------------------------------------------------- 并发取块（2026-10-03 用户问「缓冲能不能多线程」）
+    // ------------------------------------------- 顺序单请求 + 单文件缓存（2026-10-03 用户要求）
 
     @Test
-    fun `大段会拆成多块并发取`() = runTest {
+    fun `一个段只发一个请求（并发已按用户要求去掉）`() = runTest {
         // 真实粒度：4 MB 段 / 1 MB 块 ⇒ 期望看到多个并发请求
         val big = ByteArray(4 * 1024 * 1024) { (it % 251).toByte() }
         val inFlight = java.util.concurrent.atomic.AtomicInteger()
@@ -195,15 +195,14 @@ class SegmentedCacheBackendTest {
             segmentBytes = 4L * 1024 * 1024,
             maxBytes = 16L * 1024 * 1024,
             io = Dispatchers.Unconfined,
-            chunkBytes = 1024L * 1024,
-            parallelChunks = 4,
             readAheadSegments = 0,
         )
         val stream = cache.openRead("/m.bin", offset = 0L, length = 16L)
         val buffer = ByteArray(16)
         stream.read(buffer, 0, 16)
         assertArrayEquals(big.copyOfRange(0, 16), buffer)
-        assertTrue("拆块后应当出现并发（实测峰值 " + peak.get() + "）", peak.get() >= 2)
+        // 顺序下载：任何时刻只有一个在途请求（这正是"把并发去掉"后的预期行为）
+        assertEquals("同一时刻只应有一个请求在途", 1, peak.get())
         stream.close()
     }
 

@@ -596,8 +596,6 @@ private fun SettingsRoute(
             // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
             NetworkTuningSection(
                 tuning = networkTuning,
-                onParallelChunks = { value -> scope.launch { container.networkTuning.setParallelChunks(value) } },
-                onChunkBytes = { value -> scope.launch { container.networkTuning.setChunkKb((value / 1024).toInt()) } },
                 onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
                 onSegmentBytes = { value ->
                     scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
@@ -616,8 +614,7 @@ private fun SettingsRoute(
                             speedResult = formatThroughput(
                                 report = report,
                                 path = target,
-                                parallelChunks = networkTuning.parallelChunks,
-                                chunkBytes = networkTuning.chunkBytes,
+                                segmentBytes = networkTuning.segmentBytes,
                                 readAheadSegments = networkTuning.readAheadSegments,
                             )
                             speedRunning = false

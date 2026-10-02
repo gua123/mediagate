@@ -114,11 +114,6 @@ class VideoPlayerViewModel(
     private var repairJob: Job? = null
     private var tsIndexJob: Job? = null
 
-    /** 横滑调进度时的预览帧请求；新的一次会取消上一次（节流）。 */
-    private var previewJob: Job? = null
-
-    /** 上一次取预览帧的时间桶（[PreviewBucket.BUCKET_MS] 一格）；同一桶不重复取。 */
-    private var previewBucket: Long = Long.MIN_VALUE
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
@@ -310,22 +305,18 @@ class VideoPlayerViewModel(
         val current = _state.value
         if (current.durationMs <= 0L) return
         _state.update { it.reduce(VideoPlayerEvent.GestureSeekStarted(current.positionMs)) }
-        // 一按下就取"当前位置"那一帧：手指刚动就能看到画面（而不是先看到"预览生成中…"）
-        previewBucket = Long.MIN_VALUE
-        loadPreviewFrame(current.positionMs)
     }
 
     /**
      * 横滑调进度：位移（[dxFraction] = 横向位移 ÷ 画面宽度，右为正）。
      *
-     * 目标位置由 [SeekGestureMath] 换算（纯函数，单测覆盖）；顺便异步取一张该位置的预览帧。
+     * 目标位置由 [SeekGestureMath] 换算（纯函数，单测覆盖）。松手时才真的 seek。
      */
     fun seekGestureBy(dxFraction: Float) {
         val current = _state.value
         if (current.gestureSeekMs == null) return
         val target = SeekGestureMath.targetMs(current.gestureStartMs, dxFraction, current.durationMs)
         _state.update { it.reduce(VideoPlayerEvent.GestureSeekMoved(target)) }
-        loadPreviewFrame(target)
     }
 
     /** 横滑调进度：松手（提交给内核）。想作废就调 [cancelSeekGesture]。 */
@@ -342,36 +333,6 @@ class VideoPlayerViewModel(
     fun cancelSeekGesture() {
         if (_state.value.gestureSeekMs == null) return
         _state.update { it.reduce(VideoPlayerEvent.GestureSeekEnded) }
-    }
-
-    /**
-     * 取一张 [positionMs] 处的预览帧（best-effort，失败就只显示时间）。
-     *
-     * 抽帧本身在 :app（那里才有抽帧器与缓存）；这里只做节流：新的一次请求会取消上一次。
-     */
-    private fun loadPreviewFrame(positionMs: Long) {
-        val ref = source ?: return
-        // **节流到 5 秒桶**（2026-10-03 真机"预览图总是显示生成中"的修复之一）：
-        // 拖动时每个像素都会调到这里，而抽一帧要几百毫秒——不节流的话请求永远在排队。
-        val bucket = PreviewBucket.of(positionMs)
-        if (bucket == previewBucket) return
-        previewBucket = bucket
-        // **不取消上一帧**：抽帧是幂等的，让它在途完成，回来还能用（取消等于白干）。
-        previewJob = viewModelScope.launch {
-            val bytes = try {
-                environment.previewFrame(ref.path, positionMs)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (t: Throwable) {
-                AppLog.w(TAG, "取预览帧失败：" + positionMs, t)
-                null
-            } ?: return@launch
-            // **只要还在滑就贴上去**（原实现要求"目标位置完全相同"，而手指一直在动 ⇒ 永远贴不上，
-            // 于是界面一直停在"预览生成中…"）。旧位置的一帧也好过没有，下一桶到了会自然替换。
-            if (_state.value.gestureSeekMs != null) {
-                _state.update { it.reduce(VideoPlayerEvent.PreviewFrameLoaded(bytes)) }
-            }
-        }
     }
 
     /** 内核互切（R9）：Media3 ⇄ LibVLC，位置/倍速/解码档位/字幕全部保持。 */

@@ -116,12 +116,6 @@ interface VideoPlayerEnvironment {
     /** 重新测一次（提示对话框里的「重新测试」）。默认什么都不做。 */
     fun retestVlc() = Unit
 
-    /**
-     * 取 [positionMs] 处的预览帧（横滑调进度时显示在 HUD 上，**2026-10-03 用户要求**）。
-     *
-     * 抽帧在 :app 做（那里有抽帧器与缓存）；默认返回 null → HUD 退化成只显示时间，不影响拖动。
-     */
-    suspend fun previewFrame(path: String, positionMs: Long): ByteArray? = null
 
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */
     val progress: PlaybackProgressStore

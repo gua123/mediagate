@@ -31,8 +31,6 @@ class NetworkTuningSettings(
         .map { prefs ->
             CacheTuning.fromStored(
                 segmentMb = prefs[KEY_SEGMENT_MB],
-                chunkKb = prefs[KEY_CHUNK_KB],
-                parallelChunks = prefs[KEY_PARALLEL],
                 readAheadSegments = prefs[KEY_READ_AHEAD],
             )
         }
@@ -40,16 +38,6 @@ class NetworkTuningSettings(
 
     suspend fun setSegmentMb(value: Int) {
         context.networkTuningDataStore.edit { it[KEY_SEGMENT_MB] = value }
-    }
-
-    suspend fun setChunkKb(value: Int) {
-        context.networkTuningDataStore.edit { it[KEY_CHUNK_KB] = value }
-    }
-
-    suspend fun setParallelChunks(value: Int) {
-        context.networkTuningDataStore.edit {
-            it[KEY_PARALLEL] = value.coerceIn(CacheTuning.MIN_PARALLEL_CHUNKS, CacheTuning.MAX_PARALLEL_CHUNKS)
-        }
     }
 
     suspend fun setReadAheadSegments(value: Int) {
@@ -60,16 +48,12 @@ class NetworkTuningSettings(
     suspend fun reset() {
         context.networkTuningDataStore.edit { prefs ->
             prefs.remove(KEY_SEGMENT_MB)
-            prefs.remove(KEY_CHUNK_KB)
-            prefs.remove(KEY_PARALLEL)
             prefs.remove(KEY_READ_AHEAD)
         }
     }
 
     private companion object {
         val KEY_SEGMENT_MB = intPreferencesKey("segment_mb")
-        val KEY_CHUNK_KB = intPreferencesKey("chunk_kb")
-        val KEY_PARALLEL = intPreferencesKey("parallel_chunks")
         val KEY_READ_AHEAD = intPreferencesKey("read_ahead_segments")
     }
 }
