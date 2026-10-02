@@ -599,7 +599,7 @@ private fun SettingsRoute(
                 onSegmentBytes = { value ->
                     scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
                 },
-                onCacheBytes = { value -> scope.launch { container.networkTuning.setCacheGb((value / (1024 * 1024 * 1024)).toInt()) } },
+                onCacheBytes = { value -> scope.launch { container.networkTuning.setCacheMb((value / (1024 * 1024)).toInt()) } },
                 cacheUsedBytes = cacheUsedBytes,
                 onClearCache = {
                     scope.launch {

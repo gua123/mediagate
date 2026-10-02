@@ -22,10 +22,16 @@ data class CacheTuning(
     val readAheadSegments: Int = SegmentedCacheBackend.DEFAULT_READ_AHEAD_SEGMENTS,
 ) {
 
-    /** 夹到安全区间：非法/越界值一律退回默认，绝不让一个坏值把播放打死。 */
+    /**
+     * 夹到安全区间：非法/越界值一律退回默认，绝不让一个坏值把播放打死。
+     *
+     * **2026-10-03 用户要求「网络缓冲上限增加一个可以输入的窗口」**：总上限不再是"只认几个档位"，
+     * 而是**接受任意值**（输入框里能填 GB 小数），只夹到一个安全区间：
+     * 下限 [MIN_CACHE_BYTES]（太小等于没有缓存）且不小于一个段，上限 [MAX_CACHE_BYTES]（别把手机塞满）。
+     */
     fun normalized(): CacheTuning {
         val segment = segmentBytes.takeIf { it in SEGMENT_CHOICES } ?: SegmentedCacheBackend.DEFAULT_SEGMENT_BYTES
-        val total = (maxBytes.takeIf { it in CACHE_CHOICES } ?: SegmentedCacheBackend.DEFAULT_MAX_BYTES)
+        val total = maxBytes.coerceIn(MIN_CACHE_BYTES, MAX_CACHE_BYTES)
             // 总上限不能小于一个段（否则一段都存不下，缓存直接失效）
             .coerceAtLeast(segment)
         return CacheTuning(
@@ -48,7 +54,13 @@ data class CacheTuning(
             8L * 1024 * 1024,
         )
 
-        /** 缓存总上限可选值：**按 GB**（用户要求）。 */
+        /** 缓存总上限下限：512 MB（再小基本等于没有缓存）。 */
+        const val MIN_CACHE_BYTES: Long = 512L * 1024 * 1024
+
+        /** 缓存总上限上限：64 GB（别把手机存储塞满）。 */
+        const val MAX_CACHE_BYTES: Long = 64L * 1024 * 1024 * 1024
+
+        /** 缓存总上限的**快捷档位**（用户仍可直接输入任意值，见 [normalized]）。 */
         val CACHE_CHOICES: List<Long> = listOf(
             1L * 1024 * 1024 * 1024,
             2L * 1024 * 1024 * 1024,
@@ -66,11 +78,15 @@ data class CacheTuning(
          */
         fun fromStored(
             segmentMb: Int? = null,
+            cacheMb: Int? = null,
             cacheGb: Int? = null,
             readAheadSegments: Int? = null,
         ): CacheTuning = CacheTuning(
             segmentBytes = segmentMb?.let { it.toLong() * 1024 * 1024 } ?: SegmentedCacheBackend.DEFAULT_SEGMENT_BYTES,
-            maxBytes = cacheGb?.let { it.toLong() * 1024 * 1024 * 1024 } ?: SegmentedCacheBackend.DEFAULT_MAX_BYTES,
+            // 优先读 MB 键（能表达任意大小）；老版本只存过 GB 键，按 ×1024 迁移过来
+            maxBytes = cacheMb?.let { it.toLong() * 1024 * 1024 }
+                ?: cacheGb?.let { it.toLong() * 1024 * 1024 * 1024 }
+                ?: SegmentedCacheBackend.DEFAULT_MAX_BYTES,
             readAheadSegments = readAheadSegments ?: SegmentedCacheBackend.DEFAULT_READ_AHEAD_SEGMENTS,
         ).normalized()
     }
