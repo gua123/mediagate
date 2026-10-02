@@ -200,6 +200,19 @@
   修：`AsrDao.deleteTasks(ids)` + 纯函数 `AsrQueue.removedIds(before, after)`（+2 例）+ `AsrQueueController.remove(id)`；
   界面终态条目 ✕→**🗑 移除**，「清空已结束（N）」带数量且无可清项时禁用（`finishedCount`/`hasFinished`，+2 例）。
   当前版本 **0.1.24 / versionCode 25**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.23）。
+- **M32 播放页极简模式 + 横滑调进度 + 预览缩略图（2026-10-03，0.1.25）**：用户要求「做成极简模式，增加不弹出控制也能
+  左右滑动调整进度条，并且增加预览缩略图」→ ① `simpleMode`（落 DataStore，只留窄底栏＝进度条 + 播放键 + 「完整」）；
+  ② 画面横滑调进度（`detectHorizontalDragGestures` + 纯函数 `SeekGestureMath`，+5 例；不弹控制层，只更新中央 HUD，
+  松手才 seek）；③ `previewFrame(path, positionMs)`（默认 null 优雅降级；:app 用 MMR 抽帧缩到 240px、按 5 秒桶 `LruCache(32)`）。
+  ⚠️ **0.1.22–0.1.25 四个版本都是坏的**（见 M33），功能本身有效，随 0.1.26 一起可用。
+- **M33 P0：更新后打不开（2026-10-03，0.1.26）**：用户反馈「更新后直接打不开了」→ 根因一行代码：0.1.22 加 LibVLC 探针时
+  把 `container.vlcProbeNow()` 写在 `container = AppContainer(this)` **之前**，`lateinit` 未初始化 ⇒ `Application.onCreate`
+  抛 `UninitializedPropertyAccessException` ⇒ **每次启动即崩**（0.1.22/0.1.23/0.1.24/0.1.25 全部不可用；0.1.21 及以前正常）。
+  修：① 自启动动作搬进 `AppContainer` 的 `init { }`；② `Application.onCreate` 不再访问 `container`；
+  ③ **只给主进程建容器**（`Application.getProcessName() != packageName` 直接返回——`:vlcprobe` 副进程不该建 Room/DataStore/服务）；
+  ④ 源码级回归护栏 `:app` 的 `AppStartupOrderTest`（扫 `onCreate` 里 `container.` 是否出现在赋值之前；已实证旧源码报违规、修复后通过）；
+  ⑤ 极简模式开关从主线程 `runBlocking` 读盘改 StateFlow。**交付方式特殊**：App 打不开 ⇒ 只能直接下载 APK 安装（应用内更新用不了）。
+  当前版本 **0.1.26 / versionCode 27**，包名 `io.github.gua123.mediagate`（可覆盖安装 0.1.1–0.1.21，或直接覆盖坏版本安装）。
 - **本机到 GitHub 的通道（2026-10-02 实测）**：系统代理写在 `/etc/profile`（`http://192.168.1.2:10810`），
   非登录 shell 的 `env` 里看不到，所以直连经常超时；给 git/curl 显式带上 `-c http.proxy=…` / `-x …` 即可。
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
