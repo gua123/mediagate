@@ -659,7 +659,13 @@ class AppContainer(context: Context) :
          *
          * false = 独立进程的探针被带走（原生崩溃）→ 播放页不再让切到 LibVLC，并说明原因。
          */
-        override val vlcUsable: Boolean? = vlcUsableState.value
+        /**
+         * **必须写成 getter**（2026-10-03 P0 真凶）：`vlcUsableState` 声明在本类**后面**，
+         * 而本宿主是容器里较早构造的属性——写成初始化器会在构造期读到 null，
+         * R8 混淆后的报错长这样：`Attempt to read from field ... on a null object reference`，
+         * 表现就是**每次启动即崩**（0.1.22–0.1.27 的"打不开"）。
+         */
+        override val vlcUsable: Boolean? get() = vlcUsableState.value
 
         /** 让用户能主动重测（提示对话框里的「重新测试」）。 */
         override fun retestVlc() {
