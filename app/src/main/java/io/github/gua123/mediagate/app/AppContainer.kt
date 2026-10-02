@@ -530,6 +530,16 @@ class AppContainer(context: Context) :
      */
     val networkTuning = NetworkTuningSettings(appContext, ioScope)
 
+    /** 当前远端根目录上的分段缓存实例（设置页读用量、清缓存用）；本地根目录时为 null。 */
+    @Volatile
+    private var remoteCache: SegmentedCacheBackend? = null
+
+    /** 缓存当前占用字节数（用户要求"设置里增加缓存大小按 GB"，用量一并显示）。 */
+    suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
+
+    /** 清空缓存，返回释放的字节数。 */
+    suspend fun clearRemoteCache(): Long = remoteCache?.clearAll() ?: 0L
+
     private val videoPreferences: VideoPlayerPreferences =
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
@@ -1318,11 +1328,12 @@ class AppContainer(context: Context) :
                     delegate = TimeoutStorageBackend(build()),
                     rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
                     readAheadScope = ioScope,
-                    // 段大小在构造时定（改它等于缓存作废，所以"下次连接生效"）…
+                    // 段大小与缓存总上限在构造时定（改它等于缓存作废，所以"下次连接生效"）…
                     segmentBytes = networkTuning.tuning.value.segmentBytes,
+                    maxBytes = networkTuning.tuning.value.maxBytes,
                     // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
                     readAheadSegments = networkTuning.tuning.value.readAheadSegments,
-                ),
+                ).also { remoteCache = it },
             )
         }.onFailure { t ->
             AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + address.display, t)

@@ -140,6 +140,18 @@ class SegmentedCacheBackendTest {
     }
 
     @Test
+    fun `清空缓存会把段全删掉`() = runTest {
+        val cache = backend()
+        val stream = cache.openRead("/movie.ts", offset = 0L, length = 16L)
+        stream.read(ByteArray(16), 0, 16)
+        stream.close()
+        assertTrue("先得有缓存：${cache.cachedBytes()}", cache.cachedBytes() > 0L)
+        val freed = cache.clearAll()
+        assertTrue("应删掉一些字节：$freed", freed > 0L)
+        assertEquals("清空后不该还有段", 0L, cache.cachedBytes())
+    }
+
+    @Test
     fun `length 按请求长度或文件剩余量计算`() = runTest {
         val cache = backend()
         assertEquals(64L, cache.openRead("/movie.ts", offset = 0L, length = 64L).length)

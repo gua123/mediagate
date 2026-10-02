@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.gua123.mediagate.app.humanBytes
 import io.github.gua123.mediagate.data.storage.api.CacheTuning
 
 /**
@@ -36,6 +37,11 @@ fun NetworkTuningSection(
     tuning: CacheTuning,
     onReadAheadSegments: (Int) -> Unit,
     onSegmentBytes: (Long) -> Unit,
+    /** 缓存总上限（**GB**，用户要求）。 */
+    onCacheBytes: (Long) -> Unit,
+    /** 当前缓存占用（字节）；null = 还没读到（本地根目录时为 0）。 */
+    cacheUsedBytes: Long?,
+    onClearCache: () -> Unit,
     onReset: () -> Unit,
     /** 测速：要测的文件路径（相对连接根目录）。 */
     speedPath: String,
@@ -77,6 +83,23 @@ fun NetworkTuningSection(
                 text = "调大 = 播放更不容易卡，但流量与磁盘占用更多（按流量计费时慎调）。",
                 style = MaterialTheme.typography.bodySmall,
             )
+
+            // ---------------- 缓存上限（2026-10-03 用户要求：按 GB 给选项）
+            Text("缓存上限（下次连接生效）", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CacheTuning.CACHE_CHOICES.forEach { bytes ->
+                    FilterChip(
+                        selected = tuning.maxBytes == bytes,
+                        onClick = { onCacheBytes(bytes) },
+                        label = { Text(labelOfGb(bytes)) },
+                    )
+                }
+            }
+            Text(
+                text = "现在已用 " + (cacheUsedBytes?.let { humanBytes(it) } ?: "读取中…"),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            TextButton(onClick = onClearCache) { Text("清空缓存") }
 
             Text("段大小（缓存最小单位，下次连接生效）", style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -126,6 +149,10 @@ fun NetworkTuningSection(
         }
     }
 }
+
+/** 字节数 → GB 口径（1 GB / 2 GB / 4 GB / 8 GB）。 */
+private fun labelOfGb(bytes: Long): String =
+    (bytes / (1024L * 1024 * 1024)).toString() + " GB"
 
 /** 字节数 → 人话（512 KB / 1 MB / 2 MB / 4 MB / 8 MB）。 */
 private fun labelOfBytes(bytes: Long): String =

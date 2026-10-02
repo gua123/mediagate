@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.data.storage.api
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -21,6 +22,20 @@ class CacheTuningTest {
     fun 预读段数越界会被夹回() {
         assertEquals(4, CacheTuning(readAheadSegments = 99).normalized().readAheadSegments)
         assertEquals(0, CacheTuning(readAheadSegments = -1).normalized().readAheadSegments)
+    }
+
+    @Test
+    fun 缓存上限按GB且只接受备选值() {
+        assertEquals(1L * 1024 * 1024 * 1024, CacheTuning().maxBytes)
+        assertEquals(4L * 1024 * 1024 * 1024, CacheTuning(maxBytes = 4L * 1024 * 1024 * 1024).normalized().maxBytes)
+        assertEquals("陌生值退回默认", CacheTuning().maxBytes, CacheTuning(maxBytes = 3L * 1024 * 1024 * 1024).normalized().maxBytes)
+    }
+
+    @Test
+    fun 缓存上限不会小于一个段() {
+        // 1 MB 段 + 1 GB 上限没问题；上限被夹到至少一个段
+        val t = CacheTuning(segmentBytes = 8L * 1024 * 1024, maxBytes = 1024).normalized()
+        assertTrue("上限应至少容纳一个段：${t.maxBytes}", t.maxBytes >= t.segmentBytes)
     }
 
     @Test
