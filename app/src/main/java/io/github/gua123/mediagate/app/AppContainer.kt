@@ -71,6 +71,7 @@ import io.github.gua123.mediagate.feature.player.video.VideoPipHost
 import io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerEnvironment
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerMath
+import io.github.gua123.mediagate.feature.player.video.ControlsAutoHide
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
@@ -537,6 +538,14 @@ class AppContainer(context: Context) :
     /** 改画中画开关（落盘）。 */
     suspend fun updatePipAutoEnter(enabled: Boolean) {
         videoPreferences.setPipAutoEnter(enabled)
+    }
+
+    /** 控制层隐藏延时（2026-10-03 用户要求）：设置页绑它，播放页读同一份偏好。 */
+    val controlsHideSeconds: StateFlow<Int> get() = videoPreferences.controlsHideSeconds
+
+    /** 改控制层隐藏延时（落盘）。 */
+    suspend fun updateControlsHideSeconds(seconds: Int) {
+        videoPreferences.setControlsHideSeconds(ControlsAutoHide.normalizeSeconds(seconds))
     }
 
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
