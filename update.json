@@ -1,8 +1,8 @@
 {
-  "versionCode": 35,
-  "versionName": "0.1.34",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.34/mediagate-0.1.34.apk",
-  "sizeBytes": 74618838,
-  "sha256": "6bba02d34ae406f49c1976e801d4f456e8a59f8c8783553fb0e81144f6b2286b",
-  "notes": "## mediagate 0.1.34\n\n### 你问「在哪里查看详情」——老实说：**以前没地方看**\n\n那句「未知错误 · 查看详情」里的「查看详情」**是句空话**：界面上根本没有可点的东西，\n它只是错误分类表里的一段说明文字被我直接拼进了提示里。这是我的疏忽，抱歉。\n\n### 现在有两处能看\n\n1. **结果行本身**（0.1.33 起）：分不出来时会直接写「（原始原因：…）」，不用再找入口；\n2. **「技术详情」按钮**（本版新增）：点「测试一下」之后，结果下面会出现它，点开是：\n\n```\nmediagate 连接测试详情\n使用凭据：本次新输入的密码\n\n[1] http://vpn.gua233.top:20005\n    结果：失败\n    卡在：协议握手（HANDSHAKE）\n    分类：服务器内部错误（SERVER_ERROR）— 服务端或反向代理出的问题：看服务日志，或稍后重试\n    原始信息：HTTP 502 Bad Gateway\n    耗时：DNS 209 ms · TCP 1 ms · 握手 579 ms（合计 789 ms）\n```\n\n弹窗里那段文字**可以整段选中，也能点「复制全部」**——你想发给我，直接复制粘贴就行，不用截图。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.34/mediagate-0.1.34.apk`\n\n装好后：**连接 → 新建/编辑连接 → 测试一下 → 点「技术详情」**。"
+  "versionCode": 36,
+  "versionName": "0.1.35",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.35/mediagate-0.1.35.apk",
+  "sizeBytes": 74618862,
+  "sha256": "5f8e38876a1be12632ba309c15f651912590cecbde01faf33b30721144b665d2",
+  "notes": "## mediagate 0.1.35\n\n### 先说结论：**你的服务器没问题**，而且我用你的凭据在开发机上把它验通了\n\n我拿 `.toolchain/real-server.properties` 里的账号密码，对**你截图里那个地址**跑了我们 App 会发的那条请求：\n\n| 请求 | 结果 |\n| --- | --- |\n| `PROPFIND http://vpn.gua233.top:20005/`（匿名） | **401** + `WWW-Authenticate: Basic realm=\"SYNO_WebDAV Storage\"` |\n| 同一条 + 账号密码 | **207 Multi-Status** ✅ |\n\n⇒ 地址、端口、账号密码、**以及我们发的那条 PROPFIND 请求本身**，全都是对的；\n服务器是群晖的 WebDAV、用的是 Basic 认证（我们客户端也是 Basic，对得上）。\n（顺带发现：本机存的测试配置里 WAN 地址还是旧端口 **25005**，那个端口现在连不上——你截图里的 20005 才是现行的。）\n\n所以问题在\"**App 实际发出去/收回来的是什么**\"这一环，而这件事以前看不出来。\n\n### 这一版让探针把话说清楚\n\n1. 失败信息现在带上 **请求的 URL + 响应状态行 + 响应体开头一小段**（群晖/Apache 的报错页往往直接写着原因）；\n2. 探针**自己跟随重定向**了（以前 OkHttp 的自动跟随会把 PROPFIND 降级成 GET，所以历史上我们干脆不跟随——\n   代价是碰到 301 就只报一句 \"HTTP 301\"；现在按原方法重发，并保留认证头）；\n3. 片段做了脱敏（URL 里的 `user:pass@` 会被抹掉）、压成单行、限长 160 字。\n\n### 请你做一件事\n\n装 0.1.35 → 「连接 → 新建/编辑连接 → 测试一下」→ 点「**技术详情**」→ 把那段发我（可「复制全部」）。\n有了状态码和响应片段，就能一次定位到底是认证、路径还是响应格式的问题。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.35/mediagate-0.1.35.apk`"
 }
