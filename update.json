@@ -1,8 +1,8 @@
 {
-  "versionCode": 39,
-  "versionName": "0.1.38",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.38/mediagate-0.1.38.apk",
-  "sizeBytes": 74635214,
-  "sha256": "bcd25d9532fb0283558cbd134621c3c5a8f38aa0c3e27cbf1349bab8b34f3305",
-  "notes": "## mediagate 0.1.38\n\n### 你截图里的对话框，我看懂了两件事\n\n1. **对话框本身工作正常** ✓ 三个按钮都在：「仍然切换 / 先不切 / **先测试再切换**」（0.1.29 加的入口）；\n2. **探针跑了，但给出的是\"没得到结论\"** ✗ —— 也就是那句\n   「这次没得到结论（探针进程可能被系统回收了），可以稍后再试」。\n\n### 为什么会\"没得到结论\"（我的判据写得太依赖系统 API）\n\n原来的判据是：探针写了 `start`、没写 `ok` 时，去问系统「探针进程上次是怎么退出的」（`ApplicationExitInfo`）——\n只有系统说是\"崩溃类\"才判不可用。真机上**这个反射调用拿不到东西**，于是结论永远是\"未知\"。\n等于你按了按钮，它还是没告诉你该不该切。\n\n### 这一版换成了\"看探针自己的脚印\"（不依赖任何系统 API）\n\n探针现在留三个文件：\n\n| 文件 | 含义 |\n| --- | --- |\n| `start` | 开始测了 |\n| `ok` | LibVLC 初始化**返回了**（可用） |\n| **`done`** | 这段代码**执行到底**（无论成功还是抛了 Java 异常）——本轮新增 |\n\n判据：`start` 有、`ok` 没有、`done` 也没有 ⇒ **进程在初始化中途被带走了** ⇒ 判「**本机跑不了 LibVLC**」。\n（误判的代价可控：界面永远留着「重新测试」，下次会重跑。）\n\n### 请你再按一次\n\n装 0.1.38 → 播放页点「内核」→ 点「**先测试再切换**」。预期这次它会给一个**明确的结论**：\n\n- 要么「**测试通过：本机可以运行 LibVLC 内核**」并直接切过去；\n- 要么「**测试失败：LibVLC 内核在本机起不来（已阻止切换）**」——那就说明这台机器确实用不了 LibVLC，\n  以后这个按钮不再劝你冒险，软解请用「解码 → 强制软解」。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.38/mediagate-0.1.38.apk`"
+  "versionCode": 40,
+  "versionName": "0.1.39",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.39/mediagate-0.1.39.apk",
+  "sizeBytes": 74635224,
+  "sha256": "b6d4eccdef11cfe4539e95159ee8d7d9d839d4caa5d491060fbe1fb76275de56",
+  "notes": "## mediagate 0.1.39\n\n### 你那段「技术详情」把公网那条结案了：**不是 App 的问题**\n\n```\n[1] http://vpn.gua233.top:20005\n    结果：失败\n    卡在：协议握手（HANDSHAKE）\n    分类：服务器内部错误（SERVER_ERROR）\n    原始信息：HTTP 503 Service Unavailable（请求：http://vpn.gua233.top:20005/）\n    耗时：DNS 210 ms · TCP 2 ms · 握手 593 ms（合计 805 ms）\n```\n\n我在开发机上把同一个地址**跑了两遍**，结论非常干净：\n\n| 走法 | 结果 |\n| --- | --- |\n| **直连**（不走代理） | **HTTP 207**，`Server: Apache` ✅ |\n| **经系统代理** | **HTTP 503**，`Proxy-Connection: close` ❌ |\n\n你手机上拿到的正是 **503** ⇒ **请求在链路中间被代理/VPN 挡下来了**，服务端和 App 都没问题\n（你看状态栏那个 VPN 图标；另外小米的 Wi-Fi 设置里也能单独配 HTTP 代理）。\n\n### 所以这一版加了\"把这条线索写进提示\"\n\n以后探针失败时，如果系统/网络里配了 HTTP 代理，提示里会多一句 **（经系统代理 10.0.0.1:8080）**——\n一眼就能想到\"是不是手机开着 VPN / 设了 Wi-Fi 代理\"。\n（OkHttp 默认就会用系统代理，App 没法替你决定绕过它；但至少现在它会**说出来**。）\n\n### 你可以这样试\n\n1. **把手机的 VPN / 代理关掉**（或在这个 App 上放行），再点一次「测试一下」——\n   开发机直连是 207，所以关掉中间那一层大概率就通了；\n2. 如果 503 是你自己反代（nginx/群晖）发出来的，那就是后端的 upstream 掉了，看服务端日志；\n3. 局域网那条 `192.168.40.6:5005` 你已经验过是**通过**的 ✅，日常在家用它就行。\n\n### 装法\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.39/mediagate-0.1.39.apk`"
 }
