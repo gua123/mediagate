@@ -453,8 +453,13 @@ class AppContainer(context: Context) :
      *
      * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），播放页按分类给中文提示。
      */
+    /**
+     * **2026-10-03 用户要求**：「需要注意，播放时的列表也需要按照新的排序」⇒ 模块内的名称排序只是
+     * 过滤后的兜底，真正的顺序由**用户选定的排序设置**决定（与浏览页、视频播放页同一口径）。
+     */
     override suspend fun audioSiblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
-        AudioPlayerMath.audioEntries(currentBackend().list(parentOf(path), null))
+        val entries = AudioPlayerMath.audioEntries(currentBackend().list(parentOf(path), null))
+        EntrySorter.sort(entries, settings.sort.first())
     }
 
     /** 用给定队列起播（R18）：交给后台服务，多首连播由服务的播放列表承担。 */
@@ -1118,8 +1123,10 @@ class AppContainer(context: Context) :
      *
      * @throws StorageException 列目录失败（无权限 / 不存在 / 网络…），查看器按分类给中文提示。
      */
+    /** 同目录图片列表（查看器左右滑动的顺序）：同样跟随用户排序设置（2026-10-03 用户要求）。 */
     override suspend fun siblings(path: String): List<RemoteEntry> = withContext(Dispatchers.IO) {
-        ViewerMath.imageEntries(currentBackend().list(parentOf(path), null))
+        val entries = ViewerMath.imageEntries(currentBackend().list(parentOf(path), null))
+        EntrySorter.sort(entries, settings.sort.first())
     }
 
     /**

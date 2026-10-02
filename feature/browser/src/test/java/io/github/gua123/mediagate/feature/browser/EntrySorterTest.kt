@@ -63,6 +63,21 @@ class EntrySorterTest {
         assertEquals("名称 ↑", sort.label)
     }
 
+    @Test
+    fun 用户排序覆盖模块内的名称排序_播放队列与列表一致() {
+        // 2026-10-03 用户要求「播放时的列表也需要按照新的排序」：
+        // 模块内"按名称排"只是兜底，:app 会在过滤之后再按用户设置排一次 ⇒ 这里钉住那次排序的语义。
+        val entries = listOf(
+            entry("b.mp4", size = 100L),
+            entry("a.mp4", size = 900L),
+            entry("c.mp4", size = 500L),
+        )
+        val bySizeDesc = EntrySorter.sort(entries, EntrySort(mode = EntrySortMode.SIZE, ascending = false))
+        assertEquals(listOf("a.mp4", "c.mp4", "b.mp4"), bySizeDesc.map { it.name })
+        val bySizeAsc = EntrySorter.sort(entries, EntrySort(mode = EntrySortMode.SIZE, ascending = true))
+        assertEquals(listOf("b.mp4", "c.mp4", "a.mp4"), bySizeAsc.map { it.name })
+    }
+
     private fun entry(name: String, directory: Boolean = false, size: Long = 1L, mtime: Long = 1L) =
         RemoteEntry(name = name, path = "/dir/" + name, isDirectory = directory, size = size, mtime = mtime)
 }
