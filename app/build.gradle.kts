@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 41
-        versionName = "0.1.40"
+        versionCode = 42
+        versionName = "0.1.41"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -119,7 +119,6 @@ dependencies {
     implementation(project(":media:thumbnail"))
     implementation(project(":media:tsext"))
     implementation(project(":media:ffmpeg"))
-    implementation(project(":media:asr"))
     implementation(project(":media:subtitle"))
 
     implementation(project(":feature:home"))
@@ -129,11 +128,9 @@ dependencies {
     implementation(project(":feature:viewer-image"))
     implementation(project(":feature:connections"))
     implementation(project(":feature:settings"))
-    implementation(project(":feature:tasks"))
     // R20：应用内更新的状态机与设置页区块
     implementation(project(":feature:update"))
     // R14：语音识别模型的下载与管理界面（设置页区块）
-    implementation(project(":feature:asr-model"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.core.ktx)
