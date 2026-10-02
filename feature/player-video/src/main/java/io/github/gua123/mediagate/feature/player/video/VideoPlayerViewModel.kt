@@ -116,6 +116,9 @@ class VideoPlayerViewModel(
 
     /** 横滑调进度时的预览帧请求；新的一次会取消上一次（节流）。 */
     private var previewJob: Job? = null
+
+    /** 上一次取预览帧的时间桶（[PreviewBucket.BUCKET_MS] 一格）；同一桶不重复取。 */
+    private var previewBucket: Long = Long.MIN_VALUE
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
@@ -307,6 +310,9 @@ class VideoPlayerViewModel(
         val current = _state.value
         if (current.durationMs <= 0L) return
         _state.update { it.reduce(VideoPlayerEvent.GestureSeekStarted(current.positionMs)) }
+        // 一按下就取"当前位置"那一帧：手指刚动就能看到画面（而不是先看到"预览生成中…"）
+        previewBucket = Long.MIN_VALUE
+        loadPreviewFrame(current.positionMs)
     }
 
     /**
@@ -345,7 +351,12 @@ class VideoPlayerViewModel(
      */
     private fun loadPreviewFrame(positionMs: Long) {
         val ref = source ?: return
-        previewJob?.cancel()
+        // **节流到 5 秒桶**（2026-10-03 真机"预览图总是显示生成中"的修复之一）：
+        // 拖动时每个像素都会调到这里，而抽一帧要几百毫秒——不节流的话请求永远在排队。
+        val bucket = PreviewBucket.of(positionMs)
+        if (bucket == previewBucket) return
+        previewBucket = bucket
+        // **不取消上一帧**：抽帧是幂等的，让它在途完成，回来还能用（取消等于白干）。
         previewJob = viewModelScope.launch {
             val bytes = try {
                 environment.previewFrame(ref.path, positionMs)
@@ -355,8 +366,9 @@ class VideoPlayerViewModel(
                 AppLog.w(TAG, "取预览帧失败：" + positionMs, t)
                 null
             } ?: return@launch
-            // 只在"还在滑、且目标没变"时贴上去，避免旧帧盖住新位置
-            if (_state.value.gestureSeekMs == positionMs) {
+            // **只要还在滑就贴上去**（原实现要求"目标位置完全相同"，而手指一直在动 ⇒ 永远贴不上，
+            // 于是界面一直停在"预览生成中…"）。旧位置的一帧也好过没有，下一桶到了会自然替换。
+            if (_state.value.gestureSeekMs != null) {
                 _state.update { it.reduce(VideoPlayerEvent.PreviewFrameLoaded(bytes)) }
             }
         }
