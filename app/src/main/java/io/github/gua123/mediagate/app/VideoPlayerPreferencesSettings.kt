@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import io.github.gua123.mediagate.feature.player.video.PlayerOrientation
 import io.github.gua123.mediagate.feature.player.video.VideoLoopMode
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.media.engine.DecoderMode
@@ -74,6 +75,22 @@ class VideoPlayerPreferencesSettings(
 
     override suspend fun setSimpleMode(on: Boolean) {
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SIMPLE_MODE] = on }
+    }
+
+    /**
+     * **上一次播放时的屏幕方向**（2026-10-03 用户要求）；没有记录时 null ＝跟随系统。
+     */
+    val lastOrientation: StateFlow<PlayerOrientation?> = context.videoPlayerDataStore.data
+        .map { preferences -> PlayerOrientation.parse(preferences[KEY_LAST_ORIENTATION]) }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
+    override val lastOrientationValue: PlayerOrientation? get() = lastOrientation.value
+
+    override suspend fun setLastOrientation(orientation: PlayerOrientation?) {
+        context.videoPlayerDataStore.edit { preferences ->
+            if (orientation == null) preferences.remove(KEY_LAST_ORIENTATION)
+            else preferences[KEY_LAST_ORIENTATION] = orientation.name
+        }
     }
 
     /**
@@ -209,6 +226,9 @@ class VideoPlayerPreferencesSettings(
 
         /** 控制层隐藏延时（2026-10-03）：3/5/10 秒，0 = 永不隐藏。 */
         val KEY_CONTROLS_HIDE_SECONDS = intPreferencesKey("controls_hide_seconds")
+
+        /** 上次播放方向（2026-10-03）：存枚举名，认不出来就当跟随系统。 */
+        val KEY_LAST_ORIENTATION = stringPreferencesKey("last_player_orientation")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")

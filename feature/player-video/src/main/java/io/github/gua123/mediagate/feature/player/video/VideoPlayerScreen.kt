@@ -85,6 +85,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -171,6 +173,9 @@ fun VideoPlayerScreen(
     val output by viewModel.videoOutput.collectAsStateWithLifecycle()
     val subtitleCue by viewModel.subtitleCue.collectAsStateWithLifecycle()
 
+    /** 记忆操作（旋转方向之类）用；不涉及界面状态，失败也只记日志。 */
+    val scope = rememberCoroutineScope()
+
     // 亮度：值一变就报给宿主（宿主负责写窗口属性；退出播放页由宿主恢复系统亮度）
     LaunchedEffect(state.brightness) { onBrightnessChanged(state.brightness) }
 
@@ -186,7 +191,11 @@ fun VideoPlayerScreen(
     var vlcWarningVisible by remember { mutableStateOf(false) }
     // 启动探针判定"本机跑不了 LibVLC" → 直接不让切，并给「重新测试」出口
     var vlcUnavailableVisible by remember { mutableStateOf(false) }
-    // 离开播放页恢复"跟随系统"方向（见 ResetOrientationOnLeave 的说明）
+    // **2026-10-03 用户要求**：「记住上一次播放时是横屏还是竖屏」
+    //   ① 进播放页：有记录就直接套用（没有才跟随系统）；
+    //   ② 点旋转按钮：切换并落盘；
+    //   ③ 离开播放页：恢复"跟随系统"（见 ResetOrientationOnLeave）——只记住"播放时"的方向。
+    ApplyRememberedOrientation(environment.preferences.lastOrientationValue)
     ResetOrientationOnLeave()
 
     BackHandler(enabled = true) { onBack() }
@@ -406,6 +415,12 @@ fun VideoPlayerScreen(
                             VlcKernelTap.BLOCKED -> vlcUnavailableVisible = true
                         }
                     },
+                    // 记住这次旋转的结果（2026-10-03 用户要求：上次横屏下次还是横屏）
+                    onRotated = { orientation ->
+                        scope.launch {
+                            runCatching { environment.preferences.setLastOrientation(orientation) }
+                        }
+                    },
                 )
             }
 
@@ -595,6 +610,8 @@ private fun Controls(
     onOpenPlaylist: () -> Unit,
     /** 请求切内核（是否要先弹 LibVLC 风险提示由上层决定，它才拿得到那个状态）。 */
     onRequestSwitchEngine: () -> Unit,
+    /** 用户点了旋转按钮（上层负责落盘"上次的方向"，2026-10-03 用户要求）。 */
+    onRotated: (PlayerOrientation) -> Unit = {},
 ) {
     // 横屏是"看电影"的场景：同样的控件在 2.17:1 的屏幕上显得又高又占地
     //（2026-10-03 用户反馈："播放过程中的这个页面占地方太大了"）→ 横屏统一用更紧凑的尺寸
@@ -658,7 +675,7 @@ private fun Controls(
                 modifier = Modifier.weight(1f),
             )
             // 旋转（2026-10-03 用户要求）：点一下在横屏/竖屏之间切换；退出播放页恢复"跟随系统"
-            RotateButton()
+            RotateButton(onRotated = onRotated)
             EngineChip(state = state, onClick = onRequestSwitchEngine)
         }
 
@@ -776,18 +793,17 @@ private fun Controls(
  * 免得把整个 App 的方向锁死。
  */
 @Composable
-private fun RotateButton() {
+private fun RotateButton(onRotated: (PlayerOrientation) -> Unit = {}) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     IconButton(
         onClick = {
             val activity = context.findActivity() ?: return@IconButton
-            activity.requestedOrientation = if (landscape) {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            }
+            val target = PlayerOrientation.ofLandscape(landscape).toggled()
+            activity.requestedOrientation = target.toActivityInfo()
+            // 记住这次的选择（2026-10-03 用户要求：下次播放沿用）
+            onRotated(target)
         },
     ) {
         Icon(
@@ -797,6 +813,27 @@ private fun RotateButton() {
             ),
             tint = Color.White,
         )
+    }
+}
+
+/** 方向枚举 → ActivityInfo 的常量（只在这一个地方映射，免得两处各写一遍）。 */
+private fun PlayerOrientation.toActivityInfo(): Int = when (this) {
+    PlayerOrientation.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    PlayerOrientation.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+}
+
+/**
+ * 进播放页时套用"上次播放的方向"（**2026-10-03 用户要求**：记住横屏还是竖屏）。
+ *
+ * null ＝没有记录 ⇒ 什么都不做，跟随系统；离开播放页仍由 [ResetOrientationOnLeave] 恢复系统方向，
+ * 所以首页/浏览页不会被锁在横屏。
+ */
+@Composable
+private fun ApplyRememberedOrientation(remembered: PlayerOrientation?) {
+    val context = LocalContext.current
+    LaunchedEffect(remembered) {
+        val target = remembered ?: return@LaunchedEffect
+        context.findActivity()?.requestedOrientation = target.toActivityInfo()
     }
 }
 
