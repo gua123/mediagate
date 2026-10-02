@@ -516,7 +516,8 @@ private fun AddressResultRow(result: AddressTestUi) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = if (result.ok) "✓" else "✗",
-                color = if (result.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                // 用户口径（2026-10-03）：「测试成功使用绿色，失败使用红色」
+                color = if (result.ok) ConnectionResultPassed else MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(modifier = Modifier.width(6.dp))
