@@ -47,6 +47,20 @@ class RootSettings(private val context: Context) {
         EntrySort(mode = mode, ascending = preferences[KEY_SORT_ASC] ?: true)
     }
 
+    /**
+     * LibVLC 启动探针的结论（**2026-10-03**）：null = 还没测过 / 测了但结论未知。
+     *
+     * 存字符串而不是布尔：将来加"未知/待重测"这类状态不用改数据类型。
+     */
+    val vlcProbeVerdict: Flow<String?> = context.rootDataStore.data.map { it[KEY_VLC_VERDICT] }
+
+    /** 记下探针结论（null = 清掉，视为未知）。 */
+    suspend fun setVlcProbeVerdict(verdict: String?) {
+        context.rootDataStore.edit { preferences ->
+            if (verdict == null) preferences.remove(KEY_VLC_VERDICT) else preferences[KEY_VLC_VERDICT] = verdict
+        }
+    }
+
     /** 保存排序设置。 */
     suspend fun setSort(sort: EntrySort) {
         context.rootDataStore.edit { preferences ->
@@ -97,6 +111,9 @@ class RootSettings(private val context: Context) {
         val KEY_MODE = stringPreferencesKey("root_mode")
         val KEY_VALUE = stringPreferencesKey("root_value")
         val KEY_DISPLAY = stringPreferencesKey("root_display")
+
+        /** LibVLC 启动探针的结论（2026-10-03）。 */
+        val KEY_VLC_VERDICT = stringPreferencesKey("vlc_probe_verdict")
 
         /** 列表排序（2026-10-03）：方式 + 升降序。 */
         val KEY_SORT_MODE = stringPreferencesKey("list_sort_mode")

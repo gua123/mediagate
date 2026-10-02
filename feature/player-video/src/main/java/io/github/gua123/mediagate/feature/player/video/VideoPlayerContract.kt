@@ -98,6 +98,16 @@ interface VideoPlayerEnvironment {
      */
     val vlcPreviouslyCrashed: Boolean get() = false
 
+    /**
+     * LibVLC 在本机能不能跑（**2026-10-03 用户建议**：启动时先测，不能跑就不让切）。
+     *
+     * null = 还没结论；false = 探针被原生崩溃带走 → 界面**不让切**到 LibVLC 并说明原因。
+     */
+    val vlcUsable: Boolean? get() = null
+
+    /** 重新测一次（提示对话框里的「重新测试」）。默认什么都不做。 */
+    fun retestVlc() = Unit
+
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */
     val progress: PlaybackProgressStore
 

@@ -77,6 +77,8 @@ import io.github.gua123.mediagate.feature.tasks.TasksRoot
 import io.github.gua123.mediagate.feature.asrmodel.AsrModelEnvironment
 import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.core.common.VlcCrashHeuristic
+import io.github.gua123.mediagate.media.engine.VlcProbeService
+import kotlinx.coroutines.delay
 import io.github.gua123.mediagate.feature.browser.EntrySort
 import io.github.gua123.mediagate.feature.player.video.TsIndexInfo
 import io.github.gua123.mediagate.feature.player.video.TimestampRepairOutcome
@@ -644,6 +646,18 @@ class AppContainer(context: Context) :
         override val vlcPreviouslyCrashed: Boolean =
             VlcCrashHeuristic.vlcSwitchLooksCrashed(CrashReporter.readBreadcrumbs(appContext, limit = 40))
 
+        /**
+         * LibVLC 在本机到底能不能跑（**2026-10-03 用户建议**：启动时先测，不能跑就不让切）。
+         *
+         * false = 独立进程的探针被带走（原生崩溃）→ 播放页不再让切到 LibVLC，并说明原因。
+         */
+        override val vlcUsable: Boolean? = vlcUsableState.value
+
+        /** 让用户能主动重测（提示对话框里的「重新测试」）。 */
+        override fun retestVlc() {
+            vlcProbeNow()
+        }
+
     /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
         override fun exitRepairRoot() {
             val previous = _videoRepairRoot.value ?: return
@@ -949,6 +963,64 @@ class AppContainer(context: Context) :
                 asrController.enqueue(candidates, batchName, selectedAsrModelId.value)
             },
         )
+    }
+
+    // ------------------------------------------------------------ LibVLC 启动探针（2026-10-03）
+
+    /**
+     * 本机 LibVLC 是否可用（null = 未知）。
+     *
+     * 数据来源：探针服务跑在**独立进程**里留下的三个证据（start / ok / 探针进程退出原因）
+     * → 纯函数 [vlcProbeVerdict] 判定 → 落 DataStore。**探针崩了只会带走它自己**。
+     */
+    private val _vlcUsable = MutableStateFlow<Boolean?>(null)
+
+    /** 给播放页观察的结论。 */
+    val vlcUsableState: StateFlow<Boolean?> = _vlcUsable.asStateFlow()
+
+    /**
+     * 跑一次探针（启动时自动跑一次；用户也能从提示里手动重测）。
+     *
+     * 流程：清证据 → 拉起独立进程 → 轮询等 ok（最多 [VLC_PROBE_TIMEOUT_MS]）→ 判结论 → 落盘 + 广播。
+     * **主进程全程只是"看文件"、不碰 LibVLC**，所以不可能被它带崩。
+     */
+    fun vlcProbeNow() {
+        ioScope.launch {
+            runCatching {
+                VlcProbeService.reset(appContext)
+                VlcProbeService.start(appContext)
+                val deadline = System.currentTimeMillis() + VLC_PROBE_TIMEOUT_MS
+                while (System.currentTimeMillis() < deadline && !VlcProbeService.succeeded(appContext)) {
+                    delay(VLC_PROBE_POLL_MS)
+                }
+                // 崩掉时系统要过一会儿才把退出原因记下来，等一拍再判
+                if (!VlcProbeService.succeeded(appContext)) delay(VLC_PROBE_SETTLE_MS)
+                val verdict = vlcProbeVerdict(
+                    started = VlcProbeService.started(appContext),
+                    succeeded = VlcProbeService.succeeded(appContext),
+                    exitReason = VlcProbeService.lastProbeExitReason(appContext),
+                )
+                applyVlcVerdict(verdict)
+            }.onFailure { AppLog.w(TAG, "LibVLC 启动探针执行失败", it) }
+        }
+    }
+
+    private suspend fun applyVlcVerdict(verdict: VlcProbeVerdict) {
+        when (verdict) {
+            VlcProbeVerdict.OK -> {
+                _vlcUsable.value = true
+                settings.setVlcProbeVerdict("ok")
+            }
+
+            VlcProbeVerdict.FAILED -> {
+                _vlcUsable.value = false
+                settings.setVlcProbeVerdict("failed")
+                runCatching { Breadcrumbs.mark("VLC 启动探针：失败（本机不可用）") }
+            }
+
+            // 结论未知（例如探针只是被系统回收）：保持原状态，下次启动再试
+            VlcProbeVerdict.UNKNOWN -> Unit
+        }
     }
 
     /**
@@ -1601,6 +1673,15 @@ class AppContainer(context: Context) :
 
     private companion object {
         const val TAG = "app-container"
+
+        /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
+        const val VLC_PROBE_TIMEOUT_MS = 6_000L
+
+        /** 探针结果的轮询间隔。 */
+        const val VLC_PROBE_POLL_MS = 200L
+
+        /** 崩掉之后，留给系统记录退出原因的时间。 */
+        const val VLC_PROBE_SETTLE_MS = 800L
 
         /** 缩略图两级缓存的磁盘根（App 缓存目录下）。 */
         const val THUMBNAIL_CACHE_DIR = "thumbnails"

@@ -115,5 +115,16 @@
             android:exported="false"
             android:foregroundServiceType="mediaProcessing"
             android:stopWithTask="false" />
+
+        <!--
+          LibVLC 启动探针（2026-10-03 用户建议）：**必须跑在独立进程里**。
+          libvlc.so 在真机上初始化时可能直接把进程带走（已有面包屑证据：切 LibVLC 后没有"新内核已创建"），
+          放这里崩的只是探针自己，主进程据此不让用户切过去。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.media.engine.VlcProbeService"
+            android:exported="false"
+            android:process=":vlcprobe"
+            android:stopWithTask="true" />
     </application>
 </manifest>

@@ -73,7 +73,10 @@ class VideoPlayerViewModel(
 
     // 诊断标记：上次切 LibVLC 把进程带走过 → 界面在再切之前先解释一句（2026-10-03 真机）
     private val _state = MutableStateFlow(
-        VideoPlayerUiState(vlcSuspectCrash = environment.vlcPreviouslyCrashed),
+        VideoPlayerUiState(
+            vlcSuspectCrash = environment.vlcPreviouslyCrashed,
+            vlcUsable = environment.vlcUsable,
+        ),
     )
 
     /** 页面唯一状态源（StateFlow，见 plan 第 3 章）。 */
@@ -232,6 +235,29 @@ class VideoPlayerViewModel(
         val next = VideoPlayerMath.nextResizeMode(_state.value.resizeMode)
         engine?.setResizeMode(next)
         _state.update { it.reduce(VideoPlayerEvent.ResizeModeChanged(next)) }
+    }
+
+    /**
+     * 重新测一次 LibVLC 能不能跑（**2026-10-03 用户建议**：启动时就测，不能跑就不让切）。
+     *
+     * 探针跑在**独立进程**里，所以测的时候不会把 App 弄崩；这里轮询几次把结论反映到界面
+     * （成功/失败都会很快有值，最长等 [VLC_RETEST_TIMEOUT_MS]）。
+     */
+    fun retestVlc() {
+        viewModelScope.launch {
+            environment.retestVlc()
+            val deadline = System.currentTimeMillis() + VLC_RETEST_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                delay(VLC_RETEST_POLL_MS)
+                val usable = environment.vlcUsable
+                if (usable != null) {
+                    _state.update {
+                        it.copy(vlcUsable = usable, vlcSuspectCrash = environment.vlcPreviouslyCrashed)
+                    }
+                    return@launch
+                }
+            }
+        }
     }
 
     /** 内核互切（R9）：Media3 ⇄ LibVLC，位置/倍速/解码档位/字幕全部保持。 */
@@ -1146,6 +1172,12 @@ class VideoPlayerViewModel(
     )
 
     private companion object {
+
+        /** LibVLC 重测：最长等结论多久（独立进程探针通常 1 秒内出结果）。 */
+        const val VLC_RETEST_TIMEOUT_MS = 8_000L
+
+        /** LibVLC 重测的轮询间隔。 */
+        const val VLC_RETEST_POLL_MS = 400L
 
         /** 进度采样间隔：500 ms 足够跟手，也不会把主线程吵醒得太频繁。 */
         const val TICK_MS = 500L

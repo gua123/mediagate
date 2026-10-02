@@ -71,6 +71,9 @@
     <string name="video_repair_running_indeterminate">正在重建时间戳…</string>
     <string name="video_repair_dismiss">知道了</string>
     <!-- 播放页 UI 改造（2026-10-03 用户要求）：旋转、同文件夹列表跳转 -->
+    <string name="video_vlc_unavailable_title">本机不能用 LibVLC 内核</string>
+    <string name="video_vlc_unavailable_body">启动测试时，LibVLC 内核在本机把测试进程直接带崩了，所以这里不让你切过去（免得整个 App 退出）。换解码方式可以用底部「解码」档位；如果系统或 App 更新过，也可以点「重新测试」。</string>
+    <string name="video_vlc_unavailable_retest">重新测试</string>
     <string name="video_vlc_warning_title">切到 LibVLC 之前</string>
     <string name="video_vlc_warning_body">上次切到 LibVLC 时 App 直接退出了（可能是本机与 LibVLC 不兼容）。要再试一次吗？如果只是想换个解码方式，也可以先用「解码」档位。</string>
     <string name="video_vlc_warning_continue">仍然切换</string>

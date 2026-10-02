@@ -162,6 +162,8 @@ fun VideoPlayerScreen(
     var playlistVisible by remember { mutableStateOf(false) }
     // LibVLC 上次把进程带走过 → 再切之前先弹一句（不是禁止，是告知）
     var vlcWarningVisible by remember { mutableStateOf(false) }
+    // 启动探针判定"本机跑不了 LibVLC" → 直接不让切，并给「重新测试」出口
+    var vlcUnavailableVisible by remember { mutableStateOf(false) }
     // 离开播放页恢复"跟随系统"方向（见 ResetOrientationOnLeave 的说明）
     ResetOrientationOnLeave()
 
@@ -249,11 +251,38 @@ fun VideoPlayerScreen(
                     },
                     onOpenPlaylist = { playlistVisible = true },
                     onRequestSwitchEngine = {
-                        // 上次切 LibVLC 把进程带走过（真机面包屑证据）→ 先解释一句再切
-                        if (state.vlcSuspectCrash && state.otherEngine == EngineKind.VLC) {
-                            vlcWarningVisible = true
-                        } else {
-                            viewModel.switchEngine()
+                        when {
+                            // 探针说本机跑不了 → 不让切，解释原因并给「重新测试」
+                            state.otherEngine == EngineKind.VLC && state.vlcUsable == false -> {
+                                vlcUnavailableVisible = true
+                            }
+                            // 上次切它把进程带走过 → 先告知再切
+                            state.otherEngine == EngineKind.VLC && state.vlcSuspectCrash -> {
+                                vlcWarningVisible = true
+                            }
+                            else -> viewModel.switchEngine()
+                        }
+                    },
+                )
+            }
+
+            // LibVLC 不可用提示（2026-10-03 用户建议：启动时先测，不能跑就不让切）
+            if (vlcUnavailableVisible) {
+                AlertDialog(
+                    onDismissRequest = { vlcUnavailableVisible = false },
+                    title = { Text(stringResource(R.string.video_vlc_unavailable_title)) },
+                    text = { Text(stringResource(R.string.video_vlc_unavailable_body)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                vlcUnavailableVisible = false
+                                viewModel.retestVlc()
+                            },
+                        ) { Text(stringResource(R.string.video_vlc_unavailable_retest)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { vlcUnavailableVisible = false }) {
+                            Text(stringResource(R.string.video_vlc_warning_cancel))
                         }
                     },
                 )

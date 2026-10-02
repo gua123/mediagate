@@ -91,6 +91,11 @@ class MediaGateApplication : Application(), PlaybackHost, AsrRuntimeHost, VideoS
         // 面包屑落盘（原生崩溃时内存日志会没，只有它留得下）
         Breadcrumbs.sink = { text -> CrashReporter.breadcrumb(this, text) }
         Breadcrumbs.mark("应用启动（versionName " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() + "）")
+        // LibVLC 启动探针（2026-10-03 用户建议）：**在独立进程里试跑**，不能跑就不让用户切过去。
+        // 只在"结论未知"时自动跑；用户也能在播放页的提示里手动重测。
+        // 每次都跑一遍（几百毫秒、独立进程）：结论 OK/FAILED 会落盘；判断"未知"时不动已有状态，
+        // 所以不会把上一次的结论冲掉。
+        container.vlcProbeNow()
         container = AppContainer(this)
         AppLog.i(TAG, "MediaGate 启动：" + versionText())
     }
