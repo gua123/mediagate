@@ -111,6 +111,8 @@ import io.github.gua123.mediagate.media.engine.VlcEngine
 import io.github.gua123.mediagate.media.playback.BackendDataSourceFactory
 import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.thumbnail.EmbeddedArtworkExtractor
+import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
+import io.github.gua123.mediagate.media.thumbnail.FrameExtractor
 import io.github.gua123.mediagate.media.thumbnail.FfmpegFrameExtractor
 import io.github.gua123.mediagate.media.thumbnail.ImagePreviewPipeline
 import io.github.gua123.mediagate.media.thumbnail.ImageThumbnailExtractor
@@ -497,6 +499,12 @@ class AppContainer(context: Context) :
      * **在容器构造时就建**（不是懒加载）：DataStore 的第一次读是异步的，早一点开始读，
      * 用户点开视频时拿到的才是上次的选择，而不是"还没读完"的默认值。
      */
+    /** 横滑预览帧的小缓存（按"路径 + 5 秒桶"）：拖动时同一段不重复解码。 */
+    private val previewCache = android.util.LruCache<String, ByteArray>(PREVIEW_CACHE_SIZE)
+
+    /** 预览帧专用抽帧器（主策略 MMR；失败就返回 null，不折腾 FFmpeg——预览不值得等）。 */
+    private val previewExtractor: FrameExtractor = MediaMetadataRetrieverFrameExtractor()
+
     private val videoPreferences: VideoPlayerPreferences =
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
@@ -656,6 +664,37 @@ class AppContainer(context: Context) :
         /** 让用户能主动重测（提示对话框里的「重新测试」）。 */
         override fun retestVlc() {
             vlcProbeNow()
+        }
+
+        /**
+         * 取 [positionMs] 处的预览帧（横滑调进度 HUD 用；**2026-10-03 用户要求**「增加预览缩略图」）。
+         *
+         * 口径：按 5 秒一桶缓存最近若干张（拖动时同一段不会反复解码）；抽不到就返回 null，
+         * HUD 退化成只显示时间——**预览只是锦上添花，不能影响拖动本身**。
+         */
+        override suspend fun previewFrame(path: String, positionMs: Long): ByteArray? = withContext(Dispatchers.IO) {
+            val key = path + "@" + (positionMs / PREVIEW_BUCKET_MS)
+            previewCache.get(key)?.let { return@withContext it }
+            val backend = videoBackend.value ?: return@withContext null
+            val bytes = runCatching {
+                backend.openRead(path).use { stream ->
+                    val source = stream.asRandomAccessSource(
+                        knownSize = if (stream.length > 0) stream.length else -1L,
+                    )
+                    previewExtractor.extract(
+                        source = source,
+                        mimeHint = null,
+                        positionMs = positionMs,
+                        targetWidth = PREVIEW_WIDTH_PX,
+                    )
+                }
+            }.onFailure { AppLog.w(TAG, "取预览帧失败：" + path + " @" + positionMs, it) }.getOrNull()
+            if (bytes != null && bytes.isNotEmpty()) {
+                previewCache.put(key, bytes)
+                bytes
+            } else {
+                null
+            }
         }
 
     /** 退出修复根目录（播放页销毁时调用）：视频后端回到正常的当前根目录。 */
@@ -1673,6 +1712,15 @@ class AppContainer(context: Context) :
 
     private companion object {
         const val TAG = "app-container"
+
+        /** 预览帧：时间桶（毫秒）——同一桶共用一个帧，拖动时不会疯狂解码。 */
+        const val PREVIEW_BUCKET_MS = 5_000L
+
+        /** 预览帧宽度（像素）：HUD 里显示得下就行，别为预览花大成本。 */
+        const val PREVIEW_WIDTH_PX = 240
+
+        /** 预览帧缓存条数。 */
+        const val PREVIEW_CACHE_SIZE = 32
 
         /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
         const val VLC_PROBE_TIMEOUT_MS = 6_000L

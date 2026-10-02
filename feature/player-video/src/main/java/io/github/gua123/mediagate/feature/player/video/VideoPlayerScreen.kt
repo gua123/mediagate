@@ -6,6 +6,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -199,14 +205,42 @@ fun VideoPlayerScreen(
             }
         }
 
-        // 2) 点按显隐控制层（在画面之上、控制层之下）
+        // 2) 点按显隐控制层 + **横滑调进度**（2026-10-03 用户要求：「不弹出控制也能左右滑动调整进度条」）
+        //    横滑走独立的手势检测，只更新画面中央的 HUD，不把控制层弹出来
+        val dragAccum = remember { FloatArray(1) }
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .pointerInput(Unit) {
                     detectTapGestures { controlsVisible = !controlsVisible }
+                }
+                .pointerInput(state.durationMs) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            dragAccum[0] = 0f
+                            viewModel.beginSeekGesture()
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragAccum[0] += dragAmount
+                            viewModel.seekGestureBy(dragAccum[0] / size.width.coerceAtLeast(1))
+                        },
+                        onDragEnd = { viewModel.commitSeekGesture() },
+                        onDragCancel = { viewModel.cancelSeekGesture() },
+                    )
                 },
         )
+
+        // 横滑调进度的 HUD（带预览缩略图；抽不到帧就只显示时间）
+        state.gestureSeekMs?.let { target ->
+            SeekGestureHud(
+                targetMs = target,
+                startMs = state.gestureStartMs,
+                durationMs = state.durationMs,
+                frame = state.previewFrame,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
 
         if (state.status == VideoPlayerStatus.LOADING) {
             CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -356,6 +390,53 @@ private fun PipBadge(modifier: Modifier = Modifier) {
 }
 
 /**
+ * 横滑调进度的 HUD（**2026-10-03 用户要求**：不弹控制也能拖，且要**预览缩略图**）。
+ *
+ * 预览帧由 :app 抽（拿不到就只显示"±位移 + 目标时间"，拖动本身照常可用）。
+ */
+@Composable
+private fun SeekGestureHud(
+    targetMs: Long,
+    startMs: Long,
+    durationMs: Long,
+    frame: ByteArray?,
+    modifier: Modifier = Modifier,
+) {
+    val bitmap = remember(frame) { frame?.let { decodePreviewFrame(it) } }
+    Column(
+        modifier = modifier
+            .background(CONTROL_SCRIM, RoundedCornerShape(8.dp))
+            .padding(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        bitmap?.let { image ->
+            Image(
+                bitmap = image,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.width(240.dp).heightIn(max = 180.dp),
+            )
+        }
+        Text(
+            text = SeekGestureMath.deltaLabel(targetMs - startMs),
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = VideoPlayerMath.formatDuration(targetMs) + " / " + VideoPlayerMath.formatDuration(durationMs),
+            color = Color.White,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+/** 预览帧字节 → 位图；解不出来返回 null（HUD 就不显示图）。 */
+private fun decodePreviewFrame(bytes: ByteArray): ImageBitmap? = runCatching {
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+}.getOrNull()
+
+/**
  * 播放页芯片的统一配色（**2026-10-03 用户要求**："字体需要白色不然看不清"）。
  *
  * 播放页是黑底，Material3 默认芯片取主题的 onSurfaceVariant（灰），在手机上几乎看不清；
@@ -389,6 +470,41 @@ private fun Controls(
     // 横屏是"看电影"的场景：同样的控件在 2.17:1 的屏幕上显得又高又占地
     //（2026-10-03 用户反馈："播放过程中的这个页面占地方太大了"）→ 横屏统一用更紧凑的尺寸
     val compact = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // 极简模式（2026-10-03 用户要求）：只留进度条 + 播放键 + 一个「完整」出口，
+    // 顶栏（标题/内核/旋转）与整排档位芯片都不画。
+    if (state.simpleMode) {
+      Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(CONTROL_SCRIM)
+                .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = 4.dp),
+        ) {
+            ProgressRow(
+                state = state,
+                onSeek = viewModel::onSeekChange,
+                onSeekFinished = viewModel::onSeekFinished,
+                compact = true,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.weight(1f))
+                FilledIconButton(onClick = viewModel::togglePlayPause, modifier = Modifier.size(44.dp)) {
+                    Icon(
+                        imageVector = if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = stringResource(if (state.playing) R.string.video_pause else R.string.video_play),
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = viewModel::toggleSimpleMode) {
+                    Text(stringResource(R.string.video_simple_off), color = Color.White)
+                }
+            }
+        }
+      }
+        return
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -717,6 +833,13 @@ private fun ChipsRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // 极简模式入口（2026-10-03 用户要求：做成极简模式）
+        AssistChip(
+            onClick = viewModel::toggleSimpleMode,
+            label = { Text(stringResource(R.string.video_simple_on)) },
+            colors = playerChipColors(),
+            border = playerChipBorder(),
+        )
         // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
         AssistChip(
             onClick = onOpenPlaylist,

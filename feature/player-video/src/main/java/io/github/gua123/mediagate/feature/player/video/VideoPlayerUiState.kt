@@ -133,6 +133,22 @@ data class VideoPlayerUiState(
     val vlcSuspectCrash: Boolean = false,
     /** LibVLC 在本机能不能跑；false = 启动探针被带走 → 不让切（2026-10-03 用户建议）。 */
     val vlcUsable: Boolean? = null,
+    /**
+     * 极简模式（**2026-10-03 用户要求**：「做成极简模式」）：只留进度条与播放键，
+     * 标题/内核/档位芯片全部收起（点一下仍可唤出这条细细的栏）。
+     */
+    val simpleMode: Boolean = false,
+    /**
+     * 横滑调进度中的目标位置（毫秒）；null = 没在滑。
+     *
+     * **2026-10-03 用户要求**：「不弹出控制也能左右滑动调整进度条」——横滑时**不**弹控制层，
+     * 只在画面中央浮出一个进度 HUD（带预览帧）。
+     */
+    val gestureSeekMs: Long? = null,
+    /** 横滑起手时的位置（算位移用）。 */
+    val gestureStartMs: Long = 0L,
+    /** 预览帧（图片字节）；抽不到就是 null，HUD 退化成只显示时间。 */
+    val previewFrame: ByteArray? = null,
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,
     /** 失败分类；[VideoPlayerStatus.ERROR] 时非空。 */
@@ -324,6 +340,21 @@ sealed interface VideoPlayerEvent {
 
     /** 切换失败（建不出新内核）。 */
     data class SwitchFailed(val detail: String?, val canFallback: Boolean) : VideoPlayerEvent
+
+    /** 切极简模式（2026-10-03 用户要求）。 */
+    data class SimpleModeChanged(val on: Boolean) : VideoPlayerEvent
+
+    /** 横滑调进度：开始（记下起点）。 */
+    data class GestureSeekStarted(val startMs: Long) : VideoPlayerEvent
+
+    /** 横滑调进度：移动到目标位置。 */
+    data class GestureSeekMoved(val targetMs: Long) : VideoPlayerEvent
+
+    /** 横滑调进度：结束（提交）或取消（回原处）。 */
+    data object GestureSeekEnded : VideoPlayerEvent
+
+    /** 预览帧就绪（抽不到就不会发这个事件）。 */
+    data class PreviewFrameLoaded(val bytes: ByteArray) : VideoPlayerEvent
 
     /** 黑屏/切换提示到时间收掉。 */
     data object SwitchHintCleared : VideoPlayerEvent
@@ -520,6 +551,21 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         dragging = false,
         dragPositionMs = 0L,
     )
+
+    is VideoPlayerEvent.SimpleModeChanged -> copy(simpleMode = event.on)
+
+    is VideoPlayerEvent.GestureSeekStarted -> copy(
+        gestureStartMs = event.startMs,
+        gestureSeekMs = event.startMs,
+        previewFrame = null,
+    )
+
+    is VideoPlayerEvent.GestureSeekMoved -> copy(gestureSeekMs = event.targetMs)
+
+    // 结束：目标位置由 ViewModel 提交给内核，这里先把拖拽态收干净
+    VideoPlayerEvent.GestureSeekEnded -> copy(gestureSeekMs = null, previewFrame = null)
+
+    is VideoPlayerEvent.PreviewFrameLoaded -> copy(previewFrame = event.bytes)
 
     is VideoPlayerEvent.SwitchFailed -> copy(
         status = VideoPlayerStatus.ERROR,
