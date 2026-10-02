@@ -6,7 +6,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
@@ -220,6 +224,18 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // **播放页 / 看图页要铺满整块屏幕**（2026-10-03 真机横屏截图：左边出现一条浅色竖条 =
+    // 应用背景从"黑底被内缩"的缝里露出来）。四层保障：① 主题里 windowLayoutInDisplayCutoutMode=always
+    // （窗口从创建起就覆盖刘海区）；② 这两个路由不吃 Scaffold 的 innerPadding；③ **Scaffold 背后垫一层黑**
+    // （本行，任何内缩都不会再露浅色）；④ 播放期间 decorView 背景刷黑（见 ImmersiveWhilePlaying）。
+    val edgeToEdgeRoute = currentDestination?.route?.let { route ->
+        route == VideoPlayerRoutes.ROUTE || route == ViewerRoutes.ROUTE
+    } ?: false
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (edgeToEdgeRoute) Color.Black else Color.Transparent),
+    ) {
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -253,13 +269,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
             // M7-B：批量字幕任务中心（R19）的宿主能力（队列 + 目录 + 模型 + 让路）
             LocalTasksEnvironment provides container.tasksEnvironment,
         ) {
-            // **播放页 / 看图页要铺满整块屏幕**（2026-10-03 真机横屏截图：左边出现一条浅色竖条）：
-            // 那两个页面本身是黑底沉浸式，而 Scaffold 给的 innerPadding 在横屏会把**刘海 + 手势区**
-            // 也算进去 ⇒ 黑底被整体内缩，窗口背景（浅色）从左边露出来。
-            // 所以这两个路由**不吃内边距**（其余页面照旧）。
-            val edgeToEdgeRoute = currentDestination?.route?.let { route ->
-                route == VideoPlayerRoutes.ROUTE || route == ViewerRoutes.ROUTE
-            } ?: false
+            // 这两个路由**不吃内边距**（其余页面照旧）——理由见外层 edgeToEdgeRoute 的注释。
             NavHost(
                 navController = navController,
                 startDestination = TopLevelDestination.HOME.navRoute,
@@ -367,6 +377,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
     }
 }
 

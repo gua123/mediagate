@@ -2,5 +2,11 @@
 <resources>
     <style name="Theme.MediaGate" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/background_dark</item>
+        <!--
+          允许内容画进刘海区（2026-10-03 真机：横屏播放时最左边多出一条浅色竖条 =
+          窗口没覆盖刘海区，露出应用背景）。写在主题里而不是运行时改属性——运行时改
+          layoutInDisplayCutoutMode 往往要等窗口重建才生效，主题里声明则从窗口创建起就成立。
+        -->
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
     </style>
 </resources>
