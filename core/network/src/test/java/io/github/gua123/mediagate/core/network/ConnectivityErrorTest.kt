@@ -84,6 +84,14 @@ class ConnectivityErrorTest {
     }
 
     @Test
+    fun `5xx 的提示里要留"可能是 VPN 拦的"这条经验`() {
+        // 2026-10-03：用户为更新开了 VPN，WebDAV 被代理打成 503；提示必须给出可照做的方向
+        val hint = ConnectivityError.SERVER_ERROR.hint
+        assertTrue("提示应提到 VPN 或代理：" + hint, hint.contains("VPN") || hint.contains("代理"))
+        assertTrue("提示应给出方向：" + hint, hint.contains("只代理 GitHub"))
+    }
+
+    @Test
     fun `从中文提示猜分类（先抽状态码）`() {
         assertEquals(ConnectivityError.AUTH_FAILED, ConnectivityError.fromMessage("401 账号或密码错误"))
         assertEquals(ConnectivityError.PERMISSION_DENIED, ConnectivityError.fromMessage("403 无访问权限（账号对该目录无读权限）"))

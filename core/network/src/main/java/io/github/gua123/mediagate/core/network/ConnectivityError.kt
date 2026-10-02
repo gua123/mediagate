@@ -72,7 +72,13 @@ enum class ConnectivityError(
     REDIRECT("REDIRECT", "服务器要求跳转", "换 https 试试，或用跳转后的地址（也可能是反代配置问题）"),
 
     /** 服务器内部错误（HTTP 5xx）：问题在服务端或反向代理，不是配置写错。 */
-    SERVER_ERROR("SERVER_ERROR", "服务器内部错误", "服务端或反向代理出的问题：看服务日志，或稍后重试"),
+    SERVER_ERROR(
+        "SERVER_ERROR",
+        "服务器内部错误",
+        // 2026-10-03 用户实况：他要开 VPN 才能上 GitHub，而 VPN 会把 WebDAV 打成 503。
+        "服务端或反向代理出的问题：看服务日志或稍后重试；若手机开着 VPN/代理，也可能是它拦的" +
+            "（关掉试试，或把 VPN 设成只代理 GitHub）",
+    ),
 
     /** 请求被服务端拒绝（HTTP 400 / 429 等）。 */
     REQUEST_REJECTED("REQUEST_REJECTED", "请求被服务端拒绝", "换根路径或换个地址试试（也可能被限流）"),

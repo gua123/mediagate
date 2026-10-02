@@ -51,6 +51,12 @@ fun UpdateSection(
                 text = stringResource(R.string.update_hint_github),
                 style = MaterialTheme.typography.bodySmall,
             )
+            // 2026-10-03 用户实况：为更新必须开 VPN，而 VPN 会让 WebDAV 打成 503 —— 把这条经验写在卡片上
+            Text(
+                text = stringResource(R.string.update_hint_vpn_split),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (val status = state.status) {
