@@ -31,7 +31,8 @@ class NetworkTuningSettings(
         .map { prefs ->
             CacheTuning.fromStored(
                 segmentMb = prefs[KEY_SEGMENT_MB],
-                cacheGb = prefs[KEY_CACHE_GB],
+                // 优先读 MB 键（能表达任意大小）；老版本存的 GB 键按 ×1024 迁移
+                cacheMb = prefs[KEY_CACHE_MB] ?: prefs[KEY_CACHE_GB]?.let { it * 1024 },
                 readAheadSegments = prefs[KEY_READ_AHEAD],
             )
         }
@@ -41,9 +42,17 @@ class NetworkTuningSettings(
         context.networkTuningDataStore.edit { it[KEY_SEGMENT_MB] = value }
     }
 
-    /** 缓存总上限（**GB**，用户要求按 GB 给选项）。 */
-    suspend fun setCacheGb(value: Int) {
-        context.networkTuningDataStore.edit { it[KEY_CACHE_GB] = value }
+    /**
+     * 缓存总上限（**MB 存储**：这样"输入框里填 3.5 GB"这种任意值也能表达）。
+     *
+     * 2026-10-03 用户要求「网络缓冲上限增加一个可以输入的窗口」⇒ 从"只能选档位"升级为"任意值 + 快捷档位"。
+     */
+    suspend fun setCacheMb(valueMb: Int) {
+        context.networkTuningDataStore.edit {
+            it[KEY_CACHE_MB] = valueMb
+            // 顺手清掉老键，避免"改了不生效"的困惑
+            it.remove(KEY_CACHE_GB)
+        }
     }
 
     suspend fun setReadAheadSegments(value: Int) {
@@ -55,6 +64,7 @@ class NetworkTuningSettings(
         context.networkTuningDataStore.edit { prefs ->
             prefs.remove(KEY_SEGMENT_MB)
             prefs.remove(KEY_CACHE_GB)
+            prefs.remove(KEY_CACHE_MB)
             prefs.remove(KEY_READ_AHEAD)
         }
     }
@@ -62,6 +72,7 @@ class NetworkTuningSettings(
     private companion object {
         val KEY_SEGMENT_MB = intPreferencesKey("segment_mb")
         val KEY_CACHE_GB = intPreferencesKey("cache_gb")
+        val KEY_CACHE_MB = intPreferencesKey("cache_mb")
         val KEY_READ_AHEAD = intPreferencesKey("read_ahead_segments")
     }
 }

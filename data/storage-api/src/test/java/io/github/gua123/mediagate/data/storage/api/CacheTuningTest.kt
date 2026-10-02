@@ -25,10 +25,12 @@ class CacheTuningTest {
     }
 
     @Test
-    fun 缓存上限按GB且只接受备选值() {
-        assertEquals(1L * 1024 * 1024 * 1024, CacheTuning().maxBytes)
-        assertEquals(4L * 1024 * 1024 * 1024, CacheTuning(maxBytes = 4L * 1024 * 1024 * 1024).normalized().maxBytes)
-        assertEquals("陌生值退回默认", CacheTuning().maxBytes, CacheTuning(maxBytes = 3L * 1024 * 1024 * 1024).normalized().maxBytes)
+    fun 缓存上限默认值与快捷档位() {
+        assertEquals("默认 1 GB", 1L * 1024 * 1024 * 1024, CacheTuning().maxBytes)
+        // 快捷档位只是"方便的取值"，任意值同样合法（见下一个用例）
+        CacheTuning.CACHE_CHOICES.forEach { bytes ->
+            assertEquals(bytes, CacheTuning(maxBytes = bytes).normalized().maxBytes)
+        }
     }
 
     @Test
@@ -36,6 +38,24 @@ class CacheTuningTest {
         // 1 MB 段 + 1 GB 上限没问题；上限被夹到至少一个段
         val t = CacheTuning(segmentBytes = 8L * 1024 * 1024, maxBytes = 1024).normalized()
         assertTrue("上限应至少容纳一个段：${t.maxBytes}", t.maxBytes >= t.segmentBytes)
+    }
+
+    @Test
+    fun 缓存上限现在接受任意值_只夹到安全区间() {
+        // 2026-10-03 用户要求「网络缓冲上限增加一个可以输入的窗口」⇒ 不再只认档位
+        val custom = CacheTuning(maxBytes = 3L * 1024 * 1024 * 1024 + 512L * 1024 * 1024).normalized()
+        assertEquals("3.5 GB 应原样保留", 3L * 1024 * 1024 * 1024 + 512L * 1024 * 1024, custom.maxBytes)
+        assertEquals("太小夹到下限", CacheTuning.MIN_CACHE_BYTES, CacheTuning(maxBytes = 1024).normalized().maxBytes)
+        assertEquals("太大夹到上限", CacheTuning.MAX_CACHE_BYTES, CacheTuning(maxBytes = Long.MAX_VALUE / 2).normalized().maxBytes)
+    }
+
+    @Test
+    fun 旧版只存过GB键也能迁移() {
+        // 老版本写的是 cache_gb=4；现在优先读 MB 键，读不到就用 GB ×1024
+        val migrated = CacheTuning.fromStored(cacheGb = 4)
+        assertEquals(4L * 1024 * 1024 * 1024, migrated.maxBytes)
+        val preferMb = CacheTuning.fromStored(cacheMb = 2500, cacheGb = 4)
+        assertEquals("有 MB 键时以 MB 为准", 2500L * 1024 * 1024, preferMb.maxBytes)
     }
 
     @Test
