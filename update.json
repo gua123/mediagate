@@ -1,8 +1,8 @@
 {
-  "versionCode": 28,
-  "versionName": "0.1.27",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.27/mediagate-0.1.27.apk",
-  "sizeBytes": 74600721,
-  "sha256": "a40dd1325c8e39266e58e98a01ce715b4e467500d80871ffb96e20f87dc5d3eb",
-  "notes": "## mediagate 0.1.27 —— 又修一次「打不开」，这次带上\"会说原因\"的机制\n\n### 这次动了什么\n1. **把 LibVLC 启动探针从\"开机自动跑\"彻底拿掉**（改成按需：你在播放页点内核 / 点「重新测试」时才跑）。\n   原因：0.1.22 那版探针跑在独立进程里，而你这台机器的 LibVLC **一初始化就把进程带走**——\n   于是每次打开 App 都会连带拉起一个\"必然崩掉\"的进程，系统随即弹崩溃提示，看上去就是\"打不开\"。\n   （0.1.21 及以前没有探针，所以能正常打开。）\n2. **加了\"把原因摆到屏幕上\"的机制**——以后不管是启动崩还是运行崩，都会弹出一个**独立进程**的错误页，\n   上面写着版本、设备、异常类型与完整堆栈，并且有「复制全部 / 分享」按钮。\n   在那之前，启动崩溃是\"打不开、什么都没有\"，我这边完全瞎猜（这几轮就是这么绕远的）。\n3. **启动自检**：`Application.onCreate` 里的关键步骤（容器构造等）失败不再直接崩溃，而是落盘 + 弹出上面那个页面。\n\n### 出问题时请这样告诉我\n- 如果弹出错误页：**直接截图**，或者点「复制全部」把文字粘给我；\n- 如果还是\"毫无反应地打不开\"：告诉我\"打开时有没有任何一闪而过的提示\"，我再做一版\"安全模式\"包来二分定位。\n\n### 装法\nApp 打不开 ⇒ 请**直接用手机浏览器下载安装**（别走应用内更新）：\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.27/mediagate-0.1.27.apk`"
+  "versionCode": 29,
+  "versionName": "0.1.28",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.28/mediagate-0.1.28.apk",
+  "sizeBytes": 74600714,
+  "sha256": "fccd0ee2e51e9f47a974329a0a2e4c5fcf70ab73623b1e048eda1d5914f17f4c",
+  "notes": "## mediagate 0.1.28 —— 真凶抓到了（就是你发来的那段崩溃文本帮我抓到的）\n\n### 你发来的那段文本，直接把答案写在了脸上\n\n```\n阶段：容器构造\n异常：java.lang.NullPointerException\n消息：Attempt to read from field 'a84 ei3.b' on a null object reference in method 'void ph.<init>(...)`\n\tat ph.<init>(SourceFile:870)\n\tat io.github.gua123.mediagate.MediaGateApplication.onCreate\n```\n\n我用发版时生成的 **R8 混淆对照表** 把这三个代号翻译了回来：\n\n| 混淆名 | 真身 |\n| --- | --- |\n| `ph` | `AppContainer`（容器本身） |\n| `ei3` | `kotlinx.coroutines.flow.ReadonlyStateFlow`（`asStateFlow()` 的返回类型） |\n| `a84` | `StateFlowImpl`（它内部那个真正的流） |\n\n⇒ \"读一个 **null** 的 StateFlow 的 `.value`\"：容器构造到一半，某个属性去读了**声明在它后面**的流。\n定位到具体一行：\n\n```kotlin\noverride val vlcUsable: Boolean? = vlcUsableState.value   // ← 宿主先建，流还没初始化\n```\n\n`vlcUsableState` 声明在容器**后面**（第 1018 行），而这个宿主是容器里**较早**构造的属性——\n构造到它时那个流还是 null，于是 `Application.onCreate` → 容器构造直接 NPE。\n\n### 为什么前几版都没查出来\n- **Kotlin 不拦**：`val` 在 JVM 上默认就是 null，顺序问题编译器看不见；\n- **单测拦不住**：JVM 单测不会构造这个 Android 容器；\n- **0.1.26 我修的那个 `lateinit` 是另一个真 bug**（同一个提交里埋的），修掉它之后这个 NPE 才露出来；\n- **R8 混淆**：报错里的类名变成 `ph/ei3/a84`，没有对照表根本读不懂——这次正好有。\n\n### 修法与护栏\n1. 那一行改成 **getter**（`get() = vlcUsableState.value`）：用到时才取，顺序就不再重要；\n2. 新增**源码级护栏** `StartupPropertyOrderTest`：扫描启动关键文件，凡是\n   「带类型标注的属性初始化器里去读 `.value`」一律测试失败（已实证：把 0.1.27 的源码喂进去会红，修复后变绿）；\n3. 0.1.27 的\"独立进程错误页 + 启动自检\"保留——这次就是它把原因送出来的。\n\n### 装法（App 打不开，直接下载安装，别走应用内更新）\n\n`https://github.com/gua123/mediagate/releases/download/v0.1.28/mediagate-0.1.28.apk`\n\n本版包含 0.1.22 起你点名要的全部功能：LibVLC 内核探针（改为按需触发）、任务入队去重、\n「准备中（加载模型…）」、已结束任务可 🗑 移除、极简模式、横滑调进度、预览缩略图。"
 }
