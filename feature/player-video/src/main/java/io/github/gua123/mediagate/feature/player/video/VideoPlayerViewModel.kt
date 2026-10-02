@@ -76,6 +76,8 @@ class VideoPlayerViewModel(
         VideoPlayerUiState(
             vlcSuspectCrash = environment.vlcPreviouslyCrashed,
             vlcUsable = environment.vlcUsable,
+            // 极简模式是持久化偏好：进页面就按上次的选择显示
+            simpleMode = environment.preferences.simpleMode,
         ),
     )
 
@@ -111,6 +113,9 @@ class VideoPlayerViewModel(
     private var writeBackJob: Job? = null
     private var repairJob: Job? = null
     private var tsIndexJob: Job? = null
+
+    /** 横滑调进度时的预览帧请求；新的一次会取消上一次（节流）。 */
+    private var previewJob: Job? = null
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
@@ -256,6 +261,80 @@ class VideoPlayerViewModel(
                     }
                     return@launch
                 }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 极简模式与横滑调进度（2026-10-03 用户要求）
+
+    /** 切极简模式（记住选择）。 */
+    fun toggleSimpleMode() {
+        val on = !_state.value.simpleMode
+        _state.update { it.reduce(VideoPlayerEvent.SimpleModeChanged(on)) }
+        viewModelScope.launch { runCatching { environment.preferences.setSimpleMode(on) } }
+    }
+
+    /**
+     * 横滑调进度：按下（记起点）。
+     *
+     * **不弹控制层**——用户明确要求「不弹出控制也能左右滑动调整进度条」，所以这条路径只更新 HUD，
+     * 不碰 [VideoPlayerUiState.dragging] 那个给进度条用的状态。
+     */
+    fun beginSeekGesture() {
+        val current = _state.value
+        if (current.durationMs <= 0L) return
+        _state.update { it.reduce(VideoPlayerEvent.GestureSeekStarted(current.positionMs)) }
+    }
+
+    /**
+     * 横滑调进度：位移（[dxFraction] = 横向位移 ÷ 画面宽度，右为正）。
+     *
+     * 目标位置由 [SeekGestureMath] 换算（纯函数，单测覆盖）；顺便异步取一张该位置的预览帧。
+     */
+    fun seekGestureBy(dxFraction: Float) {
+        val current = _state.value
+        if (current.gestureSeekMs == null) return
+        val target = SeekGestureMath.targetMs(current.gestureStartMs, dxFraction, current.durationMs)
+        _state.update { it.reduce(VideoPlayerEvent.GestureSeekMoved(target)) }
+        loadPreviewFrame(target)
+    }
+
+    /** 横滑调进度：松手（提交给内核）。想作废就调 [cancelSeekGesture]。 */
+    fun commitSeekGesture() {
+        val target = _state.value.gestureSeekMs ?: return
+        _state.update { it.reduce(VideoPlayerEvent.GestureSeekEnded) }
+        engine?.seekTo(target)
+        msSinceSave = 0L
+        sampleNow()
+        prefetchSeek(target)
+    }
+
+    /** 横滑调进度：作废（回原处，不动内核）。 */
+    fun cancelSeekGesture() {
+        if (_state.value.gestureSeekMs == null) return
+        _state.update { it.reduce(VideoPlayerEvent.GestureSeekEnded) }
+    }
+
+    /**
+     * 取一张 [positionMs] 处的预览帧（best-effort，失败就只显示时间）。
+     *
+     * 抽帧本身在 :app（那里才有抽帧器与缓存）；这里只做节流：新的一次请求会取消上一次。
+     */
+    private fun loadPreviewFrame(positionMs: Long) {
+        val ref = source ?: return
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch {
+            val bytes = try {
+                environment.previewFrame(ref.path, positionMs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "取预览帧失败：" + positionMs, t)
+                null
+            } ?: return@launch
+            // 只在"还在滑、且目标没变"时贴上去，避免旧帧盖住新位置
+            if (_state.value.gestureSeekMs == positionMs) {
+                _state.update { it.reduce(VideoPlayerEvent.PreviewFrameLoaded(bytes)) }
             }
         }
     }

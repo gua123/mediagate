@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
@@ -56,6 +57,21 @@ class VideoPlayerPreferencesSettings(
 
     override suspend fun setDecoderMode(mode: DecoderMode) {
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_DECODER] = mode.name }
+    }
+
+    /**
+     * 极简模式（**2026-10-03 用户要求**）：只留进度条与播放键；默认关。
+     *
+     * 用 `runBlocking` 读一次首值不划算——播放页进页面时读一次即可，所以这里同步暴露一个值。
+     */
+    override val simpleMode: Boolean
+        get() = runCatching {
+            kotlinx.coroutines.runBlocking { context.videoPlayerDataStore.data.first() }[KEY_SIMPLE_MODE] ?: false
+        }.getOrDefault(false)
+
+
+    override suspend fun setSimpleMode(on: Boolean) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SIMPLE_MODE] = on }
     }
 
     // ------------------------------------------------------------ 字幕（M7-A，R14）
@@ -109,6 +125,9 @@ class VideoPlayerPreferencesSettings(
     private companion object {
         val KEY_ENGINE = stringPreferencesKey("engine_kind")
         val KEY_DECODER = stringPreferencesKey("decoder_mode")
+
+        /** 极简模式（2026-10-03）：默认关。 */
+        val KEY_SIMPLE_MODE = booleanPreferencesKey("simple_mode")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")

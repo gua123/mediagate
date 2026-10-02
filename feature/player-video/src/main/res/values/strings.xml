@@ -78,6 +78,9 @@
     <string name="video_vlc_warning_body">上次切到 LibVLC 时 App 直接退出了（可能是本机与 LibVLC 不兼容）。要再试一次吗？如果只是想换个解码方式，也可以先用「解码」档位。</string>
     <string name="video_vlc_warning_continue">仍然切换</string>
     <string name="video_vlc_warning_cancel">先不切</string>
+    <string name="video_simple_on">极简</string>
+    <string name="video_simple_off">完整</string>
+    <string name="video_gesture_seek">拖动调整进度</string>
     <string name="video_rotate">旋转</string>
     <string name="video_rotate_to_landscape">横屏</string>
     <string name="video_rotate_to_portrait">竖屏</string>
