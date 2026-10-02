@@ -83,6 +83,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -92,6 +93,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -116,7 +118,7 @@ import io.github.gua123.mediagate.media.subtitle.SubtitleSource
 import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 
 /** 控制层自动隐藏的等待时长（播放中才计时）。 */
-private const val CONTROLS_AUTO_HIDE_MS = 3_500L
+// 控制层自动隐藏的秒数改成用户可配置（见 ControlsAutoHide 与设置 → 播放）
 
 /** 时间轴步进按钮：长按多久开始连续微调。 */
 private const val SUBTITLE_LONG_PRESS_DELAY_MS = 400L
@@ -197,19 +199,43 @@ fun VideoPlayerScreen(
         }
     }
 
-    // 播放中 3.5 秒无操作自动隐藏控制层；拖拽中、暂停时、字幕面板展开时不隐藏
-    // （否则用户还在面板里挑字幕，控制层就没了）
-    LaunchedEffect(controlsVisible, state.playing, state.dragging, subtitlePanelVisible, inPip) {
-        if (controlsVisible && state.playing && !state.dragging && !subtitlePanelVisible && !inPip) {
-            delay(CONTROLS_AUTO_HIDE_MS)
-            controlsVisible = false
+    // **2026-10-03 用户要求**：「播放视频时，弹出的窗口，无操作多少秒时才隐藏，有操作时不能隐藏」。
+    // 做法两条：① interactionTick 每次触摸/操作都自增 ⇒ 计时重新开始（手指还按着就一直不会隐藏）；
+    // ② 有没有面板开着、是不是在拖、是不是暂停，全部交给纯函数 ControlsAutoHide 判定。
+    var interactionTick by remember { mutableIntStateOf(0) }
+    val interacting = state.dragging || subtitlePanelVisible || playlistVisible ||
+        vlcWarningVisible || vlcUnavailableVisible
+    val hideTimeoutMs = ControlsAutoHide.timeoutMs(state.controlsHideSeconds)
+
+    LaunchedEffect(
+        controlsVisible,
+        state.playing,
+        interacting,
+        inPip,
+        interactionTick,
+        hideTimeoutMs,
+    ) {
+        if (hideTimeoutMs == null) return@LaunchedEffect
+        if (!ControlsAutoHide.shouldStartCountdown(state.playing, interacting, inPip, controlsVisible)) {
+            return@LaunchedEffect
         }
+        delay(hideTimeoutMs)
+        controlsVisible = false
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            // 任何触摸（按下/拖动）都算"有操作"：只观察不消费，不影响下层手势
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.pressed }) interactionTick++
+                    }
+                }
+            },
     ) {
         // 1) 画面：内核给什么就挂什么（同一个内核重挂时 key 不变，不会重复 addView）
         val surface = output
@@ -252,7 +278,10 @@ fun VideoPlayerScreen(
                 .matchParentSize()
                 .onSizeChanged { zoneHeight[0] = it.height.toFloat() }
                 .pointerInput(Unit) {
-                    detectTapGestures { controlsVisible = !controlsVisible }
+                    detectTapGestures {
+                        controlsVisible = !controlsVisible
+                        interactionTick++
+                    }
                 }
                 .pointerInput(state.durationMs) {
                     detectHorizontalDragGestures(

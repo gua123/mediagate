@@ -169,6 +169,9 @@ data class VideoPlayerUiState(
 
     /** 切后台是否自动进画中画（2026-10-03 用户要求：可设置）。 */
     val pipAutoEnter: Boolean = true,
+
+    /** 控制层无操作多少秒后隐藏（2026-10-03 用户要求）；0 = 永不自动隐藏。 */
+    val controlsHideSeconds: Int = ControlsAutoHide.DEFAULT_SECONDS,
     /** 预览帧（图片字节）；抽不到就是 null，HUD 退化成只显示时间。 */
     /** 同内核重建解码器时的「短暂黑屏」提示（R10）。 */
     val blackoutHint: Boolean = false,

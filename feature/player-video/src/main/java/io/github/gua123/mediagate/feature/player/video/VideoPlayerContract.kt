@@ -83,6 +83,17 @@ interface VideoPlayerPreferences {
     /** 记住画中画开关。 */
     suspend fun setPipAutoEnter(enabled: Boolean) = Unit
 
+    /**
+     * **控制层"无操作多少秒后隐藏"**（2026-10-03 用户要求：「无操作多少秒时才隐藏，有操作时不能隐藏」）。
+     *
+     * 取值见 [ControlsAutoHide.SECONDS_CHOICES]（3/5/10，0 = 永不自动隐藏）；默认 3 秒（与旧版一致）。
+     * **有操作时永远不隐藏**是行为规则，不走这个配置。
+     */
+    val controlsHideSecondsValue: Int get() = ControlsAutoHide.DEFAULT_SECONDS
+
+    /** 记住控制层隐藏延时。 */
+    suspend fun setControlsHideSeconds(seconds: Int) = Unit
+
     /** 字幕总开关（R14）；默认关。 */
     val subtitleEnabled: StateFlow<Boolean>
 

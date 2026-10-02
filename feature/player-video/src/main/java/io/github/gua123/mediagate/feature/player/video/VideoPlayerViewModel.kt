@@ -84,6 +84,7 @@ class VideoPlayerViewModel(
             brightness = environment.preferences.screenBrightness,
             loopMode = environment.preferences.loopMode,
             pipAutoEnter = environment.preferences.pipAutoEnterEnabled,
+            controlsHideSeconds = ControlsAutoHide.normalizeSeconds(environment.preferences.controlsHideSecondsValue),
         ),
     )
 

@@ -624,9 +624,12 @@ private fun SettingsRoute(
         extraSections = {
             // 播放（2026-10-03 用户要求：「可以设置软件在后台时是否显示画中画」）
             val pipAutoEnterNow by container.pipAutoEnterSetting.collectAsStateWithLifecycle()
+            val controlsHideNow by container.controlsHideSeconds.collectAsStateWithLifecycle()
             PlaybackSection(
                 pipAutoEnter = pipAutoEnterNow,
                 onPipAutoEnter = { enabled -> scope.launch { container.updatePipAutoEnter(enabled) } },
+                controlsHideSeconds = controlsHideNow,
+                onControlsHideSeconds = { seconds -> scope.launch { container.updateControlsHideSeconds(seconds) } },
             )
             // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
             NetworkTuningSection(

@@ -156,8 +156,11 @@ class FileStorageBackendTest {
         assertEquals("dir/x.bin", entry.path)
         assertFalse(entry.isDirectory)
         assertEquals(10L, entry.size)
-        // mtime 断言放宽：只要不早于写入前的时间戳即可（文件系统精度不一）
-        assertTrue("mtime=${entry.mtime} before=$before", entry.mtime >= before)
+        // mtime 断言放宽：文件系统精度不一，且"同一毫秒内写入 + 时间戳向下取整"会让 mtime 比 before 小 1 ms
+        // （2026-10-03 全量测试里就撞到过 mtime=before-1）。给 1 秒的容差，同时确保它不超过"现在 + 1 秒"。
+        val after = System.currentTimeMillis()
+        assertTrue("mtime=${entry.mtime} before=$before", entry.mtime >= before - 1_000L)
+        assertTrue("mtime=${entry.mtime} after=$after", entry.mtime <= after + 1_000L)
         assertNull(entry.etag)
 
         val dir = backend.stat("dir")

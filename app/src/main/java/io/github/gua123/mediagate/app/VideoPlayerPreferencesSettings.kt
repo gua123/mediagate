@@ -77,6 +77,19 @@ class VideoPlayerPreferencesSettings(
     }
 
     /**
+     * **控制层无操作多少秒后隐藏**（2026-10-03 用户要求）；默认 3 秒，0 = 永不自动隐藏。
+     */
+    val controlsHideSeconds: StateFlow<Int> = context.videoPlayerDataStore.data
+        .map { preferences -> preferences[KEY_CONTROLS_HIDE_SECONDS] ?: 3 }
+        .stateIn(scope, SharingStarted.Eagerly, 3)
+
+    override val controlsHideSecondsValue: Int get() = controlsHideSeconds.value
+
+    override suspend fun setControlsHideSeconds(seconds: Int) {
+        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_CONTROLS_HIDE_SECONDS] = seconds }
+    }
+
+    /**
      * **切后台是否自动进画中画**（2026-10-03 用户要求）；默认开（与旧行为一致）。
      */
     val pipAutoEnter: StateFlow<Boolean> = context.videoPlayerDataStore.data
@@ -193,6 +206,9 @@ class VideoPlayerPreferencesSettings(
 
         /** 切后台自动进画中画（2026-10-03）：默认开。 */
         val KEY_PIP_AUTO_ENTER = booleanPreferencesKey("pip_auto_enter")
+
+        /** 控制层隐藏延时（2026-10-03）：3/5/10 秒，0 = 永不隐藏。 */
+        val KEY_CONTROLS_HIDE_SECONDS = intPreferencesKey("controls_hide_seconds")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
         val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")
