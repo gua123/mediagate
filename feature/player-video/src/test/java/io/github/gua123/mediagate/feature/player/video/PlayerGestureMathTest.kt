@@ -49,9 +49,22 @@ class PlayerGestureMathTest {
 
     @Test
     fun 向上拖变大_向下拖变小() {
-        // 整屏高 1000px、量程 0..2：往上拖 250px ⇒ 增加 0.5
-        assertEquals(0.5f, PlayerGestureMath.applyVerticalDrag(0f, -250f, 1000, 0f, 2f), 0.001f)
-        assertEquals(1.5f, PlayerGestureMath.applyVerticalDrag(2f, 250f, 1000, 0f, 2f), 0.001f)
+        // 有效行程＝屏高的 35%：1000px ⇒ 350px 走完 0..2，所以 250px ⇒ 约 1.43
+        assertEquals(1.428f, PlayerGestureMath.applyVerticalDrag(0f, -250f, 1000, 0f, 2f), 0.01f)
+        assertEquals(0.571f, PlayerGestureMath.applyVerticalDrag(2f, 250f, 1000, 0f, 2f), 0.01f)
+    }
+
+    @Test
+    fun 一次短滑就能从满到零_一次长滑也不会越界() {
+        // 2026-10-03 用户要求：「可以更改为一次性从 100 到 0 吗？」
+        // 亮度量程 0.01..1：从最亮往下滑 35% 屏高 ⇒ 直接到底
+        assertEquals(0.01f, PlayerGestureMath.applyVerticalDrag(1f, 350f, 1000, 0.01f, 1f), 0.001f)
+        // 音量量程 0..2：从最大往下滑 35% 屏高 ⇒ 直接到 0
+        assertEquals(0f, PlayerGestureMath.applyVerticalDrag(2f, 350f, 1000, 0f, 2f), 0.001f)
+        // 反向：从最小往上滑 35% 屏高 ⇒ 直接到顶
+        assertEquals(2f, PlayerGestureMath.applyVerticalDrag(0f, -350f, 1000, 0f, 2f), 0.001f)
+        // 滑过头也不越界
+        assertEquals(2f, PlayerGestureMath.applyVerticalDrag(0f, -2000f, 1000, 0f, 2f), 0.001f)
     }
 
     @Test
