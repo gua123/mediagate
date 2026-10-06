@@ -561,9 +561,11 @@ class VideoPlayerViewModel(
     private fun prefetchSeek(positionMs: Long) {
         val path = _state.value.path
         if (path.isEmpty()) return
+        // 把时长一起带上：:app 在没有 TS 索引时用"位置/时长 × 大小"估算落点（2026-10-03 补）
+        val durationMs = _state.value.durationMs
         viewModelScope.launch {
             try {
-                withContext(io) { environment.prefetchSeek(path, positionMs) }
+                withContext(io) { environment.prefetchSeek(path, positionMs, durationMs) }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {

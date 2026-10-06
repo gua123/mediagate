@@ -258,7 +258,7 @@ interface VideoPlayerEnvironment {
      *
      * 拿不到索引或没有分段缓存时**什么都不做**（不是错误）。
      */
-    suspend fun prefetchSeek(path: String, positionMs: Long) = Unit
+    suspend fun prefetchSeek(path: String, positionMs: Long, durationMs: Long = 0L) = Unit
 }
 
 /**

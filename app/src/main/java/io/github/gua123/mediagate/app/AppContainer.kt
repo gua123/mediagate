@@ -36,6 +36,7 @@ import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
 import io.github.gua123.mediagate.core.network.NetworkContext
 import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.core.network.SelectableAddress
+import io.github.gua123.mediagate.data.storage.api.PrefetchTargets
 import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.TimeoutStorageBackend
@@ -707,11 +708,24 @@ class AppContainer(context: Context) :
          *
          * 只有"当前视频后端是分段缓存"时才预取——本地根目录本来就不需要预取。
          */
-        override suspend fun prefetchSeek(path: String, positionMs: Long) {
-            val index = tsIndexPreparer.indexOf(path) ?: return
-            val offset = index.seekTarget(positionMs)
-            if (offset < 0L) return
+        /**
+         * 落点预取：优先用 TS 索引，**没有索引的普通容器也要预取**（2026-10-03 用户反馈后补）。
+         *
+         * 没有索引时的估算：`字节偏移 ≈ 位置 / 时长 × 文件大小`——视频码率基本恒定，这个比例足够准，
+         * 目的是把"续播/拖拽后要读的那一段"提前拉下来，而不是精确对齐关键帧（那由播放器自己找）。
+         */
+        override suspend fun prefetchSeek(path: String, positionMs: Long, durationMs: Long) {
             val cache = videoBackend.value as? SegmentedCacheBackend ?: return
+            tsIndexPreparer.indexOf(path)?.let { index ->
+                val offset = index.seekTarget(positionMs)
+                if (offset >= 0L) {
+                    cache.prefetch(path, offset, PREFETCH_BYTES)
+                    return
+                }
+            }
+            val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return
+            // 没有索引时的兜底换算由纯函数负责（参数不可用 ⇒ null ⇒ 不动，宁可不动也不瞎猜）
+            val offset = PrefetchTargets.offsetForPosition(positionMs, durationMs, size) ?: return
             cache.prefetch(path, offset, PREFETCH_BYTES)
         }
 
@@ -748,14 +762,31 @@ class AppContainer(context: Context) :
          * 于是 Media3 起播要读头几个字节时，数据往往已经在本地了；
          * 段级"单飞"保证这次预取与起播的真实请求不会重复拉同一段。
          */
+        /**
+         * **打开即预取**（2026-10-03 用户反馈「第一次打开的视频，初次缓冲时间还是很长」后加强）。
+         *
+         * 只预取"开头两段"是不够的：**非 faststart 的 MP4 把 moov 索引放在文件末尾**，
+         * 播放器一上来就要读最后那一段才能算出时长/关键帧 ⇒ 头部预取帮不上忙，用户还是会等。
+         * 所以现在**同时**抓两头（两个不同段 → 段级单飞允许并行）：① 首段（起播数据）；
+         * ② 尾段（moov / 索引用）。两个都在后台跑，不阻塞起播。
+         */
         override fun prefetchHead(path: String) {
             // 顺手记下"最后一次播放"（这条路正是"这个文件已经被打开要播了"的唯一入口）
             rememberLastPlayed(path)
             val cache = remoteCache ?: return
-            val bytes = networkTuning.tuning.value.segmentBytes * PREFETCH_HEAD_SEGMENTS
+            val segment = networkTuning.tuning.value.segmentBytes
+            val headBytes = segment * PREFETCH_HEAD_SEGMENTS
             ioScope.launch {
-                runCatching { cache.prefetch(path, offset = 0L, length = bytes) }
-                    .onFailure { AppLog.w(TAG, "打开即预取失败（不影响播放）：" + path, it) }
+                runCatching { cache.prefetch(path, offset = 0L, length = headBytes) }
+                    .onFailure { AppLog.w(TAG, "打开即预取（首段）失败，不影响播放：" + path, it) }
+            }
+            ioScope.launch {
+                // 尾段：文件大小未知（stat 失败）时跳过，不要瞎猜偏移把请求打偏
+                val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return@launch
+                // 尾段偏移由纯函数算（有单测）：文件太小时返回 null ⇒ 不预取
+                val tail = PrefetchTargets.tailOffset(size, segment, headBytes) ?: return@launch
+                runCatching { cache.prefetch(path, offset = tail, length = segment) }
+                    .onFailure { AppLog.w(TAG, "打开即预取（尾段）失败，不影响播放：" + path, it) }
             }
         }
 
