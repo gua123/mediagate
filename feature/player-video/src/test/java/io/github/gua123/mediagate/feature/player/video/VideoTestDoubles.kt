@@ -472,7 +472,7 @@ internal class FakeVideoPlayerEnvironment(
         return tsIndexInfo
     }
 
-    override suspend fun prefetchSeek(path: String, positionMs: Long) {
+    override suspend fun prefetchSeek(path: String, positionMs: Long, durationMs: Long) {
         prefetchCalls += path to positionMs
     }
 }

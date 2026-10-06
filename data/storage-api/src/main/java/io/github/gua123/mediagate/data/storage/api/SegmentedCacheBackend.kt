@@ -166,6 +166,13 @@ class SegmentedCacheBackend(
      *
      * @param offset 起始字节；调用方通常用 TS 索引算出的关键帧偏移。
      */
+    /**
+     * 文件大小（给"预取尾段/按比例估算落点"用；走 [knownStamp] 的缓存，不额外发请求）。
+     *
+     * 拿不到（协议不支持 / stat 失败）返回 null——调用方据此**跳过**预取，别瞎猜偏移。
+     */
+    suspend fun knownSizeOf(path: String): Long? = knownStamp(path)?.size?.takeIf { it > 0L }
+
     suspend fun prefetch(path: String, offset: Long, length: Long = segmentBytes) {
         val start = offset.coerceAtLeast(0L)
         val end = start + length.coerceAtLeast(1L)
