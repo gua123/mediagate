@@ -40,6 +40,13 @@ enum class DragMode {
 object PlayerGestureMath {
 
     /**
+     * 竖直手势走完整个量程所需的屏高比例（**2026-10-03 用户要求"一次性从 100 到 0"**）。
+     *
+     * 0.35 ⇒ 滑过约 1/3 个屏幕高度就能从最大拉到最小；再小会难以微调，再大又会觉得"滑不动"。
+     */
+    const val FULL_RANGE_FRACTION: Float = 0.35f
+
+    /**
      * **按主要方向判定手势**（2026-10-03 用户要求：「全屏幕部分都可以左右滑动调整进度
      * 而不是只有中间三分之一才可以」）。
      *
@@ -90,11 +97,23 @@ object PlayerGestureMath {
      * @param deltaPx 累计竖直位移（正数向下）。
      * @param height 手势区高度（像素）；<=0 时原样返回 [start]。
      */
-    fun applyVerticalDrag(start: Float, deltaPx: Float, height: Int, min: Float, max: Float): Float {
+    fun applyVerticalDrag(
+        start: Float,
+        deltaPx: Float,
+        height: Int,
+        min: Float,
+        max: Float,
+        /** 走完整个量程需要滑过屏高的多少倍；越小越灵敏（默认 [FULL_RANGE_FRACTION]）。 */
+        fullRangeFraction: Float = FULL_RANGE_FRACTION,
+    ): Float {
         if (height <= 0) return start.coerceIn(min, max)
         if (deltaPx.isNaN()) return start.coerceIn(min, max)
         val span = max - min
-        val next = start - deltaPx / height.toFloat() * span
+        // **2026-10-03 用户反馈**：「调整亮度和声音，只能一次性调整很小，可以更改为一次性从 100 到 0 吗？」
+        // ⇒ 原来"整屏高＝全量程"，滑一点点只动百分之几；现在把有效行程压到屏高的 [FULL_RANGE_FRACTION]，
+        // 一次短促的上下滑就能从 100 拉到 0（仍旧夹在 min..max，不会越界）。
+        val travelPx = (height * fullRangeFraction.coerceIn(0.05f, 1f)).coerceAtLeast(1f)
+        val next = start - deltaPx / travelPx * span
         return next.coerceIn(min, max)
     }
 
