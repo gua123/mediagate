@@ -106,6 +106,8 @@ dependencies {
     implementation(project(":data:storage-ftp"))
 
     implementation(project(":media:engine"))
+    // 自研单内核（native）：先只把 .so 打进包并能在诊断里自述，播放逻辑随后长出来
+    implementation(project(":media:engine-native"))
     implementation(project(":media:proxy"))
     implementation(project(":media:playback"))
     // M2-B：:app 是组合根，直接用 ExoPlayerEngine 的构造签名（DataSource.Factory 来自 media3-datasource，
