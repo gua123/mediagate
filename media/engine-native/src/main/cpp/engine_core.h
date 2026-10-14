@@ -21,6 +21,9 @@ struct EngineInfo {
 
 EngineInfo engineInfo();
 
+/** 自研 FFmpeg 的版本串；未链接时返回中文说明。 */
+std::string ffmpegVersion();
+
 }  // namespace mediagate
 
 #endif  // MEDIAGATE_ENGINE_CORE_H

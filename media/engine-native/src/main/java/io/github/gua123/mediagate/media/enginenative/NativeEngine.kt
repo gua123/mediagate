@@ -48,7 +48,7 @@ object NativeEngine {
         val failure = loadFailure
         if (failure != null) return "自研引擎不可用（native 库加载失败：$failure）"
         val n = name() ?: return "自研引擎不可用（native 调用失败）"
-        return "$n ${version() ?: "?"}（内部解码路径：${decodePaths() ?: "?"}）"
+        return "$n ${version() ?: "?"}（FFmpeg ${ffmpegVersion() ?: "?"}；内部解码路径：${decodePaths() ?: "?"}）"
     }
 
     private inline fun safe(block: () -> String): String? = try {
@@ -63,4 +63,49 @@ object NativeEngine {
     private external fun nativeVersion(): String
 
     private external fun nativeDecodePaths(): String
+    // ---- 渲染目标（M2：Kotlin 的 Surface → native 直接画） ----
+
+    /**
+     * 绑定渲染目标；传 null 解绑。
+     *
+     * 传的是 **Surface 句柄**（不是像素），之后所有帧都在 native 侧直接写——
+     * 这是"JNI 边界要粗"的具体体现。
+     */
+    fun setSurface(surface: android.view.Surface?) {
+        if (!isAvailable) return
+        try {
+            nativeSetSurface(surface)
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "绑定 Surface 失败", t)
+        }
+    }
+
+    /** 当前是否已绑定可画的 Surface。 */
+    fun hasSurface(): Boolean = safeBool { nativeHasSurface() }
+
+    /** 画一帧测试图案（M2 自检：能看到渐变色 + 一条移动的白线就说明链路通了）。 */
+    fun drawTestPattern(frameIndex: Int): Boolean = safeBool { nativeDrawTestPattern(frameIndex) }
+
+    /** 清屏（黑屏）。 */
+    fun clearSurface(argb: Int = 0xFF000000.toInt()): Boolean = safeBool { nativeClearSurface(argb) }
+
+    private inline fun safeBool(block: () -> Boolean): Boolean = try {
+        block()
+    } catch (t: Throwable) {
+        AppLog.w(TAG, "自研引擎 native 调用失败", t)
+        false
+    }
+
+    private external fun nativeSetSurface(surface: android.view.Surface?)
+
+    private external fun nativeHasSurface(): Boolean
+
+    private external fun nativeDrawTestPattern(frameIndex: Int): Boolean
+
+    private external fun nativeClearSurface(argb: Int): Boolean
+
+    /** 自研 FFmpeg 的版本串（"未链接 FFmpeg" 表示引擎还没有解码能力）。 */
+    fun ffmpegVersion(): String? = safe { nativeFfmpegVersion() }
+
+    private external fun nativeFfmpegVersion(): String
 }

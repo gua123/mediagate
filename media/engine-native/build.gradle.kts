@@ -58,6 +58,21 @@ kotlin {
     }
 }
 
+/**
+ * **必须**把自研 FFmpeg 的 .so 一起打进 APK**：CMake 里声明的是 IMPORTED 库，只负责链接，
+ * AGP 不会自动把它收进包 ⇒ 不显式加这一行，运行时就是 UnsatisfiedLinkError。
+ * 带 -mg 后缀是为了与 ffmpeg-kit 的 libav*.so 区分（过渡期两者并存）。
+ * AGP 9 用 androidComponents 的静态源目录 API（老的 sourceSets["main"].jniLibs 会类型转换失败）。
+ */
+androidComponents {
+    onVariants { variant ->
+        variant.sources.jniLibs?.addStaticSourceDirectory(
+            // 目录下必须有按 ABI 命名的子目录（arm64-v8a/），由 scripts/build-ffmpeg-android.sh 同步
+            "${rootProject.projectDir}/.toolchain/ffmpeg-jni",
+        )
+    }
+}
+
 dependencies {
     implementation(project(":core:common"))
     testImplementation(libs.junit)
