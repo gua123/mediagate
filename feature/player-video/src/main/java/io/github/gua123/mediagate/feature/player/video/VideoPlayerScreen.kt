@@ -86,6 +86,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -265,12 +266,15 @@ fun VideoPlayerScreen(
         val zoneHeight = remember { FloatArray(1) }
         val startValue = remember { FloatArray(1) }
         val verticalDrag = remember { FloatArray(1) }
+        // 手势处理器用 pointerInput(Unit) 注册（见下），所以它拿到的是**首次组合时**的 state 快照；
+        // 这里用 rememberUpdatedState 保证读到的永远是最新值（亮度/音量会边拖边变）。
+        val latestState by rememberUpdatedState(state)
         val onVerticalStart = { zone: PlayerGestureZone ->
             verticalDrag[0] = 0f
             viewModel.beginVerticalGesture(zone)
             startValue[0] = when (zone) {
-                PlayerGestureZone.VOLUME -> state.volume
-                else -> if (state.brightness < 0f) 0.5f else state.brightness
+                PlayerGestureZone.VOLUME -> latestState.volume
+                else -> if (latestState.brightness < 0f) 0.5f else latestState.brightness
             }
         }
         val onVerticalDrag = { zone: PlayerGestureZone, delta: Float ->
@@ -298,7 +302,11 @@ fun VideoPlayerScreen(
                 // **一个手势处理器搞定三件事**（2026-10-03 用户要求：「全屏幕部分都可以左右滑动
                 // 调整进度而不是只有中间三分之一才可以」）：先按主要方向判定——
                 // 横向占优＝调进度（全屏任意位置）；纵向占优才看起始位置：左＝亮度、右＝音量、中间不做事。
-                .pointerInput(state.durationMs, state.volume, state.brightness) {
+                // ⚠️ key 必须是 Unit：**拖动过程中亮度/音量一直在变**，若把它们当 key，pointerInput 会在
+                // 手势中途被取消重建 ⇒ 收尾的 commitVerticalGesture() 永远不会执行 ⇒ HUD 永久留在屏幕上
+                //（**2026-10-03 真机反馈「调整亮度和音量时，屏幕中间的提示会一直存在」的真因**）。
+                // 需要最新状态时用 rememberUpdatedState 取，而不是把值当 key。
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val startX = down.position.x
@@ -350,10 +358,19 @@ fun VideoPlayerScreen(
                                 else -> Unit
                             }
                         }
-                        when (mode) {
-                            DragMode.SEEK -> viewModel.commitSeekGesture()
-                            DragMode.BRIGHTNESS, DragMode.VOLUME -> viewModel.commitVerticalGesture()
-                            else -> Unit
+                        // 收尾：正常抬手走这里；**手势被取消（协程撤销/事件被上层抢走）时 finally 兜底**，
+                        // 否则 HUD 会一直挂在中屏（2026-10-03 修的那条真机反馈）。commit 是幂等的
+                        //（第二次调用时 verticalZone 已为 null，直接返回），重复调用无害。
+                        try {
+                            when (mode) {
+                                DragMode.SEEK -> viewModel.commitSeekGesture()
+                                DragMode.BRIGHTNESS, DragMode.VOLUME -> viewModel.commitVerticalGesture()
+                                else -> Unit
+                            }
+                        } finally {
+                            if (mode == DragMode.BRIGHTNESS || mode == DragMode.VOLUME) {
+                                viewModel.commitVerticalGesture()
+                            }
                         }
                     }
                 },

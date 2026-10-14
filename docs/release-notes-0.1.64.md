@@ -1,0 +1,21 @@
+## mediagate 0.1.64 —— 修「调亮度/音量时中间提示不消失」
+
+### 现象与真因
+
+调一次亮度或音量后，画面中央的「亮度 40%」「音量 180%」会**一直挂着不消失**。
+
+真因是**手势处理器被自己的状态更新反复重启**：那段手势的 `pointerInput` 把 `state.volume / state.brightness`
+当成了 key，而拖动过程中这两个值**一直在变** ⇒ Compose 每次都把整个手势协程取消重建 ⇒
+**收尾那次"提交手势"（清掉提示）永远不会执行**，于是提示挂住。
+
+### 修法
+
+1. `pointerInput` 改成 **`pointerInput(Unit)`**（不再以会变的状态为 key），需要最新值时用 `rememberUpdatedState` 取；
+2. 收尾放到 **`try / finally`** 里——手势被取消（协程撤销、事件被上层抢走）时也会清掉提示；
+3. 新增**源码级护栏**（这类 bug 单测抓不到，只能扫源码）：
+   禁止手势的 `pointerInput` 以 `state.xxx` 为 key；并且**护栏自己也被测试**——
+   拿修之前那一行真实坏代码验证"它必须报错"，避免护栏变成摆设。
+
+### 装法
+
+https://github.com/gua123/mediagate/releases/download/v0.1.64/mediagate-0.1.64.apk
