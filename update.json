@@ -1,8 +1,8 @@
 {
-  "versionCode": 64,
-  "versionName": "0.1.63",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.63/mediagate-0.1.63.apk",
-  "sizeBytes": 70448139,
-  "sha256": "6e3f561868bde324a476c37b3ce9b0428512ac8c81fc8cb7a7664e9c28cfe018",
-  "notes": "## mediagate 0.1.63 —— 首次打开更快：预取\"真正要读的地方\"\n\n### 上次为什么没解决\n\n0.1.53 的\"打开即预取\"**只抓了文件开头两段**。但很多视频（尤其非 faststart 的 MP4）把**索引 moov 放在文件末尾**——播放器一打开就得先读最后那一段才能算出时长与关键帧，所以\"开头预取\"对它一点帮助都没有，你还是得等。\n\n另一个漏掉的地方：**续播**。你上次看到 40 分钟，这次点开播放器会跳到 40 分钟处读数据，而预取的是开头，要等的那一段仍要现拉。\n\n### 这一版三处改进\n\n1. **同时抓两头**：首段（起播数据）+ **尾段**（moov / 索引用），两个请求并行，不阻塞起播；\n2. **续播 / 拖拽落点也预取**：没有 TS 索引的普通视频用「字节偏移 ≈ 位置 / 时长 × 文件大小」估算（码率基本恒定，够用），把\"跳过去要读的那一段\"提前拉下来；\n3. **宁可不动也不瞎猜**：文件大小或时长拿不到时**直接跳过**预取（不会把请求打到错误的偏移上）。\n\n换算逻辑抽成了带单测的纯函数（PrefetchTargets.tailOffset / offsetForPosition）。\n\n### 如果还是很慢，帮我确认两件事\n\n- 这个文件是不是 **.ts**？（TS 会先扫描一段做索引，那是另一条路径——若是它，我下一步就优化扫描策略）\n- 是**局域网**还是**公网**？公网约 600 ms 的往返延迟下，首段的等待主要来自延迟而不是带宽。\n\n### 装法\n\nhttps://github.com/gua123/mediagate/releases/download/v0.1.63/mediagate-0.1.63.apk"
+  "versionCode": 65,
+  "versionName": "0.1.64",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.64/mediagate-0.1.64.apk",
+  "sizeBytes": 70448124,
+  "sha256": "6241c1d3a5001254cdb548aa797073ca52bf417424493aa1bc9e3e38a7fb9f08",
+  "notes": "## mediagate 0.1.64 —— 修「调亮度/音量时中间提示不消失」\n\n### 现象与真因\n\n调一次亮度或音量后，画面中央的「亮度 40%」「音量 180%」会**一直挂着不消失**。\n\n真因是**手势处理器被自己的状态更新反复重启**：那段手势的 `pointerInput` 把 `state.volume / state.brightness`\n当成了 key，而拖动过程中这两个值**一直在变** ⇒ Compose 每次都把整个手势协程取消重建 ⇒\n**收尾那次\"提交手势\"（清掉提示）永远不会执行**，于是提示挂住。\n\n### 修法\n\n1. `pointerInput` 改成 **`pointerInput(Unit)`**（不再以会变的状态为 key），需要最新值时用 `rememberUpdatedState` 取；\n2. 收尾放到 **`try / finally`** 里——手势被取消（协程撤销、事件被上层抢走）时也会清掉提示；\n3. 新增**源码级护栏**（这类 bug 单测抓不到，只能扫源码）：\n   禁止手势的 `pointerInput` 以 `state.xxx` 为 key；并且**护栏自己也被测试**——\n   拿修之前那一行真实坏代码验证\"它必须报错\"，避免护栏变成摆设。\n\n### 装法\n\nhttps://github.com/gua123/mediagate/releases/download/v0.1.64/mediagate-0.1.64.apk"
 }
