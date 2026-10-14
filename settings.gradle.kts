@@ -37,9 +37,11 @@ include(
     ":data:storage-ftp",
 )
 
-// 媒体层：双播放内核、回环代理、抽帧、TS 索引、FFmpeg、ASR、字幕
+// 媒体层：播放内核（历史双内核 + **自研单内核**）、回环代理、抽帧、TS 索引、FFmpeg、字幕
 include(
     ":media:engine",
+    // 自研视频播放引擎的 native 内核（**2026-10-06 用户拍板：视频引擎只采用一套，不要来回切换**）
+    ":media:engine-native",
     ":media:proxy",
     ":media:playback",
     ":media:thumbnail",
