@@ -21,3 +21,6 @@ captures/
 # 交付副本（APK 等构建产物）
 dist/
 
+
+# AI 助手协作数据（AgentTeams 团队日志/看板，不应入库）
+.agent-teams/
