@@ -311,6 +311,10 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                 }
 
                 composable(route = BrowserRoutes.ROUTE, arguments = BrowserRoutes.arguments) { entry ->
+                    // **预约缓存**（2026-10-15 用户要求：「增加手动批量多个文件的缓存方式，
+                    // 可以让我不打开对应文件夹就可以缓存视频」）：长按一行 →
+                    // 文件＝缓存这个视频；文件夹＝递归统计里面的视频 → 确认后加入队列
+                    var cachePick by remember { mutableStateOf<CachePickUi?>(null) }
                     BrowserScreen(
                         initialPath = BrowserRoutes.pathOf(entry.arguments?.getString(BrowserRoutes.ARG_PATH)),
                         initialKind = BrowserRoutes.kindOf(entry.arguments?.getString(BrowserRoutes.ARG_KIND)),
@@ -347,7 +351,33 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                             lastBrowsedPath = path
                             container.rememberLastBrowsed(path)
                         },
+                        onLongPressEntry = { longPressed ->
+                            val label = longPressed.name
+                            cachePick = CachePickUi.Scanning(label)
+                            scope.launch {
+                                val result = runCatching {
+                                    container.collectCacheTargets(longPressed.path, longPressed.isDirectory)
+                                }
+                                cachePick = result.fold(
+                                    onSuccess = { CachePickUi.Ready(label, it) },
+                                    onFailure = { CachePickUi.Failed(it.message ?: "统计失败") },
+                                )
+                            }
+                        },
                     )
+                    cachePick?.let { pick ->
+                        CacheEnqueueDialog(
+                            state = pick,
+                            onConfirm = { picked ->
+                                container.enqueueCache(picked.entries)
+                                cachePick = null
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.cache_pick_enqueued))
+                                }
+                            },
+                            onDismiss = { cachePick = null },
+                        )
+                    }
                 }
 
                 // 图片查看器（M1-F，R1）：返回键由页面 BackHandler 回调到这里，回到原目录
@@ -391,7 +421,12 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                         mutableStateOf(emptyList<io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend.CachedFileEntry>())
                     }
                     val tuningNow by container.networkTuning.tuning.collectAsStateWithLifecycle()
+                    val queueState by container.cacheQueue.state.collectAsStateWithLifecycle()
                     LaunchedEffect(Unit) { cacheEntries = container.cachedFileEntries() }
+                    // 队列有进展就刷新明细（「哪些缓存过」要跟着长）
+                    LaunchedEffect(queueState.done, queueState.pending) {
+                        cacheEntries = container.cachedFileEntries()
+                    }
                     CacheDetailScreen(
                         entries = cacheEntries,
                         cacheLimitBytes = tuningNow.maxBytes,
@@ -408,6 +443,27 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                             }
                         },
                         onBack = { navController.popBackStack() },
+                        // 队列（手动预约的批量缓存）：暂停/继续、逐条取消、清掉已结束；
+                        // 队列跑完或取消之后刷新一次列表（文件是边下边出现在明细里的）
+                        queue = queueState,
+                        onPauseQueue = { container.cacheQueue.pause() },
+                        onResumeQueue = { container.cacheQueue.resume() },
+                        onCancelTask = { path ->
+                            container.cacheQueue.cancel(path)
+                            scope.launch { cacheEntries = container.cachedFileEntries() }
+                        },
+                        onClearFinishedTasks = {
+                            container.cacheQueue.clearFinished()
+                            scope.launch { cacheEntries = container.cachedFileEntries() }
+                        },
+                        onUnpin = { entry ->
+                            entry.path?.let { path ->
+                                scope.launch {
+                                    container.setCachePinned(path, false)
+                                    cacheEntries = container.cachedFileEntries()
+                                }
+                            }
+                        },
                     )
                 }
 

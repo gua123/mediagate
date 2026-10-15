@@ -264,6 +264,8 @@ class SegmentedCacheBackend(
         val bytes: Long,
         val segments: Int,
         val totalBytes: Long?,
+        /** 是不是**手动缓存**（固定，不被自动淘汰）；老缓存默认 false。 */
+        val pinned: Boolean = false,
     ) {
 
         /** 已缓存比例（0..1）；总大小未知时为 null（界面显示「—」而不是瞎算）。 */
@@ -299,6 +301,7 @@ class SegmentedCacheBackend(
                     bytes = segments.sumOf { it.length() },
                     segments = segments.size,
                     totalBytes = total,
+                    pinned = File(dir, PIN_STAMP).isFile,
                 )
             }.getOrNull()
         }.sortedByDescending { it.bytes }
@@ -517,31 +520,96 @@ class SegmentedCacheBackend(
     /** 段下载用的作用域（[readAheadScope] 没给就临时起一个，保证单飞 map 生命周期正确）。 */
     private fun scopeForDownload(): CoroutineScope = readAheadScope ?: fallbackScope
 
-    /** 超出上限就按最后访问时间淘汰（跳过正在被读的段由调用方保证：段是整段读入的）。 */
+    /**
+     * 把某个文件的缓存标记为**手动缓存**（用户"预约下载"的那些，2026-10-15 用户要求
+     * 「增加手动批量多个文件的缓存方式」）：**固定住，不被自动淘汰清掉**。
+     *
+     * 落一个空边车文件 `.pin` 在缓存目录里，所以重启后仍然有效。
+     */
+    suspend fun setPinned(path: String, pinned: Boolean): Unit = withContext(io) {
+        runCatching {
+            val dir = dirFor(path)
+            val file = File(dir, PIN_STAMP)
+            if (pinned) {
+                dir.mkdirs()
+                if (!file.isFile) file.writeText(System.currentTimeMillis().toString())
+            } else {
+                file.delete()
+            }
+        }
+        Unit
+    }
+
+    /** 单文件已缓存字节（手动缓存的进度用；只读一个目录，不扫描整个缓存）。 */
+    suspend fun cachedBytesOf(path: String): Long = withContext(io) {
+        val dir = dirFor(path)
+        dir.listFiles()?.filter { it.isFile && it.name.endsWith(SEGMENT_SUFFIX) }?.sumOf { it.length() } ?: 0L
+    }
+
+    /**
+     * **严格下载一段**（手动缓存队列用，2026-10-15）：与 [prefetch] 的区别是**失败会抛异常**——
+     * 队列要把"这一段下不来"如实记进任务状态，而不是像顺手预取那样只记日志就算了。
+     */
+    suspend fun downloadSegmentStrict(path: String, offset: Long, length: Long) {
+        val start = offset.coerceAtLeast(0L)
+        val end = start + length.coerceAtLeast(1L)
+        var index = start / segmentBytes
+        val lastIndex = (end - 1L) / segmentBytes
+        while (index <= lastIndex) {
+            ensureSegment(path, index)
+            index++
+        }
+    }
+
+    /** 这个文件的缓存是不是"手动缓存的"（固定，不参与自动淘汰）。 */
+    suspend fun isPinned(path: String): Boolean = withContext(io) {
+        File(dirFor(path), PIN_STAMP).isFile
+    }
+
+    /** 所有固定目录的绝对路径（淘汰时按目录跳过硬保护）。 */
+    private fun pinnedDirs(): Set<String> =
+        rootDir.listFiles()
+            ?.filter { it.isDirectory && File(it, PIN_STAMP).isFile }
+            ?.map { it.absolutePath }
+            ?.toSet()
+            .orEmpty()
+
+    /**
+     * 超出上限就按最后访问时间淘汰（跳过正在被读的段由调用方保证：段是整段读入的）。
+     *
+     * 三轮（2026-10-15 起多了"手动缓存"这一档）：
+     * ① 先淘汰「既不固定、也不是正在读」的；
+     * ② 再淘汰「正在读的那个」（缓存必须有界，否则会吃满用户存储），**但固定的仍然不碰**；
+     * ③ 如果只剩固定缓存还是超上限，**就不淘汰它们**，只记日志——固定的东西被悄悄清掉比"占空间"更糟
+     *   （缓存明细页会提示"固定的缓存不受自动清理"，用户可以自己取消固定或调大上限）。
+     */
     private suspend fun evictIfNeeded() {
         val files = segmentFiles().sortedBy { it.lastModified() }
         var total = files.sumOf { it.length() }
         if (total <= maxBytes) return
+        val pinned = pinnedDirs()
         // **优先保住"当前正在读的那个文件"**（2026-10-03 用户要求「保留单文件缓存，
         // 下次加载时可快速打开」）：第一轮只淘汰别的文件，这个文件的段留着，
         // 于是"退出去再进来"直接命中本地、秒开。
         val keepDir = activePath?.let { dirFor(it).absolutePath }
-        total = evictPass(files, total, skipDir = keepDir)
-        // 第二轮**不再保护**：如果光淘汰别的文件还是超上限（比如就一个超大文件在放），
-        // 那就连它最旧的段一起淘汰——缓存必须有界，否则会吃满用户存储。
-        if (total > maxBytes) evictPass(files, total, skipDir = null)
+        total = evictPass(files, total, skipDirs = pinned + listOfNotNull(keepDir))
+        if (total > maxBytes) total = evictPass(files, total, skipDirs = pinned)
+        if (total > maxBytes) {
+            AppLog.w(TAG, "缓存超出上限，但剩下的都是手动缓存（固定）：" + total + " / " + maxBytes)
+        }
     }
 
     /**
      * 按 LRU 淘汰一轮，返回剩余总字节数。
      *
-     * @param skipDir 该目录下的段本轮跳过；传 null 表示不跳过任何目录。
+     * @param skipDirs 这些目录（绝对路径）下的段本轮跳过。
      */
-    private fun evictPass(files: List<File>, startedTotal: Long, skipDir: String?): Long {
+    private fun evictPass(files: List<File>, startedTotal: Long, skipDirs: Set<String>): Long {
         var total = startedTotal
         for (file in files) {
             if (total <= maxBytes) break
-            if (skipDir != null && file.parentFile?.absolutePath == skipDir) continue
+            val dir = file.parentFile?.absolutePath
+            if (dir != null && dir in skipDirs) continue
             val length = file.length()
             if (file.delete()) total -= length
         }
@@ -632,6 +700,9 @@ class SegmentedCacheBackend(
 
         /** 记录原始路径的边车（缓存明细要显示文件名；没有它的老缓存显示「名称未知」）。 */
         private const val PATH_STAMP = ".path"
+
+        /** 「手动缓存」的固定标记边车：存在即固定，自动淘汰不碰它。 */
+        private const val PIN_STAMP = ".pin"
 
         /** 默认上限：1 GB（手机上比 plan 里的 4 GB 保守，避免挤爆缓存分区）。 */
         const val DEFAULT_MAX_BYTES: Long = 1024L * 1024 * 1024
