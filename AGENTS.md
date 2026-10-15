@@ -27,6 +27,9 @@
 - 系统：minSdk 33（只保澎湃 OS）/ targetSdk 36 / **compileSdk 37.2**（AGP 9 的 `compileSdk`+`compileSdkMinor`；2026 年的 androidx 强制要求 ≥37）；界面简体中文单语。
 - 构建口径：**AGP 9 内置 Kotlin，禁止再声明 `org.jetbrains.kotlin.android`**（会直接构建失败）；Compose 用 `org.jetbrains.kotlin.plugin.compose`。
 - 播放：Media3 ExoPlayer 1.11.1（默认，硬解优先）＋ LibVLC 3.7.6（兜底，可强制软解）；统一 `PlayerEngine` 抽象，LibVLC 走本机回环 HTTP 代理复用同一数据层。
+  ⚠️ **这条是过渡期现状，不是终态**：2026-10-06 用户拍板「**视频引擎只采用一套，不要来回切换，自研一套视频播放引擎，尽可能适合全部视频文件类型**」⇒
+  `:media/engine-native`（C++17 + 自研 FFmpeg + AAudio）逐里程碑接管：M1 骨架 → M2 出画面 → **M3 连续播放（视频/音频+同步都已跑通）** → M4 接管播放页 → M5 覆盖打满后**整条删掉 Media3 与 LibVLC**。
+  进度、设计与踩坑见 `docs/方案-播放引擎重写.md` §9。
 - 数据层：统一 `StorageBackend` → `RandomAccessSource`；Media3 `BackendDataSource` 实现远端拖拽 seek；.ts 自研索引缓存（时间 ↔ 字节偏移）让大 TS 拖拽毫秒级。
 - 字幕：外挂 srt/vtt/ass（单轨）+ whisper.cpp 本地 CPU 音转字幕（默认 small 模型，App 内下载）；**一次只产出一个字幕文件**（默认 SRT，与视频同名同目录）。
 - 批量字幕任务中心（R19）：多选/整文件夹、队列、进度、后台生成、播放时自动让路。
@@ -264,3 +267,11 @@
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
+- **自研引擎（2026-10-06 起，当前最大在办事项）**：M1 骨架 ✅ → M2 出画面 ✅ →
+  **M3 连续播放 ✅（视频帧循环 `a3dc53e` + 音频与音画同步）** → M4 接进 `PlayerEngine` 契约（播放页真正用它）→ M5 覆盖打满。
+  · 纯逻辑（pts 换算 / 时间轴归一 / 同步判据 / 音频时钟 / PCM 环形缓冲）抽在 `av_sync.h`，
+  用 `bash scripts/test-engine-native-host.sh` 在开发机直跑（93 项断言，含真并发用例），并被 `gradlew test` 自动带上；
+  · ⚠️ 改了 `media/engine-native/src/{main,test}/cpp` 下的文件就会触发这些测试（已在 build.gradle.kts 里声明成 Test 输入）；
+  · **还没做的**：接 `RandomAccessSource`（自定义 AVIO 回调进 Kotlin 数据层 ⇒ 现在只能播本地路径，SAF/远端都还不行）、
+  音量/字幕/画中画/后台播放、以及**切播放页**；
+  · **至今没有 UI 入口**，所以也**没有发版**（按发版纪律攒着）；全量单测 **1527 例 0 失败（31 模块）**。

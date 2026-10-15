@@ -146,7 +146,7 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeRenderFirs
     return toJString(env, "ok|" + frame.codec + "|" + std::to_string(frame.width) + "|" +
                      std::to_string(frame.height) + "|" + std::to_string(frame.decodeMs));
 }
-/** 打开文件并播放（M3：连续视频播放；音频与同步是下一步）。返回 "" 表示已开始。 */
+/** 打开文件并播放（M3：视频 + 音频 + 音画同步）。返回 "" 表示已开始。 */
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayFile(
         JNIEnv* env, jclass, jstring path) {
@@ -187,7 +187,13 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSeekTo(
     return nativePlayer().seekTo(static_cast<int64_t>(positionMs)) ? JNI_TRUE : JNI_FALSE;
 }
 
-/** 播放器自述："状态|位置ms|时长ms|已显示帧数|宽x高|解码器"，出错时返回 "错误：…"。 */
+/**
+ * 播放器自述（一条竖线分隔的状态串，Kotlin 侧 NativePlayerStatus 负责解析）：
+ *
+ *   状态|位置ms|时长ms|已显示帧数|丢帧数|宽x高|视频解码器|音频解码器|采样率|声道|音频欠载|音画偏差ms|音频输出说明
+ *
+ * 出错时返回 "错误：…"。字段只增不改序——M4 接进 PlayerEngine 契约之后界面也要读它。
+ */
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStatus(JNIEnv* env, jclass) {
     const mediagate::PlayerStatus status = nativePlayer().status();
@@ -202,6 +208,9 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStat
     }
     return toJString(env, std::string(stateName) + "|" + std::to_string(status.positionMs) + "|" +
                      std::to_string(status.durationMs) + "|" + std::to_string(status.frames) + "|" +
-                     std::to_string(status.videoWidth) + "x" + std::to_string(status.videoHeight) + "|" +
-                     status.codec);
+                     std::to_string(status.droppedFrames) + "|" + std::to_string(status.videoWidth) + "x" +
+                     std::to_string(status.videoHeight) + "|" + status.codec + "|" + status.audioCodec + "|" +
+                     std::to_string(status.sampleRate) + "|" + std::to_string(status.channels) + "|" +
+                     std::to_string(status.audioUnderruns) + "|" + std::to_string(status.avOffsetMs) + "|" +
+                     status.audioError);
 }

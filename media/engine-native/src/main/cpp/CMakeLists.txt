@@ -12,16 +12,19 @@ add_library(mediagate_engine SHARED
         surface_renderer.cpp
         media_probe.cpp
         first_frame.cpp
-        native_player.cpp)
+        native_player.cpp
+        audio_output.cpp)
 
 # 16 KB 页对齐（Android 15+ 要求；历史上 19 个 .so 都做过这个核对）
 target_link_options(mediagate_engine PRIVATE "-Wl,-z,max-page-size=16384")
 
-# 目前只需要 log（后面接 FFmpeg / MediaCodec / GLES / AAudio 时在这里加）
+# 目前只需要 log / android / aaudio（后面接 MediaCodec / GLES 时在这里加）
 find_library(log-lib log)
 # android 库：ANativeWindow（渲染目标）与 __android_log_print
 find_library(android-lib android)
-target_link_libraries(mediagate_engine PRIVATE ${log-lib} ${android-lib})
+# AAudio：自研引擎的音频输出（M3 后半；只走 C API，不碰 Java 层）
+find_library(aaudio-lib aaudio)
+target_link_libraries(mediagate_engine PRIVATE ${log-lib} ${android-lib} ${aaudio-lib})
 # ---- 自研 FFmpeg（scripts/build-ffmpeg-android.sh 的产物）----
 # 头文件与 .so 必须同版本，所以只能用我们自己编的这套（ffmpeg-kit 的 AAR 不给头文件）。
 # 没编出来时**优雅降级**：引擎仍能构建，只是暂时没有解复用/解码能力。

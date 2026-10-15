@@ -7,6 +7,8 @@
 #include <string>
 #include <thread>
 
+#include "audio_output.h"
+
 namespace mediagate {
 
 /** 播放状态（给界面用的一档）。 */
@@ -23,21 +25,33 @@ struct PlayerStatus {
     PlayerState state = PlayerState::IDLE;
     int64_t positionMs = 0;
     int64_t durationMs = 0;
-    int64_t frames = 0;
+    int64_t frames = 0;         // 已送屏帧数
+    int64_t droppedFrames = 0;  // 因为迟到被丢掉的帧数（音画同步的代价）
     int videoWidth = 0;
     int videoHeight = 0;
-    std::string codec;
+    std::string codec;          // 视频解码器
+    std::string audioCodec;     // 音频解码器（没有音频流时为空）
+    int sampleRate = 0;         // 音频输出采样率（0＝没有音频）
+    int channels = 0;
+    uint64_t audioUnderruns = 0;
+    int64_t avOffsetMs = 0;     // 最近一帧的音画偏差（视频 pts − 主时钟）
+    std::string audioError;     // 音频输出不正常时的中文说明（空＝正常）
     std::string error;
 };
 
 /**
- * **自研引擎的播放核心（M3 第一步：连续视频播放）**。
+ * **自研引擎的播放核心**。
  *
- * 这一版只做视频：解复用 → 解码 → **按帧时间戳节流** → 送屏，支持 播放/暂停/继续/停止/seek。
- * 音频、音视频同步、以及接进 `PlayerEngine` 契约是接下来的事（所以现在还没有任何 UI 入口）。
+ * 一条工作线程跑完整的播放循环：解复用 → 视频解码 → **按音频时钟节流送屏**；
+ * 音频则解码 + 重采样成 48 kHz 双声道 float，写进 AAudio 输出（它自己有一秒的缓冲）。
  *
- * 线程模型：**一个工作线程**跑帧循环；外部只通过原子标志与它通信（play/pause/stop/seek 都是
- * "设一个意图就走"），避免在 UI 线程里做阻塞的 FFmpeg 调用。
+ * 设计要点：
+ *  - **音频做主轴**：视频等音频时钟走到自己的 pts 才送屏，迟到太多就丢帧
+ *    （丢帧比音画错位好看）。没有音频流时退化成"播放挂钟"当主轴。
+ *  - 线程模型：一个工作线程 + AAudio 自己的实时回调线程；外部只通过原子标志通信，
+ *    UI 线程永远不做阻塞的 FFmpeg / AAudio 调用。
+ *  - 暂停时音频设备一起停（时钟跟着冻结，继续播时不会追帧）。
+ *  - seek 会丢掉"已解码还没播出去"的音频，并把时间轴重新锚定到目标位置。
  */
 class NativePlayer {
 public:
@@ -53,7 +67,7 @@ public:
     /** 开始（或从暂停继续）播放。 */
     void play();
 
-    /** 暂停（画面停住，线程保留现场）。 */
+    /** 暂停（画面与声音都停住，线程保留现场）。 */
     void pause();
 
     /** 停止并关闭文件（线程退出，状态回 IDLE）。 */
@@ -72,10 +86,17 @@ private:
     mutable std::mutex mutex_;
     std::string path_;
     std::string codecName_;
+    std::string audioCodecName_;
+    std::string audioError_;
     std::string error_;
     int64_t durationMs_ = 0;
     int videoWidth_ = 0;
     int videoHeight_ = 0;
+    int sampleRate_ = 0;
+    int channels_ = 0;
+
+    /** 音频输出（AAudio）。打开失败时记录原因，视频照放。 */
+    AudioOutput audio_;
 
     std::atomic<int> state_{static_cast<int>(PlayerState::IDLE)};
     std::atomic<bool> running_{false};
@@ -84,6 +105,8 @@ private:
     std::atomic<int64_t> seekTargetMs_{0};
     std::atomic<int64_t> positionMs_{0};
     std::atomic<int64_t> frames_{0};
+    std::atomic<int64_t> droppedFrames_{0};
+    std::atomic<int64_t> avOffsetMs_{0};
     std::thread worker_;
 };
 
