@@ -58,6 +58,13 @@ fun DiagnosticsSection(
     lastExit: String? = null,
     /** 磁盘上的面包屑（旧 → 新）：原生崩溃时唯一能留下的"最后走到哪一步"。 */
     breadcrumbs: List<String> = emptyList(),
+    /**
+     * **自研引擎自检行**（2026-10-14 加）：引擎名 / 版本 / 内部 FFmpeg 版本 / 解码路径。
+     *
+     * 为什么要摆在诊断卡里：自研引擎是原生库，加载失败时 Java 侧只看到 `UnsatisfiedLinkError`——
+     * 把它自己的自述摆到屏幕上，用户在真机上一眼就能确认"引擎活着、FFmpeg 版本对得上"。
+     */
+    engineInfo: String? = null,
 ) {
     var showFull by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -89,6 +96,15 @@ fun DiagnosticsSection(
         ) {
             Text(stringResource(R.string.diagnostics_title), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.diagnostics_subtitle), style = MaterialTheme.typography.bodySmall)
+            // 自研引擎自检（原生库加载 + FFmpeg 版本）——真机上确认引擎是否活着
+            engineInfo?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             if (crashReport == null) {
                 Text(stringResource(R.string.diagnostics_no_crash), style = MaterialTheme.typography.bodySmall)

@@ -95,6 +95,7 @@ import io.github.gua123.mediagate.feature.update.UpdateViewModel
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerScreen
 import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
+import io.github.gua123.mediagate.media.enginenative.NativeEngine
 import kotlinx.coroutines.launch
 
 /**
@@ -659,6 +660,8 @@ private fun SettingsRoute(
                 reportCount = crashReportCount,
                 lastExit = lastExit,
                 breadcrumbs = breadcrumbs,
+                // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
+                engineInfo = NativeEngine.describe(),
                 onClear = {
                     container.clearCrashes()
                     container.clearBreadcrumbs()

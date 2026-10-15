@@ -6,6 +6,8 @@
 
 #include "engine_core.h"
 #include "surface_renderer.h"
+#include "first_frame.h"
+#include "media_probe.h"
 
 namespace {
 
@@ -18,6 +20,19 @@ mediagate::SurfaceRenderer& surfaceRenderer() {
     static mediagate::SurfaceRenderer renderer;
     return renderer;
 }
+
+}  // namespace
+
+namespace mediagate {
+
+/** 供 first_frame.cpp 借用（所有权仍在本文件）。 */
+SurfaceRenderer& globalSurfaceRenderer() {
+    return surfaceRenderer();
+}
+
+}  // namespace mediagate
+
+namespace {
 
 }  // namespace
 
@@ -78,4 +93,49 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeClearSurfa
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeFfmpegVersion(JNIEnv* env, jclass) {
     return toJString(env, mediagate::ffmpegVersion());
+}
+/**
+ * 探测一个媒体文件（M2）：返回"容器 / 时长 / 流列表 / 选中视频流"的可读文本。
+ *
+ * 返回字符串而不是结构体：JNI 边界要**粗**——这里只是一条诊断/展示信息，
+ * 真正的播放数据（帧、缓冲区）走的是 Surface 与 fd，不逐条跨语言。
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeProbeMedia(
+        JNIEnv* env, jclass, jstring path) {
+    if (path == nullptr) return toJString(env, "路径为空");
+    const char* raw = env->GetStringUTFChars(path, nullptr);
+    if (raw == nullptr) return toJString(env, "路径读取失败");
+    const std::string filePath(raw);
+    env->ReleaseStringUTFChars(path, raw);
+
+    const mediagate::ProbeResult probe = mediagate::probeMedia(filePath);
+    if (!probe.ok) return toJString(env, probe.error);
+
+    std::string text = "容器 " + probe.format + "；时长 " + std::to_string(probe.durationMs / 1000) +
+                       " 秒；码率 " + std::to_string(probe.bitRate / 1000) + " kbps；流 " +
+                       std::to_string(probe.streams.size()) + " 条";
+    for (const auto& stream : probe.streams) {
+        text += "\n  #" + std::to_string(stream.index) + " " + stream.kind + " " + stream.codec;
+        if (stream.width > 0) text += " " + std::to_string(stream.width) + "x" + std::to_string(stream.height);
+        if (stream.sampleRate > 0) text += " " + std::to_string(stream.sampleRate) + "Hz/" +
+                                        std::to_string(stream.channels) + "ch";
+    }
+    return toJString(env, text);
+}
+
+/** 解出并显示第一帧（M2 核心）。返回 "ok|codec|宽|高|耗时ms" 或中文错误原因。 */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeRenderFirstFrame(
+        JNIEnv* env, jclass, jstring path) {
+    if (path == nullptr) return toJString(env, "路径为空");
+    const char* raw = env->GetStringUTFChars(path, nullptr);
+    if (raw == nullptr) return toJString(env, "路径读取失败");
+    const std::string filePath(raw);
+    env->ReleaseStringUTFChars(path, raw);
+
+    const mediagate::FirstFrameResult frame = mediagate::renderFirstFrame(filePath);
+    if (!frame.ok) return toJString(env, frame.error);
+    return toJString(env, "ok|" + frame.codec + "|" + std::to_string(frame.width) + "|" +
+                     std::to_string(frame.height) + "|" + std::to_string(frame.decodeMs));
 }

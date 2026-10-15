@@ -104,6 +104,32 @@ object NativeEngine {
 
     private external fun nativeClearSurface(argb: Int): Boolean
 
+    // ---- M2：探测与首帧（真机自检入口，也供诊断卡展示） ----
+
+    /**
+     * 探测一个媒体文件：成功返回人话摘要（容器/时长/流列表），失败返回中文原因。
+     *
+     * 这条路径**真实调用 FFmpeg**（libavformat），是"引擎能不能用"的最小自检。
+     */
+    fun probeMedia(path: String): String {
+        if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
+        return safe { nativeProbeMedia(path) } ?: "探测失败（native 调用异常，详见日志）"
+    }
+
+    /**
+     * 解出并显示第一帧；成功返回 "ok|解码器|宽|高|耗时ms"，失败返回中文原因。
+     *
+     * **必须先 `setSurface(...)`**，否则会如实报"还没有绑定画面"。
+     */
+    fun renderFirstFrame(path: String): String {
+        if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
+        return safe { nativeRenderFirstFrame(path) } ?: "首帧渲染失败（native 调用异常，详见日志）"
+    }
+
+    private external fun nativeProbeMedia(path: String): String
+
+    private external fun nativeRenderFirstFrame(path: String): String
+
     /** 自研 FFmpeg 的版本串（"未链接 FFmpeg" 表示引擎还没有解码能力）。 */
     fun ffmpegVersion(): String? = safe { nativeFfmpegVersion() }
 

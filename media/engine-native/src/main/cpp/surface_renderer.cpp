@@ -48,6 +48,43 @@ void SurfaceRenderer::windowSize(int* width, int* height) const {
     if (height) *height = ANativeWindow_getHeight(window_);
 }
 
+bool SurfaceRenderer::blitRgba(const uint8_t* rgba, int width, int height) {
+    if (rgba == nullptr || width <= 0 || height <= 0) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (window_ == nullptr) return false;
+    ANativeWindow_Buffer buffer{};
+    if (ANativeWindow_lock(window_, &buffer, nullptr) != 0) {
+        logW("ANativeWindow_lock 失败（送帧）");
+        return false;
+    }
+    auto* pixels = static_cast<uint32_t*>(buffer.bits);
+    const int windowW = buffer.width;
+    const int windowH = buffer.height;
+    // 居中 + 等比（FIT）：先把整屏刷黑，再把画面贴到中间
+    const int count = buffer.stride * windowH;
+    for (int i = 0; i < count; ++i) pixels[i] = 0xFF000000u;
+    const int offsetX = (windowW - width) / 2;
+    const int offsetY = (windowH - height) / 2;
+    for (int y = 0; y < height; ++y) {
+        const int dstY = offsetY + y;
+        if (dstY < 0 || dstY >= windowH) continue;
+        uint32_t* dstRow = pixels + static_cast<size_t>(dstY) * buffer.stride;
+        const uint8_t* srcRow = rgba + static_cast<size_t>(y) * width * 4;
+        for (int x = 0; x < width; ++x) {
+            const int dstX = offsetX + x;
+            if (dstX < 0 || dstX >= windowW) continue;
+            const uint8_t r = srcRow[x * 4 + 0];
+            const uint8_t g = srcRow[x * 4 + 1];
+            const uint8_t b = srcRow[x * 4 + 2];
+            const uint8_t a = srcRow[x * 4 + 3];
+            dstRow[dstX] = (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(r) << 16) |
+                           (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
+        }
+    }
+    ANativeWindow_unlockAndPost(window_);
+    return true;
+}
+
 bool SurfaceRenderer::clear(uint32_t argb) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (window_ == nullptr) return false;

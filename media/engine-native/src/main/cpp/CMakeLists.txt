@@ -9,7 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(mediagate_engine SHARED
         engine_jni.cpp
         engine_core.cpp
-        surface_renderer.cpp)
+        surface_renderer.cpp
+        media_probe.cpp
+        first_frame.cpp)
 
 # 16 KB 页对齐（Android 15+ 要求；历史上 19 个 .so 都做过这个核对）
 target_link_options(mediagate_engine PRIVATE "-Wl,-z,max-page-size=16384")

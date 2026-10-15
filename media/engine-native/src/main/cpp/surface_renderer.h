@@ -43,6 +43,14 @@ public:
      */
     bool drawTestPattern(int frameIndex);
 
+    /**
+     * 把一帧 RGBA 像素送屏（居中等比缩放，四周留黑边——**不裁画面**，与项目口径一致）。
+     *
+     * @param rgba 紧凑排列的 RGBA8888 像素（宽×高×4 字节）。
+     * @return 成功 true；未绑定 Surface / 锁缓冲失败 / 尺寸非法返回 false（不抛异常）。
+     */
+    bool blitRgba(const uint8_t* rgba, int width, int height);
+
     /** 用纯色清屏（黑屏用）。 */
     bool clear(uint32_t argb);
 
