@@ -77,3 +77,15 @@ dependencies {
     implementation(project(":core:common"))
     testImplementation(libs.junit)
 }
+
+/**
+ * 源码级护栏与"宿主单测"会在**测试运行期**读这些文件（CMakeLists / C++ 源码 / 宿主测试源），
+ * 而它们不是 Kotlin 的编译输入 ⇒ 只改 C++ 不改 Kotlin 时，Gradle 会判定"测试是最新的"直接跳过，
+ * 护栏就白设了（本回合真踩到：把 aaudio 链接删掉，测试却仍然"绿的"）。
+ * 显式声明成输入之后，动 C++ 就会重跑测试。
+ */
+tasks.withType<Test>().configureEach {
+    inputs.files(fileTree("src/main/cpp"), fileTree("src/test/cpp"))
+        .withPropertyName("nativeSources")
+        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
+}

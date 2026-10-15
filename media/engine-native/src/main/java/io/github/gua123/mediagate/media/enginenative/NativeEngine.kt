@@ -130,12 +130,13 @@ object NativeEngine {
 
     private external fun nativeRenderFirstFrame(path: String): String
 
-    // ---- M3：连续视频播放（暂无音频/同步，也还没有 UI 入口） ----
+    // ---- M3：连续播放（画面 + 声音 + 音画同步；还没有 UI 入口） ----
 
     /**
      * 打开并开始播放（**需要先 [setSurface]**）。返回空串表示已开始，否则是中文原因。
      *
-     * 现在的自研引擎只播视频画面：音频、音视频同步、接进 `PlayerEngine` 契约是接下来的事。
+     * 音视频都在 native 侧：音频解码后重采样成 48 kHz 双声道 float 交给 AAudio，
+     * 视频按**音频时钟**节流送屏。接进 `PlayerEngine` 契约（＝播放页真的用它）是 M4 的事。
      */
     fun playFile(path: String): String {
         if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
@@ -159,7 +160,11 @@ object NativeEngine {
         false
     }
 
-    /** 播放器自述："状态|位置ms|时长ms|帧数|宽x高|解码器"。 */
+    /**
+     * 播放器自述（竖线分隔），解析用 [NativePlayerStatus.parse]：
+     *
+     *     状态|位置ms|时长ms|已显示帧数|丢帧数|宽x高|视频解码器|音频解码器|采样率|声道|音频欠载|音画偏差ms|音频输出说明
+     */
     fun playerStatus(): String = safe { nativePlayerStatus() } ?: "状态不可用"
 
     private external fun nativePlayFile(path: String): String
