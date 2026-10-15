@@ -325,7 +325,14 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                                     navController.navigate(AudioPlayerRoutes.route(clicked.path))
                                 }
 
-                                MediaKind.VIDEO -> navController.navigate(VideoPlayerRoutes.route(clicked.path))
+                                MediaKind.VIDEO -> {
+                                    // **点一下就预取**（2026-10-15 用户反馈「上 G 的视频第一次点还是要等挺久」）：
+                                    // 从"点下"到"播放页发出第一条 Range 请求"之间还有几百毫秒（导航 + 组合 + 建内核），
+                                    // 高延迟链路（公网 RTT ≈600 ms）上这几百毫秒够把一个往返发出去。
+                                    // 抓哪些区间由 PrefetchTargets.openPlan（纯函数、有单测）算，失败一律不影响播放。
+                                    container.warmUpForOpen(clicked.path)
+                                    navController.navigate(VideoPlayerRoutes.route(clicked.path))
+                                }
 
                                 else -> scope.launch { snackbarHostState.showSnackbar(unsupportedHint) }
                             }

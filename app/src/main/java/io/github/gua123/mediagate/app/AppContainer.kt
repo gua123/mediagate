@@ -236,6 +236,35 @@ class AppContainer(context: Context) :
      */
     val connectionsEnvironment: ConnectionsEnvironment = ConnectionsHost()
 
+    /**
+     * **点一下就预取**（2026-10-15 用户反馈「**针对上 G 大小的视频文件进行特殊缓存优化，现在文件第一次点还是会等待时间比较久**」）。
+     *
+     * 时机的价值：从"手指点下"到"播放页发出第一条 Range 请求"之间还有几百毫秒（导航 + 组合 + 建内核 + 起数据源），
+     * 高延迟链路上（实测公网 RTT ≈600 ms）这几百毫秒往往够把一个往返发出去。
+     *
+     * 抓什么由 `PrefetchTargets.openPlan`（**纯函数、有单测**）算：首段（容器头）＋尾段（moov / cues 常在末尾）
+     * ＋续播落点；**≥1 GiB 的大文件多抓两段开头**（大文件的索引与首个关键帧常常不在第一段里）。
+     * 几个区间**并发**发出：它们落在不同段上，段级单飞保证不与正在播的请求重复下载（"预取必须让路"仍是硬约束）。
+     */
+    fun warmUpForOpen(path: String, positionMs: Long = 0L, durationMs: Long = 0L) {
+        val cache = remoteCache ?: return
+        val segment = networkTuning.tuning.value.segmentBytes
+        ioScope.launch {
+            runCatching {
+                val size = cache.knownSizeOf(path)
+                val chunks = PrefetchTargets.openPlan(size, segment, positionMs, durationMs)
+                if (chunks.isEmpty()) return@runCatching
+                AppLog.i(TAG, "点按预取 " + chunks.size + " 段：" + path)
+                chunks.forEach { chunk ->
+                    launch {
+                        runCatching { cache.prefetch(path, chunk.offset, chunk.length) }
+                            .onFailure { AppLog.w(TAG, "点按预取失败（不影响播放）：" + path, it) }
+                    }
+                }
+            }.onFailure { AppLog.w(TAG, "点按预取准备失败（不影响播放）：" + path, it) }
+        }
+    }
+
     private inner class ConnectionsHost : ConnectionsEnvironment {
 
         override val database: MediaGateDatabase get() = this@AppContainer.database
@@ -825,21 +854,9 @@ class AppContainer(context: Context) :
         override fun prefetchHead(path: String) {
             // 顺手记下"最后一次播放"（这条路正是"这个文件已经被打开要播了"的唯一入口）
             rememberLastPlayed(path)
-            val cache = remoteCache ?: return
-            val segment = networkTuning.tuning.value.segmentBytes
-            val headBytes = segment * PREFETCH_HEAD_SEGMENTS
-            ioScope.launch {
-                runCatching { cache.prefetch(path, offset = 0L, length = headBytes) }
-                    .onFailure { AppLog.w(TAG, "打开即预取（首段）失败，不影响播放：" + path, it) }
-            }
-            ioScope.launch {
-                // 尾段：文件大小未知（stat 失败）时跳过，不要瞎猜偏移把请求打偏
-                val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return@launch
-                // 尾段偏移由纯函数算（有单测）：文件太小时返回 null ⇒ 不预取
-                val tail = PrefetchTargets.tailOffset(size, segment, headBytes) ?: return@launch
-                runCatching { cache.prefetch(path, offset = tail, length = segment) }
-                    .onFailure { AppLog.w(TAG, "打开即预取（尾段）失败，不影响播放：" + path, it) }
-            }
+            // 与"点按预取"同一套分级计划（2026-10-15 统一）：首段 / 尾段 / 续播落点，
+            // ≥1 GiB 的大文件多抓两段开头；区间并发发出、失败的只记日志
+            warmUpForOpen(path)
         }
 
 
