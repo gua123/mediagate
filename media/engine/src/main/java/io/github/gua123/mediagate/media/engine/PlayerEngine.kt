@@ -42,6 +42,14 @@ interface PlayerEngine {
     /** 当前播放源；未装载时为 null。 */
     val currentMedia: MediaSourceRef?
 
+    /**
+     * 本内核的能力（见 [EngineCapabilities]）。
+     *
+     * 默认全支持 —— 旧内核不需要声明；新内核（自研引擎）覆盖成**如实的子集**，
+     * 让上层能在切换前给用户一句中文说明，而不是切过去发现"点了没反应"。
+     */
+    val capabilities: EngineCapabilities get() = EngineCapabilities.ALL
+
     /** 装载媒体（不自动起播，按 plan 草案语义：setMedia → prepare → play）。 */
     fun setMedia(src: MediaSourceRef)
 

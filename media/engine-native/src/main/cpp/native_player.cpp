@@ -81,6 +81,7 @@ void NativePlayer::closeLocked() {
     durationMs_ = 0;
     videoWidth_ = 0;
     videoHeight_ = 0;
+    durationMsAtomic_.store(0);
     sampleRate_ = 0;
     channels_ = 0;
 }
@@ -149,6 +150,17 @@ bool NativePlayer::seekTo(int64_t positionMs) {
     seekTargetMs_.store(positionMs < 0 ? 0 : positionMs);
     hasSeek_.store(true);
     return true;
+}
+
+void NativePlayer::setScaleMode(int mode) {
+    if (mode < 0 || mode > 3) mode = 0;  // 不认识的一律按"适应屏幕"
+    scaleMode_.store(mode);
+}
+
+void NativePlayer::setVolume(float volume) {
+    if (std::isnan(volume) || volume < 0.0f) volume = 0.0f;
+    if (volume > 2.0f) volume = 2.0f;
+    volume_.store(volume);
 }
 
 PlayerStatus NativePlayer::status() const {
@@ -298,6 +310,17 @@ void NativePlayer::threadLoop() {
                                            audioFrame->nb_samples);
         if (outSamples <= 0) return;
 
+        // 音量：在写进缓冲之前按倍率缩一遍（>1 是软件增益，超 1.0 的样本会削波——如实说明，
+        // 不像 Media3 那边还能借系统 LoudnessEnhancer 补动态）
+        const float volume = volume_.load();
+        if (volume != 1.0f) {
+            const size_t samples = static_cast<size_t>(outSamples) * kAudioChannels;
+            for (size_t i = 0; i < samples; ++i) {
+                const float scaled = pcm[i] * volume;
+                pcm[i] = scaled > 1.0f ? 1.0f : (scaled < -1.0f ? -1.0f : scaled);
+            }
+        }
+
         size_t offset = 0;
         const size_t total = static_cast<size_t>(outSamples);
         while (offset < total && running_.load() && !paused_.load() && !hasSeek_.load()) {
@@ -374,9 +397,11 @@ void NativePlayer::threadLoop() {
         globalSurfaceRenderer().windowSize(&winW, &winH);
         if (srcW <= 0 || srcH <= 0 || winW <= 0 || winH <= 0) return;
 
-        const double scale = std::min(static_cast<double>(winW) / srcW, static_cast<double>(winH) / srcH);
-        const int dstW = std::max(1, static_cast<int>(srcW * scale));
-        const int dstH = std::max(1, static_cast<int>(srcH * scale));
+        // 缩放档位只决定"送屏缓冲算多大"：FIT 取小（留黑边）、CROP 取大（超出部分由送屏裁掉）、
+        // STRETCH 直接铺满、ORIGINAL 原样——四条路共用同一次送屏
+        int dstW = 0;
+        int dstH = 0;
+        scaleTarget(scaleMode_.load(), srcW, srcH, winW, winH, &dstW, &dstH);
         // 画面尺寸变了（转屏、进小窗）要重建缩放器，否则会按老尺寸缩放、比例变形
         if (sws == nullptr || swsSrcW != srcW || swsSrcH != srcH || swsDstW != dstW || swsDstH != dstH) {
             if (sws != nullptr) sws_freeContext(sws);
@@ -514,6 +539,7 @@ void NativePlayer::threadLoop() {
                               ? 0
                               : (duration - (startTime == AV_NOPTS_VALUE ? 0 : startTime)) / (AV_TIME_BASE / 1000);
         }
+        durationMsAtomic_.store(durationMs_);
 
         // 时间轴起点：优先用流的 start_time，没有就让第一帧兜底（TS 常常不从 0 开始）
         const int64_t videoStart = format->streams[videoIndex]->start_time;
@@ -587,6 +613,10 @@ void NativePlayer::threadLoop() {
                     wallBaseMediaMs = targetMs;
                     lastTickUs = 0;
                     positionMs_.store(targetMs);
+                    // 从"播完了"再拖回去：状态回到播放中
+                    if (state_.load() == static_cast<int>(PlayerState::ENDED)) {
+                        state_.store(static_cast<int>(PlayerState::PLAYING));
+                    }
                 }
             }
 
@@ -638,6 +668,10 @@ void NativePlayer::threadLoop() {
                     }
                     audio_.pause();
                     audioDrained = true;
+                }
+                // 播完了：状态置 ENDED（画面停在最后一帧），但线程继续跑着——上层 seek 之后还要接着播
+                if (state_.load() != static_cast<int>(PlayerState::ENDED)) {
+                    state_.store(static_cast<int>(PlayerState::ENDED));
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }

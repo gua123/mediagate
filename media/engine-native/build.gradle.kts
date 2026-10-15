@@ -75,6 +75,8 @@ androidComponents {
 
 dependencies {
     implementation(project(":core:common"))
+    // PlayerEngine 契约（M4：自研引擎接进统一播放内核抽象）
+    implementation(project(":media:engine"))
     // RandomAccessSource 出现在 RandomAccessMediaSource 的公开构造签名里（M4 由播放会话创建），故用 api 传递
     api(project(":data:storage-api"))
     // 把挂起的数据层桥接成 native 要的阻塞读（RandomAccessMediaSource 里用 runBlocking）

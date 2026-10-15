@@ -221,6 +221,32 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSeekTo(
  *
  * 出错时返回 "错误：…"。字段只增不改序——M4 接进 PlayerEngine 契约之后界面也要读它。
  */
+/** 音量倍率（0..2；>1 是软件增益，会削波）。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetVolume(
+        JNIEnv*, jclass, jfloat volume) {
+    nativePlayer().setVolume(static_cast<float>(volume));
+}
+
+/** 画面缩放档位（0 适应屏幕 / 1 裁切填充 / 2 拉伸铺满 / 3 原始尺寸）。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetScaleMode(
+        JNIEnv*, jclass, jint mode) {
+    nativePlayer().setScaleMode(static_cast<int>(mode));
+}
+
+/** 当前播放位置（毫秒）。界面刷进度与字幕覆盖层都要频繁读它，所以单开一个不建字符串的入口。 */
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePositionMs(JNIEnv*, jclass) {
+    return static_cast<jlong>(nativePlayer().positionMsFast());
+}
+
+/** 媒体总时长（毫秒；未知为 0）。 */
+extern "C" JNIEXPORT jlong JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeDurationMs(JNIEnv*, jclass) {
+    return static_cast<jlong>(nativePlayer().durationMsFast());
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStatus(JNIEnv* env, jclass) {
     const mediagate::PlayerStatus status = nativePlayer().status();
@@ -230,6 +256,7 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStat
         case mediagate::PlayerState::PLAYING: stateName = "播放中"; break;
         case mediagate::PlayerState::PAUSED: stateName = "已暂停"; break;
         case mediagate::PlayerState::STOPPED: stateName = "已停止"; break;
+        case mediagate::PlayerState::ENDED: stateName = "已播完"; break;
         case mediagate::PlayerState::ERROR: stateName = "出错"; break;
         default: break;
     }

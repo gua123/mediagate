@@ -103,6 +103,37 @@ class NativeEngineContractTest {
     }
 
     @Test
+    fun 缩放档位的序号必须与_native_的_ScaleMode_一一对应() {
+        // Kotlin 侧传的是 ResizeMode.ordinal（NativeEnginePlayer.setResizeMode → setScaleMode），
+        // native 侧按 av_sync.h 的 ScaleMode 数值分支。两边顺序一旦错位，
+        // 表现是"选了裁切填充却按适应屏幕画"——真机上很难一眼看出来，所以这里逐项比。
+        var dir: File? = File("").absoluteFile
+        var engineFile: File? = null
+        while (dir != null && engineFile == null) {
+            val candidate = File(dir, "media/engine/src/main/java/io/github/gua123/mediagate/media/engine/ResizeMode.kt")
+            if (candidate.exists()) engineFile = candidate
+            dir = dir.parentFile
+        }
+        val resize = engineFile?.readText() ?: error("找不到 media/engine 的 ResizeMode.kt")
+        val native = find("src/main/cpp/av_sync.h").readText()
+
+        val kotlinOrder = Regex("""(?m)^\s{4}([A-Z_]+)\(""").findAll(resize).map { it.groupValues[1] }.toList()
+        val scaleBlock = native.substringAfter("enum class ScaleMode").substringBefore("};")
+        val nativePairs = Regex("""([A-Z_]+)\s*=\s*(\d+)""")
+            .findAll(scaleBlock)
+            .map { it.groupValues[1] to it.groupValues[2].toInt() }
+            .toList()
+
+        assertEquals("Kotlin 的 ResizeMode 顺序解析失败", 4, kotlinOrder.size)
+        assertEquals("native 的 ScaleMode 顺序解析失败", 4, nativePairs.size)
+        assertEquals("两边名字与顺序都要一致（传的是 ordinal）", kotlinOrder, nativePairs.map { it.first })
+        // 只比名字不够：把 CROP 与 STRETCH 的数值对调也照样能过 —— 必须逐个核数值
+        nativePairs.forEachIndexed { index, pair ->
+            assertEquals(pair.first + " 的数值必须等于它在 Kotlin 里的 ordinal", index, pair.second)
+        }
+    }
+
+    @Test
     fun 音画同步的纯逻辑要有能跑的开发机单测() {
         // 这一层错了（时间换算 / 同步判据 / 环形缓冲）在真机上就是"音画错位"这种最难查的问题，
         // 所以它必须有一份**不需要设备**的单测，并且每次 gradlew test 都会跑（见 NativeHostLogicTest）。
