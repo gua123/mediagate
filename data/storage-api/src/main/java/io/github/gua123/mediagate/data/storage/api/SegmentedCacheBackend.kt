@@ -251,6 +251,73 @@ class SegmentedCacheBackend(
         freed
     }
 
+    /**
+     * 一条「已缓存的文件」（**给界面看**，2026-10-15 用户要求「告诉我哪些缓存过，哪些没有」）。
+     *
+     * @param dirName 磁盘上的目录名（哈希）——**删除时用它**，所以名称未知的老缓存也能删掉；
+     * @param path 原始路径；老版本缓存没写 .path 边车时为 null；
+     * @param bytes 已缓存字节；@param segments 已缓存段数；@param totalBytes 文件总大小（有指纹时才有）。
+     */
+    data class CachedFileEntry(
+        val dirName: String,
+        val path: String?,
+        val bytes: Long,
+        val segments: Int,
+        val totalBytes: Long?,
+    ) {
+
+        /** 已缓存比例（0..1）；总大小未知时为 null（界面显示「—」而不是瞎算）。 */
+        val coverage: Float?
+            get() {
+                val total = totalBytes ?: return null
+                if (total <= 0L) return null
+                return (bytes.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
+            }
+
+        /** 界面显示名（路径末段；名称未知的老缓存如实说明）。 */
+        val displayName: String
+            get() = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "（旧版本缓存，名称未知）"
+    }
+
+    /**
+     * 列出**当前缓存里的所有文件**（按已缓存字节从多到少）。
+     *
+     * 纯读盘、不发网络请求；读不出来的目录跳过（缓存是尽力而为的东西，不因为它报错）。
+     */
+    suspend fun cachedFiles(): List<CachedFileEntry> = withContext(io) {
+        val dirs = rootDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+        dirs.mapNotNull { dir ->
+            runCatching {
+                val segments = dir.listFiles()?.filter { it.isFile && it.name.endsWith(SEGMENT_SUFFIX) }.orEmpty()
+                if (segments.isEmpty()) return@runCatching null
+                val path = File(dir, PATH_STAMP).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+                val total = File(dir, SIZE_STAMP).takeIf { it.isFile }
+                    ?.readText()?.let { FileStamp.decode(it) }?.size?.takeIf { it > 0L }
+                CachedFileEntry(
+                    dirName = dir.name,
+                    path = path,
+                    bytes = segments.sumOf { it.length() },
+                    segments = segments.size,
+                    totalBytes = total,
+                )
+            }.getOrNull()
+        }.sortedByDescending { it.bytes }
+    }
+
+    /**
+     * 删掉**某一个文件**的全部缓存段（返回释放的字节数）。
+     *
+     * 按目录名删，所以连「名称未知」的老缓存也能清掉；同时把内存里的指纹缓存一起丢掉，
+     * 否则下次打开同一个文件会以为指纹还在、跳过栅栏。
+     */
+    suspend fun removeCached(entry: CachedFileEntry): Long = withContext(io) {
+        val dir = File(rootDir, entry.dirName)
+        val freed = runCatching { dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }.getOrDefault(0L)
+        runCatching { dir.deleteRecursively() }
+        entry.path?.let { path -> synchronized(stampCache) { stampCache.remove(path) } }
+        freed
+    }
+
     /** 丢弃某个文件的全部缓存段（换根目录 / 文件已变时调用）。 */
     suspend fun clearFile(path: String) {
         withContext(io) {
@@ -284,13 +351,13 @@ class SegmentedCacheBackend(
             }.getOrNull()
         }
         if (recorded == null) {
-            writeStamp(dir, stampFile, stamp)
+            writeStamp(dir, path, stamp)
             return
         }
         if (!differs(recorded, stamp)) return
         AppLog.w(TAG, "文件指纹变了（" + recorded.encode() + " → " + stamp.encode() + "），丢掉旧缓存：" + path)
         clearFile(path)
-        writeStamp(dir, stampFile, stamp)
+        writeStamp(dir, path, stamp)
     }
 
     /** 指纹是否"实质性不同"（未知字段不参与判定）。 */
@@ -301,12 +368,21 @@ class SegmentedCacheBackend(
         return false
     }
 
-    /** 落盘指纹（best-effort：写不进去也不影响播放）。 */
-    private suspend fun writeStamp(dir: File, stampFile: File, stamp: FileStamp) {
+    /**
+     * 落盘指纹（best-effort：写不进去也不影响播放）。
+     *
+     * **顺带把原始路径写进 `.path` 边车**（2026-10-15 用户要求「增加一个可视化界面，告诉我哪些缓存过，哪些没有」）：
+     * 缓存目录名是 `namespace|path` 的哈希，光看目录名根本认不出是哪个文件——没有这份边车，
+     * 「缓存明细」就只能显示一堆哈希。老版本留下的目录没有这个文件，界面上如实显示"名称未知"，但照样能删。
+     */
+    private suspend fun writeStamp(dir: File, path: String, stamp: FileStamp) {
         withContext(io) {
             runCatching {
                 dir.mkdirs()
-                stampFile.writeText(stamp.encode())
+                File(dir, SIZE_STAMP).writeText(stamp.encode())
+                val pathFile = File(dir, PATH_STAMP)
+                // 只在内容变化时写，别每次 openRead 都碰盘
+                if (!pathFile.isFile || pathFile.readText() != path) pathFile.writeText(path)
             }
         }
     }
@@ -553,6 +629,9 @@ class SegmentedCacheBackend(
 
         /** 记录"首次见到这个路径时的文件大小"的边车文件名（用于发现文件被换掉）。 */
         private const val SIZE_STAMP = ".size"
+
+        /** 记录原始路径的边车（缓存明细要显示文件名；没有它的老缓存显示「名称未知」）。 */
+        private const val PATH_STAMP = ".path"
 
         /** 默认上限：1 GB（手机上比 plan 里的 4 GB 保守，避免挤爆缓存分区）。 */
         const val DEFAULT_MAX_BYTES: Long = 1024L * 1024 * 1024
