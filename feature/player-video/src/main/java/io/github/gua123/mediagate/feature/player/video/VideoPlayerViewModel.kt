@@ -231,18 +231,37 @@ class VideoPlayerViewModel(
         _state.update { it.reduce(VideoPlayerEvent.SeekedTo(next)) }
     }
 
-    /** 把当前视频会话交给宿主（**R18**：通知栏 / 锁屏 / 蓝牙要看它）。 */
+    /**
+     * 把当前视频会话交给宿主（**R18**：通知栏 / 锁屏 / 蓝牙要看它）。
+     *
+     * ⚠️ **会话是附属能力，连不上不算播放失败**（2026-10-15 真机事故）：清单里视频服务少了 Media3 的
+     * 会话 action ⇒ SessionToken 解析抛 IllegalArgumentException ⇒ 起播那条路把异常吞了（只是通知栏一直
+     * 连不上），而换内核那条路没吞 ⇒ **自研引擎直接被判成「播不了」并自动回退 Media3**，用户根本切不过去。
+     * 现在把兜底收在这一个函数里：所有调用点（起播 / 换集 / 换内核）都安全，将来新增调用点也自动安全；
+     * 失败只记日志 + 面包屑（诊断卡能看到），不影响播放。
+     */
     private fun bindSession(engine: PlayerEngine, ref: MediaSourceRef, view: View?) {
-        environment.playback.bindSession(
-            VideoSession(
-                engine = engine,
-                // 展示名与播放页标题同口径（title 为空时回落到路径末段）
-                title = ref.title?.takeIf { it.isNotBlank() } ?: VideoPlayerMath.fileNameOf(ref.path),
-                backendId = ref.backendId,
-                path = ref.path,
-                videoView = view,
-            ),
-        )
+        runCatching {
+            environment.playback.bindSession(
+                VideoSession(
+                    engine = engine,
+                    // 展示名与播放页标题同口径（title 为空时回落到路径末段）
+                    title = ref.title?.takeIf { it.isNotBlank() } ?: VideoPlayerMath.fileNameOf(ref.path),
+                    backendId = ref.backendId,
+                    path = ref.path,
+                    videoView = view,
+                ),
+            )
+        }.onFailure { error ->
+            AppLog.w(TAG, "绑定播放会话失败（通知栏/锁屏控制可能不可用）", error)
+            runCatching { Breadcrumbs.mark("绑定播放会话失败：" + (error.message ?: error::class.java.simpleName)) }
+        }
+    }
+
+    /** 收掉视频会话（离开播放页 / 退出）；同样不让它影响播放与页面退出。 */
+    private fun unbindSession() {
+        runCatching { environment.playback.bindSession(null) }
+            .onFailure { AppLog.w(TAG, "收起播放会话失败", it) }
     }
 
     // ------------------------------------------------------------------ 页面动作
@@ -989,7 +1008,7 @@ class VideoPlayerViewModel(
         environment.pip.setAutoEnterEnabled(false)
         environment.pip.updateActions(false)
         environment.playback.setActive(false)
-        environment.playback.bindSession(null)
+        unbindSession()
         loadJob?.cancel()
         engineJob?.cancel()
         tickJob?.cancel()
@@ -1101,8 +1120,7 @@ class VideoPlayerViewModel(
         }
         _state.update { it.reduce(VideoPlayerEvent.EngineAttached(created.kind, mode)) }
         // R18：会话（通知栏/锁屏）跟着当前这条视频走；会话起不来不该影响播放本身
-        runCatching { bindSession(created, ref, view) }
-            .onFailure { AppLog.w(TAG, "绑定播放会话失败", it) }
+        bindSession(created, ref, view)
         msSinceSave = 0L
         wasPlaying = true
         endedSaved = false
@@ -1284,7 +1302,8 @@ class VideoPlayerViewModel(
             Breadcrumbs.mark("切换内核：开始恢复现场（装载媒体）")
             VideoEngineSwitch.applyRestore(created, plan.restore)
             Breadcrumbs.mark("切换内核：现场恢复完成")
-            // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）
+            // R18：换了内核，会话跟着换成新内核（通知栏控制要打到新内核上，PIP 比例也从它的画面取）。
+            // 会话失败不会影响换内核本身（兜底在 bindSession 里，2026-10-15 真机事故后加的）。
             source?.let { ref -> bindSession(created, ref, view) }
             if (reason == SwitchReason.USER_REQUEST) {
                 withContext(io) { runCatching { environment.preferences.setEngine(target) } }
@@ -1462,7 +1481,7 @@ class VideoPlayerViewModel(
         engine = null
         _videoOutput.value = null
         // R18：内核没了就没有可会话的对象——通知栏收掉、让路闸门放开（不留悬念）
-        environment.playback.bindSession(null)
+        unbindSession()
         environment.playback.setActive(false)
         if (current == null) return
         runCatching { current.release() }.onFailure { AppLog.w(TAG, "释放内核失败", it) }

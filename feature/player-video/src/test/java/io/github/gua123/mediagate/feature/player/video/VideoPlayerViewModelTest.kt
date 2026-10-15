@@ -263,6 +263,30 @@ class VideoPlayerViewModelTest {
     }
 
     @Test
+    fun 会话绑不上不该让换内核失败() = playerTest {
+        // 真机事故（2026-10-15）：视频会话服务在清单里缺 Media3 的会话 action ⇒
+        // SessionToken 解析抛 IllegalArgumentException（Failed to resolve SessionToken for …）⇒
+        // 换内核那一行没兜住 ⇒ 自研引擎被判成「播不了」⇒ 自动回退 Media3，用户根本切不过去。
+        // 口径：**会话（通知栏/锁屏）是附属能力，它失败不该影响播放与换内核本身**。
+        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.MEDIA3))
+        env.playback.failBind = IllegalStateException(
+            "Failed to resolve SessionToken for ComponentInfo{…VideoPlaybackService}. Manifest doesn't declare one of either …",
+        )
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        assertEquals("起播本身不该受会话绑定影响", EngineKind.MEDIA3, vm.state.value.engineKind)
+
+        vm.switchEngine()  // Media3 → 自研引擎
+        settle()
+
+        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.NATIVE), env.createCalls)
+        assertEquals("换内核必须成功落到自研引擎", EngineKind.NATIVE, vm.state.value.engineKind)
+        assertEquals("不该被自动回退回 Media3", 2, env.createCalls.size)
+        assertEquals("会话绑不上不该变成播放错误", null, vm.state.value.errorDetail)
+        assertTrue("每次换内核都还要试着绑一次会话", env.playback.sessions.size >= 2)
+    }
+
+    @Test
     fun switchingBetweenSpeedCapableEnginesKeepsSpeed() = playerTest {
         // 从 LibVLC 出发轮转回 Media3（两个都支持倍速）⇒ 1.5× 必须原样保留
         val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.VLC))

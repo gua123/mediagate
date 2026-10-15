@@ -255,8 +255,12 @@ internal class FakeVideoPlaybackHost : VideoPlaybackHost {
         activeUpdates += active
     }
 
+    /** 绑定播放会话时抛的异常（模拟"会话服务连不上"：清单缺 action、服务被系统限制…）。 */
+    var failBind: Throwable? = null
+
     override fun bindSession(session: VideoSession?) {
         sessions += session
+        failBind?.let { throw it }
     }
 }
 
