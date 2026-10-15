@@ -7,6 +7,7 @@
 #include "engine_core.h"
 #include "surface_renderer.h"
 #include "first_frame.h"
+#include "native_player.h"
 #include "media_probe.h"
 
 namespace {
@@ -19,6 +20,12 @@ jstring toJString(JNIEnv* env, const std::string& value) {
 mediagate::SurfaceRenderer& surfaceRenderer() {
     static mediagate::SurfaceRenderer renderer;
     return renderer;
+}
+
+/** 全局唯一的自研播放器（一套引擎＝一个播放核心）。 */
+mediagate::NativePlayer& nativePlayer() {
+    static mediagate::NativePlayer player;
+    return player;
 }
 
 }  // namespace
@@ -138,4 +145,63 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeRenderFirs
     if (!frame.ok) return toJString(env, frame.error);
     return toJString(env, "ok|" + frame.codec + "|" + std::to_string(frame.width) + "|" +
                      std::to_string(frame.height) + "|" + std::to_string(frame.decodeMs));
+}
+/** 打开文件并播放（M3：连续视频播放；音频与同步是下一步）。返回 "" 表示已开始。 */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayFile(
+        JNIEnv* env, jclass, jstring path) {
+    if (path == nullptr) return toJString(env, "路径为空");
+    const char* raw = env->GetStringUTFChars(path, nullptr);
+    if (raw == nullptr) return toJString(env, "路径读取失败");
+    const std::string filePath(raw);
+    env->ReleaseStringUTFChars(path, raw);
+    if (!surfaceRenderer().hasWindow()) return toJString(env, "还没有绑定画面（Surface 为空）");
+    std::string error;
+    if (!nativePlayer().open(filePath, &error)) return toJString(env, error);
+    nativePlayer().play();
+    return toJString(env, "");
+}
+
+/** 暂停（画面停住，线程保留现场）。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePausePlayback(JNIEnv*, jclass) {
+    nativePlayer().pause();
+}
+
+/** 从暂停继续。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeResumePlayback(JNIEnv*, jclass) {
+    nativePlayer().play();
+}
+
+/** 停止并关闭。 */
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeStopPlayback(JNIEnv*, jclass) {
+    nativePlayer().stop();
+}
+
+/** 跳到某个位置（毫秒）。 */
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSeekTo(
+        JNIEnv*, jclass, jlong positionMs) {
+    return nativePlayer().seekTo(static_cast<int64_t>(positionMs)) ? JNI_TRUE : JNI_FALSE;
+}
+
+/** 播放器自述："状态|位置ms|时长ms|已显示帧数|宽x高|解码器"，出错时返回 "错误：…"。 */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStatus(JNIEnv* env, jclass) {
+    const mediagate::PlayerStatus status = nativePlayer().status();
+    if (!status.error.empty()) return toJString(env, "错误：" + status.error);
+    const char* stateName = "空闲";
+    switch (status.state) {
+        case mediagate::PlayerState::PLAYING: stateName = "播放中"; break;
+        case mediagate::PlayerState::PAUSED: stateName = "已暂停"; break;
+        case mediagate::PlayerState::STOPPED: stateName = "已停止"; break;
+        case mediagate::PlayerState::ERROR: stateName = "出错"; break;
+        default: break;
+    }
+    return toJString(env, std::string(stateName) + "|" + std::to_string(status.positionMs) + "|" +
+                     std::to_string(status.durationMs) + "|" + std::to_string(status.frames) + "|" +
+                     std::to_string(status.videoWidth) + "x" + std::to_string(status.videoHeight) + "|" +
+                     status.codec);
 }

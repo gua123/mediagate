@@ -130,6 +130,50 @@ object NativeEngine {
 
     private external fun nativeRenderFirstFrame(path: String): String
 
+    // ---- M3：连续视频播放（暂无音频/同步，也还没有 UI 入口） ----
+
+    /**
+     * 打开并开始播放（**需要先 [setSurface]**）。返回空串表示已开始，否则是中文原因。
+     *
+     * 现在的自研引擎只播视频画面：音频、音视频同步、接进 `PlayerEngine` 契约是接下来的事。
+     */
+    fun playFile(path: String): String {
+        if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
+        return safe { nativePlayFile(path) } ?: "启动播放失败（native 调用异常，详见日志）"
+    }
+
+    /** 暂停（画面停住）。 */
+    fun pausePlayback() = runCatching { nativePausePlayback() }
+
+    /** 从暂停继续。 */
+    fun resumePlayback() = runCatching { nativeResumePlayback() }
+
+    /** 停止并关闭文件。 */
+    fun stopPlayback() = runCatching { nativeStopPlayback() }
+
+    /** 跳到某个位置（毫秒）。 */
+    fun seekTo(positionMs: Long): Boolean = try {
+        nativeSeekTo(positionMs)
+    } catch (t: Throwable) {
+        AppLog.w(TAG, "自研引擎 seek 失败", t)
+        false
+    }
+
+    /** 播放器自述："状态|位置ms|时长ms|帧数|宽x高|解码器"。 */
+    fun playerStatus(): String = safe { nativePlayerStatus() } ?: "状态不可用"
+
+    private external fun nativePlayFile(path: String): String
+
+    private external fun nativePausePlayback()
+
+    private external fun nativeResumePlayback()
+
+    private external fun nativeStopPlayback()
+
+    private external fun nativeSeekTo(positionMs: Long): Boolean
+
+    private external fun nativePlayerStatus(): String
+
     /** 自研 FFmpeg 的版本串（"未链接 FFmpeg" 表示引擎还没有解码能力）。 */
     fun ffmpegVersion(): String? = safe { nativeFfmpegVersion() }
 
