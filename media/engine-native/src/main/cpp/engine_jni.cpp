@@ -11,8 +11,19 @@
 #include "native_player.h"
 #include "media_probe.h"
 #include "self_check.h"
+#include "subtitle_extract.h"
 
 namespace {
+
+/**
+ * 只做"读元数据 / 抽字幕"这类一次性任务的 AVIO 缓冲。
+ *
+ * 比播放线程那份小一些：这些调用是同步的、用完就关，缓冲大只是白占内存。
+ */
+constexpr int kProbeAvioBufferBytes = 32 * 1024;
+
+/** 一次最多抽多少条字幕 cue（防超长片头把内存吃满；正常一集字幕几千条够用）。 */
+constexpr int kMaxSubtitleCues = 20000;
 
 jstring toJString(JNIEnv* env, const std::string& value) {
     return env->NewStringUTF(value.c_str());
@@ -280,4 +291,73 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStat
                      std::to_string(status.audioUnderruns) + "|" + std::to_string(status.avOffsetMs) + "|" +
                      status.audioError + "|" + std::to_string(status.firstFrameMs) + "|" +
                      std::to_string(status.lastSeekMs));
+}
+
+/**
+ * 列出内嵌字幕轨（**不解码**）：每行 "下标|编码|是否文本|语言|轨名"，没有字幕轨返回空串。
+ *
+ * 为什么要有它：本项目 FFmpeg 没编字幕解码器，但文本类字幕的 packet payload 本来就是纯文本，
+ * 所以"列出 + 抽文本"这条路不需要解码器；界面据此显示"内嵌：中文（subrip）"之类的选项。
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeListSubtitleTracks(
+    JNIEnv* env, jclass, jobject source) {
+    mediagate::SourceBridge bridge;
+    std::string error;
+    if (!bridge.attach(env, source, &error)) {
+        return toJString(env, "错误：" + error);
+    }
+    AVIOContext* avio = mediagate::openSourceAvio(&bridge, kProbeAvioBufferBytes);
+    AVFormatContext* format = nullptr;
+    if (avio == nullptr || avformat_open_input(&format, nullptr, nullptr, nullptr) < 0 || format == nullptr) {
+        if (format != nullptr) avformat_close_input(&format);
+        if (avio != nullptr) mediagate::closeSourceAvio(&avio);
+        const std::string sourceError = bridge.lastError();
+        bridge.detach();
+        return toJString(env, "错误：" + (sourceError.empty() ? std::string("打不开这个文件") : sourceError));
+    }
+    avformat_find_stream_info(format, nullptr);
+    const std::vector<mediagate::SubtitleTrack> tracks = mediagate::listSubtitleTracks(format);
+    std::string out;
+    for (const mediagate::SubtitleTrack& track : tracks) {
+        out += std::to_string(track.index) + "|" + track.codec + "|" + (track.textBased ? "1" : "0") + "|" +
+               track.language + "|" + track.title + "\n";
+    }
+    avformat_close_input(&format);
+    mediagate::closeSourceAvio(&avio);
+    bridge.detach();
+    return toJString(env, out);
+}
+
+/**
+ * 把某条内嵌字幕轨抽成 **SRT 文本**（返回空串表示没有可用字幕；"错误：…" 才是失败）。
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeExtractSubtitle(
+    JNIEnv* env, jclass, jobject source, jint streamIndex) {
+    mediagate::SourceBridge bridge;
+    std::string error;
+    if (!bridge.attach(env, source, &error)) {
+        return toJString(env, "错误：" + error);
+    }
+    AVIOContext* avio = mediagate::openSourceAvio(&bridge, kProbeAvioBufferBytes);
+    AVFormatContext* format = nullptr;
+    if (avio == nullptr || avformat_open_input(&format, nullptr, nullptr, nullptr) < 0 || format == nullptr) {
+        if (format != nullptr) avformat_close_input(&format);
+        if (avio != nullptr) mediagate::closeSourceAvio(&avio);
+        const std::string sourceError = bridge.lastError();
+        bridge.detach();
+        return toJString(env, "错误：" + (sourceError.empty() ? std::string("打不开这个文件") : sourceError));
+    }
+    avformat_find_stream_info(format, nullptr);
+    std::string extractError;
+    const std::string srt =
+        mediagate::extractSubtitleAsSrt(format, streamIndex, kMaxSubtitleCues, &extractError);
+    avformat_close_input(&format);
+    mediagate::closeSourceAvio(&avio);
+    bridge.detach();
+    if (srt.empty()) {
+        return toJString(env, "错误：" + (extractError.empty() ? std::string("这条字幕轨是空的") : extractError));
+    }
+    return toJString(env, srt);
 }

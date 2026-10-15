@@ -96,6 +96,41 @@ object NativeEngine {
         false
     }
 
+    // ---- 内嵌字幕（2026-10-15：走"读 packet 纯文本"路线，绕开没编的字幕解码器） ----
+
+    /**
+     * 列出这条数据源里的内嵌字幕轨；失败或没有返回空表（附带原因在 [listSubtitleTracksWithReason]）。
+     */
+    fun listSubtitleTracks(source: NativeMediaSource): List<EmbeddedSubtitleTrack> =
+        parseSubtitleTracks(listSubtitleTracksRaw(source))
+
+    /** 同 [listSubtitleTracks]，但同时把失败原因带出来（界面要如实说"为什么没有字幕"）。 */
+    fun listSubtitleTracksWithReason(source: NativeMediaSource): Pair<List<EmbeddedSubtitleTrack>, String?> {
+        val raw = listSubtitleTracksRaw(source)
+        val reason = raw.trim().takeIf { it.startsWith("错误：") }?.removePrefix("错误：")
+        return parseSubtitleTracks(raw) to reason
+    }
+
+    private fun listSubtitleTracksRaw(source: NativeMediaSource): String {
+        if (!isAvailable) return "错误：native 库加载失败（" + (loadFailure ?: "未知") + "）"
+        return safe { nativeListSubtitleTracks(source) } ?: "错误：读取内嵌字幕轨失败（详见日志）"
+    }
+
+    /**
+     * 把某条内嵌字幕轨抽成 **SRT 文本**（App 已有的解析器直接能吃）。
+     *
+     * 返回以 "错误：" 开头表示失败（原因可直接显示）；否则是 SRT 正文。
+     */
+    fun extractSubtitleAsSrt(source: NativeMediaSource, streamIndex: Int): String {
+        if (!isAvailable) return "错误：native 库加载失败（" + (loadFailure ?: "未知") + "）"
+        return safe { nativeExtractSubtitle(source, streamIndex) }
+            ?: "错误：抽取内嵌字幕失败（详见日志）"
+    }
+
+    private external fun nativeListSubtitleTracks(source: NativeMediaSource): String
+
+    private external fun nativeExtractSubtitle(source: NativeMediaSource, streamIndex: Int): String
+
     private external fun nativeSetSurface(surface: android.view.Surface?)
 
     private external fun nativeHasSurface(): Boolean
