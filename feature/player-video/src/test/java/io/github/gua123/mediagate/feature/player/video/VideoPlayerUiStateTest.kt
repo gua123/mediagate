@@ -253,9 +253,14 @@ class VideoPlayerUiStateTest {
             VideoPlayerEvent.SwitchCompleted(EngineKind.NATIVE, DecoderMode.AUTO_HW, 0L, playing = false),
         )
         assertEquals("自研引擎", native.engineLabel)
-        assertEquals(EngineKind.VLC, native.otherEngine)
+        // 没被探针确认过的 LibVLC 不进轮转（2026-10-15 收紧），所以从自研引擎下一个是回 Media3
+        assertEquals(EngineKind.MEDIA3, native.otherEngine)
 
-        val vlc = native.reduce(
+        // 确认能用时它才回到轮转里
+        val confirmed = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = true)
+        assertEquals(EngineKind.VLC, confirmed.otherEngine)
+
+        val vlc = confirmed.reduce(
             VideoPlayerEvent.SwitchCompleted(EngineKind.VLC, DecoderMode.AUTO_HW, 0L, playing = false),
         )
         assertEquals(EngineKind.MEDIA3, vlc.otherEngine)
@@ -277,21 +282,34 @@ class VideoPlayerUiStateTest {
     // ------------------------------------------------ 内核轮转与能力提示（2026-10-15 M4 下半）
 
     @Test
-    fun 内核按钮在三个内核之间轮转() {
+    fun 内核按钮在_Media3_与自研引擎之间轮转() {
         val media3 = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
         assertEquals(EngineKind.NATIVE, media3.otherEngine)
 
+        // 默认（探针没给过结论）只有两档：Media3 ⇄ 自研引擎
         val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
-        assertEquals(EngineKind.VLC, native.otherEngine)
-
-        val vlc = VideoPlayerUiState(engineKind = EngineKind.VLC)
-        assertEquals(EngineKind.MEDIA3, vlc.otherEngine)
+        assertEquals(EngineKind.MEDIA3, native.otherEngine)
     }
 
     @Test
-    fun LibVLC_已知不可用时轮转要跳过它() {
-        val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = false)
-        assertEquals(EngineKind.MEDIA3, native.otherEngine)
+    fun 探针确认能用时_LibVLC_才回到轮转里() {
+        val confirmed = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = true)
+        assertEquals(EngineKind.VLC, confirmed.otherEngine)
+    }
+
+    @Test
+    fun LibVLC_已知不可用或未知时轮转都要跳过它() {
+        // 已知不可用：跳过（老口径）
+        assertEquals(
+            EngineKind.MEDIA3,
+            VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = false).otherEngine,
+        )
+        // 未知：也跳过（2026-10-15 收紧——LibVLC 在用户机器上会把 App 带走，
+        // 探针改成按需跑之后「未知」是常态，不改的话点两下内核就撞上吓人的确认框）
+        assertEquals(
+            EngineKind.MEDIA3,
+            VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = null).otherEngine,
+        )
     }
 
     @Test
