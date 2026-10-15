@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -121,6 +122,45 @@ class SegmentedCacheBackendTest {
 
         assertEquals("预取过了，读的时候不该再拉", before, fetches.size)
         stream.close()
+    }
+
+    @Test
+    fun `固定的缓存不会被自动淘汰（手动预约的那些）`() = runTest {
+        val fetches = mutableListOf<Pair<Long, Long>>()
+        val cache = backend(maxBytes = 3 * segment, fetches = fetches)
+        // 先把 /keep.ts 的第 0 段缓存下来，并"固定"（＝用户手动预约缓存的文件）
+        cache.openRead("/keep.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        cache.setPinned("/keep.ts", true)
+        // 再用另一个文件把缓存塞到超过上限（每次写入都会触发淘汰）
+        repeat(4) { index ->
+            cache.openRead("/other.ts", offset = index * segment, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+            Thread.sleep(5)
+        }
+        assertTrue(
+            "固定的文件必须还在缓存里",
+            cache.cachedFiles().any { it.path == "/keep.ts" && it.pinned },
+        )
+        val before = fetches.size
+        cache.openRead("/keep.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        assertEquals("固定的段没被淘汰 ⇒ 再读不该过网", before, fetches.size)
+    }
+
+    @Test
+    fun `取消固定之后就能被淘汰了`() = runTest {
+        val cache = backend(maxBytes = 2 * segment)
+        cache.openRead("/keep.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        cache.setPinned("/keep.ts", true)
+        assertTrue("先确认固定住了", cache.isPinned("/keep.ts"))
+        cache.setPinned("/keep.ts", false)
+        assertFalse("取消固定后不该再标记为固定", cache.isPinned("/keep.ts"))
+        repeat(3) { index ->
+            cache.openRead("/other.ts", offset = index * segment, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+            Thread.sleep(5)
+        }
+        assertFalse(
+            "交回自动管理之后，超出上限就该被淘汰",
+            cache.cachedFiles().any { it.path == "/keep.ts" },
+        )
     }
 
     @Test

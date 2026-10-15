@@ -207,6 +207,17 @@ interface VideoPlayerEnvironment {
      */
     fun prefetchHead(path: String) = Unit
 
+    /**
+     * **播放中的滑窗预取 + 下一集预热**（docs/方案-网络加载增强.md 的 P1.6 / P1.7，2026-10-15）。
+     *
+     * 播放页每个采样点（约 500 ms）把位置报过来，**要不要真发请求由宿主按纯函数判据决定**
+     * （位置至少前进 20 秒才发一次、只抓当前位置往后 30 秒那一段、快播完就不发）——
+     * 播放页不需要知道这些细节，也保证「预取让路」这条硬约束只有一个地方实现。
+     *
+     * 默认什么都不做（JVM 单测与没有缓存层的场景行为不变）。
+     */
+    fun prefetchAhead(path: String, positionMs: Long, durationMs: Long) = Unit
+
 
     /** 断点续播存储（R18）：进入时读一次、播放中每 5 秒写一次、退出时再写一次。 */
     val progress: PlaybackProgressStore
