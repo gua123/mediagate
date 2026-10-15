@@ -87,8 +87,10 @@ import io.github.gua123.mediagate.app.ui.PlaybackSection
 import io.github.gua123.mediagate.app.ui.TrustedHostKeysSection
 import io.github.gua123.mediagate.feature.settings.KeepAliveAction
 import io.github.gua123.mediagate.feature.settings.KeepAliveItemKind
+import io.github.gua123.mediagate.feature.settings.SettingsGroup
 import io.github.gua123.mediagate.feature.settings.SettingsNote
 import io.github.gua123.mediagate.feature.settings.SettingsScreen
+import io.github.gua123.mediagate.feature.settings.SettingsSections
 import io.github.gua123.mediagate.feature.update.UpdateChecker
 import io.github.gua123.mediagate.feature.update.UpdateSection
 import io.github.gua123.mediagate.feature.update.UpdateViewModel
@@ -597,22 +599,28 @@ private fun SettingsRoute(
         onNotice(notice)
         updateViewModel.dismissNotice()
     }
+    // R21（2026-10-15）：说明按主题归到对应分组里（选路/协议 → 连接，缓存 → 网络，凭据 → 安全），
+    // 不再把 4 条不同主题的说明挤进一张「网络切换策略」卡片
     val notes = listOf(
         SettingsNote(
             title = stringResource(R.string.settings_note_order_title),
             detail = stringResource(R.string.settings_note_order_detail),
-        ),
-        SettingsNote(
-            title = stringResource(R.string.settings_note_cache_title),
-            detail = stringResource(R.string.settings_note_cache_detail),
-        ),
-        SettingsNote(
-            title = stringResource(R.string.settings_note_credential_title),
-            detail = stringResource(R.string.settings_note_credential_detail),
+            group = SettingsGroup.CONNECTION,
         ),
         SettingsNote(
             title = stringResource(R.string.settings_note_protocol_title),
             detail = stringResource(R.string.settings_note_protocol_detail),
+            group = SettingsGroup.CONNECTION,
+        ),
+        SettingsNote(
+            title = stringResource(R.string.settings_note_cache_title),
+            detail = stringResource(R.string.settings_note_cache_detail),
+            group = SettingsGroup.NETWORK,
+        ),
+        SettingsNote(
+            title = stringResource(R.string.settings_note_credential_title),
+            detail = stringResource(R.string.settings_note_credential_detail),
+            group = SettingsGroup.SECURITY,
         ),
     )
     SettingsScreen(
@@ -630,71 +638,85 @@ private fun SettingsRoute(
         onKeepAliveConfirm = { kind: KeepAliveItemKind, confirmed: Boolean ->
             container.keepAlive.setConfirmed(kind, confirmed)
         },
-        extraSections = {
+        // R21（2026-10-15）：插槽从"整体追加在最后"改成**按分组归位**——
+        // 播放 → 播放与后台（与内置的保活卡同一组）、网络与缓冲 → 网络与缓存、
+        // 更新 → 更新、主机密钥 → 安全与凭据、诊断 → 诊断与日志（该组默认折叠）。
+        sections = SettingsSections(
             // 播放（2026-10-03 用户要求：「可以设置软件在后台时是否显示画中画」）
-            val pipAutoEnterNow by container.pipAutoEnterSetting.collectAsStateWithLifecycle()
-            val controlsHideNow by container.controlsHideSeconds.collectAsStateWithLifecycle()
-            PlaybackSection(
-                pipAutoEnter = pipAutoEnterNow,
-                onPipAutoEnter = { enabled -> scope.launch { container.updatePipAutoEnter(enabled) } },
-                controlsHideSeconds = controlsHideNow,
-                onControlsHideSeconds = { seconds -> scope.launch { container.updateControlsHideSeconds(seconds) } },
-            )
+            playback = {
+                val pipAutoEnterNow by container.pipAutoEnterSetting.collectAsStateWithLifecycle()
+                val controlsHideNow by container.controlsHideSeconds.collectAsStateWithLifecycle()
+                PlaybackSection(
+                    pipAutoEnter = pipAutoEnterNow,
+                    onPipAutoEnter = { enabled -> scope.launch { container.updatePipAutoEnter(enabled) } },
+                    controlsHideSeconds = controlsHideNow,
+                    onControlsHideSeconds = { seconds -> scope.launch { container.updateControlsHideSeconds(seconds) } },
+                )
+            },
             // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
-            NetworkTuningSection(
-                tuning = networkTuning,
-                onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
-                onSegmentBytes = { value ->
-                    scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
-                },
-                onCacheBytes = { value -> scope.launch { container.networkTuning.setCacheMb((value / (1024 * 1024)).toInt()) } },
-                cacheUsedBytes = cacheUsedBytes,
-                onClearCache = {
-                    scope.launch {
-                        container.clearRemoteCache()
-                        cacheUsedBytes = container.remoteCacheBytes()
-                    }
-                },
-                onReset = { scope.launch { container.networkTuning.reset() } },
-            )
-            // 诊断（2026-10-03）：崩溃报告看得到、复制得走——真机闪退唯一的定位手段
-            DiagnosticsSection(
-                crashReport = crashReport,
-                crashTimeMs = crashTimeMs,
-                reportCount = crashReportCount,
-                lastExit = lastExit,
-                breadcrumbs = breadcrumbs,
-                // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
-                // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
-                engineInfo = NativeEngine.describe() + "\n" + engineProbeLine,
-                playbackMetrics = playbackMetrics,
-                onClear = {
-                    container.clearCrashes()
-                    container.clearBreadcrumbs()
-                    crashReport = null
-                    crashTimeMs = null
-                    crashReportCount = 0
-                    lastExit = null
-                    breadcrumbs = emptyList()
-                },
-            )
-            // SFTP 主机密钥（R2）：TOFU 落库后的展示与"忘掉重来"出口
-            TrustedHostKeysSection(
-                keys = trustedHostKeys,
-                onForget = { key -> container.forgetHostKey(key.host, key.port) },
-                onForgetAll = container::forgetAllHostKeys,
-            )
-            // 语音识别模型（R14）：档位、下载进度、删除、设为当前
+            network = {
+                NetworkTuningSection(
+                    tuning = networkTuning,
+                    onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
+                    onSegmentBytes = { value ->
+                        scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
+                    },
+                    onCacheBytes = { value ->
+                        scope.launch { container.networkTuning.setCacheMb((value / (1024 * 1024)).toInt()) }
+                    },
+                    cacheUsedBytes = cacheUsedBytes,
+                    onClearCache = {
+                        scope.launch {
+                            container.clearRemoteCache()
+                            cacheUsedBytes = container.remoteCacheBytes()
+                        }
+                    },
+                    onReset = { scope.launch { container.networkTuning.reset() } },
+                )
+            },
             // 应用内更新（R20）：检查 → 下载（断点续传）→ 签名校验 → 系统安装器
-            UpdateSection(
-                state = updateState,
-                onCheck = updateViewModel::check,
-                onDownload = updateViewModel::download,
-                onCancel = updateViewModel::cancelDownload,
-                onInstall = updateViewModel::install,
-                onOpenReleases = updateViewModel::openReleasesPage,
-            )
-        },
+            update = {
+                UpdateSection(
+                    state = updateState,
+                    onCheck = updateViewModel::check,
+                    onDownload = updateViewModel::download,
+                    onCancel = updateViewModel::cancelDownload,
+                    onInstall = updateViewModel::install,
+                    onOpenReleases = updateViewModel::openReleasesPage,
+                )
+            },
+            // SFTP 主机密钥（R2）：TOFU 落库后的展示与"忘掉重来"出口
+            security = {
+                TrustedHostKeysSection(
+                    keys = trustedHostKeys,
+                    onForget = { key -> container.forgetHostKey(key.host, key.port) },
+                    onForgetAll = container::forgetAllHostKeys,
+                )
+            },
+            // 诊断（2026-10-03）：崩溃报告看得到、复制得走——真机闪退唯一的定位手段（该组默认折叠）
+            diagnostics = {
+                DiagnosticsSection(
+                    crashReport = crashReport,
+                    crashTimeMs = crashTimeMs,
+                    reportCount = crashReportCount,
+                    lastExit = lastExit,
+                    breadcrumbs = breadcrumbs,
+                    // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
+                    // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
+                    engineInfo = NativeEngine.describe() + "\n" + engineProbeLine,
+                    playbackMetrics = playbackMetrics,
+                    onClear = {
+                        container.clearCrashes()
+                        container.clearBreadcrumbs()
+                        crashReport = null
+                        crashTimeMs = null
+                        crashReportCount = 0
+                        lastExit = null
+                        breadcrumbs = emptyList()
+                    },
+                )
+            },
+        ),
     )
 }
 
