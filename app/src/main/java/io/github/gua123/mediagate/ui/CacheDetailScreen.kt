@@ -23,6 +23,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.gua123.mediagate.R
+import io.github.gua123.mediagate.app.CacheQueueState
+import io.github.gua123.mediagate.app.CacheTask
+import io.github.gua123.mediagate.app.CacheTaskStatus
 import io.github.gua123.mediagate.app.cacheEntryLine
 import io.github.gua123.mediagate.app.cacheMegabytes
 import io.github.gua123.mediagate.app.cacheSummaryLine
@@ -52,6 +55,14 @@ fun CacheDetailScreen(
     onClearAll: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** **缓存队列**（2026-10-15 用户要求「手动批量缓存」之后要能看见进度）。 */
+    queue: CacheQueueState = CacheQueueState(),
+    onPauseQueue: () -> Unit = {},
+    onResumeQueue: () -> Unit = {},
+    onCancelTask: (String) -> Unit = {},
+    onClearFinishedTasks: () -> Unit = {},
+    /** 取消固定（手动缓存的文件默认不被自动清理）。 */
+    onUnpin: (SegmentedCacheBackend.CachedFileEntry) -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -92,6 +103,51 @@ fun CacheDetailScreen(
                 }
             }
 
+            // 队列（有任务才显示）：待处理 / 进行中 / 已完成 / 失败，逐条可取消
+            if (queue.hasAnything) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(stringResource(R.string.cache_queue_title), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = cacheQueueSummary(queue.pending, queue.done, queue.failed, queue.paused),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = if (queue.paused) onResumeQueue else onPauseQueue) {
+                                Text(
+                                    stringResource(
+                                        if (queue.paused) R.string.cache_queue_resume else R.string.cache_queue_pause,
+                                    ),
+                                )
+                            }
+                            TextButton(onClick = onClearFinishedTasks) {
+                                Text(stringResource(R.string.cache_queue_clear))
+                            }
+                        }
+                        queue.tasks.forEach { task ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(task.name, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        text = cacheTaskStatusText(task),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (!task.finished) {
+                                    TextButton(onClick = { onCancelTask(task.path) }) {
+                                        Text(stringResource(R.string.cache_queue_cancel))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (entries.isEmpty()) {
                 Text(
                     text = stringResource(R.string.cache_detail_empty),
@@ -101,11 +157,28 @@ fun CacheDetailScreen(
             } else {
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(entries, key = { it.dirName }) { entry ->
-                        CacheEntryRow(entry = entry, onRemove = { onRemove(entry) })
+                        CacheEntryRow(
+                            entry = entry,
+                            onRemove = { onRemove(entry) },
+                            onUnpin = { onUnpin(entry) },
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+/** 一条队列任务的状态文案（纯展示，不拼业务逻辑）。 */
+@Composable
+private fun cacheTaskStatusText(task: CacheTask): String {
+    val progress = cacheTaskLine(task.totalBytes, task.cachedBytes, task.progress)
+    return when (task.status) {
+        CacheTaskStatus.QUEUED -> "排队中"
+        CacheTaskStatus.RUNNING -> "正在缓存 · " + progress
+        CacheTaskStatus.DONE -> "已完成 · " + progress
+        CacheTaskStatus.FAILED -> "失败：" + (task.error ?: "未知原因")
+        CacheTaskStatus.CANCELLED -> "已取消"
     }
 }
 
@@ -114,6 +187,7 @@ fun CacheDetailScreen(
 private fun CacheEntryRow(
     entry: SegmentedCacheBackend.CachedFileEntry,
     onRemove: () -> Unit,
+    onUnpin: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -126,6 +200,17 @@ private fun CacheEntryRow(
                 TextButton(onClick = onRemove) { Text(stringResource(R.string.cache_detail_remove)) }
             }
             Text(cacheEntryLine(entry), style = MaterialTheme.typography.bodySmall)
+            if (entry.pinned) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stringResource(R.string.cache_pinned_badge),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onUnpin) { Text(stringResource(R.string.cache_pin_release)) }
+                }
+            }
             entry.path?.let { path ->
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                 Text(

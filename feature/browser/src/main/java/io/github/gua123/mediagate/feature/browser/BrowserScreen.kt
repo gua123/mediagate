@@ -1,7 +1,9 @@
 package io.github.gua123.mediagate.feature.browser
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -109,6 +111,14 @@ fun BrowserScreen(
     initialPath: String = "",
     initialKind: MediaKind? = null,
     onOpenEntry: ((RemoteEntry) -> Unit)? = null,
+    /**
+     * **长按一行**（2026-10-15 用户要求：「缓存这里增加手动批量多个文件的缓存方式，
+     * 可以让我不打开对应文件夹就可以缓存视频」）。
+     *
+     * 语义：文件 → 缓存这个视频；文件夹 → 缓存里面的所有视频（含子目录）。
+     * 为 null 时长按什么都不做（预览与单测不受影响）。
+     */
+    onLongPressEntry: ((RemoteEntry) -> Unit)? = null,
     onRequestRootAccess: () -> Unit = {},
     /** **2026-10-03 用户要求**：当前目录变化时回调（:app 记下来，退出播放时好回到这个文件夹）。 */
     onPathChanged: (String) -> Unit = {},
@@ -214,6 +224,7 @@ fun BrowserScreen(
                         imageLoader = imageLoader,
                         onRefresh = viewModel::refresh,
                         onEntryClick = onEntryClick,
+                        onEntryLongClick = onLongPressEntry,
                     )
                 }
             }
@@ -283,6 +294,8 @@ private fun EntryListPanel(
     imageLoader: ImageLoader,
     onRefresh: () -> Unit,
     onEntryClick: (RemoteEntry) -> Unit,
+    /** 长按（缓存预约）；null = 不处理。 */
+    onEntryLongClick: ((RemoteEntry) -> Unit)? = null,
 ) {
     PullToRefreshBox(
         isRefreshing = state.refreshing,
@@ -315,6 +328,7 @@ private fun EntryListPanel(
                         backend = backend,
                         imageLoader = imageLoader,
                         onClick = { onEntryClick(entry) },
+                        onLongClick = onEntryLongClick?.let { callback -> { callback(entry) } },
                         // 「上次播放」高亮：文件本身 + 通往它的每一级目录（2026-10-03 用户要求）
                         highlight = PlaybackHighlight.kindOf(
                             entryPath = entry.path,
@@ -340,6 +354,8 @@ private fun EntryRow(
     backend: StorageBackend,
     imageLoader: ImageLoader,
     onClick: () -> Unit,
+    /** 长按（缓存预约用）；null = 不长按处理。 */
+    onLongClick: (() -> Unit)? = null,
     highlight: HighlightKind = HighlightKind.NONE,
     /** 封面预热版本号：预热好一格的封面就 +1，让那一格重新取图（此时是磁盘缓存命中、瞬间出图）。 */
     coverEpoch: Int = 0,
@@ -360,7 +376,7 @@ private fun EntryRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(background)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

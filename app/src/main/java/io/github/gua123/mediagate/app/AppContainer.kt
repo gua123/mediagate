@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.model.MediaKind
+import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.core.crypto.CredentialCipher
 import io.github.gua123.mediagate.core.crypto.KeystoreCredentialCipher
@@ -636,12 +638,83 @@ class AppContainer(context: Context) :
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
 
     /**
+     * **手动缓存队列**（2026-10-15 用户要求：「增加手动批量多个文件的缓存方式，
+     * 可以让我不打开对应文件夹就可以缓存视频」）。
+     *
+     * 单并发、可暂停、可取消；**播放时自动让路**（播放活跃就不开新段）；
+     * 下完的文件会被**固定**（不被 LRU 淘汰）——手动点的东西被悄悄清掉比占空间更糟。
+     */
+    val cacheQueue: CacheQueueController by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CacheQueueController(
+            scope = ioScope,
+            segmentBytes = { networkTuning.tuning.value.segmentBytes },
+            knownSize = { path -> remoteCache?.knownSizeOf(path) },
+            cachedBytesOf = { path -> remoteCache?.cachedBytesOf(path) ?: 0L },
+            setPinned = { path, pinned -> remoteCache?.setPinned(path, pinned) },
+            downloadSegment = { path, offset, length ->
+                remoteCache?.downloadSegmentStrict(path, offset, length)
+            },
+            playbackActive = playbackActive,
+        )
+    }
+
+    /** 把一批文件加入缓存队列（浏览页长按选中的那些）。 */
+    fun enqueueCache(entries: List<Pair<String, String>>) {
+        cacheQueue.enqueue(entries)
+    }
+
+    /**
+     * 收集「要预约缓存的文件」（2026-10-15 用户要求：「可以不打开对应文件夹就缓存视频」）。
+     *
+     * 单个视频 → 就它一个；**文件夹 → 递归找里面的视频（含子目录）**。
+     * 上限 [CACHE_PICK_MAX_FILES]：防止误点一个大目录把队列塞爆——超出就截断并如实告诉用户
+     *（口径与别处一致：宁可少缓存，也不静默干一半）。
+     */
+    suspend fun collectCacheTargets(path: String, isDirectory: Boolean): CachePickResult {
+        if (!isDirectory) {
+            val name = path.substringAfterLast('/')
+            return if (MediaKindGuesser.guess(name) == MediaKind.VIDEO) {
+                CachePickResult(entries = listOf(path to name))
+            } else {
+                CachePickResult(entries = emptyList(), notVideo = true)
+            }
+        }
+        val backend = currentBackend()
+        val found = mutableListOf<Pair<String, String>>()
+        var truncated = false
+        val queue = ArrayDeque<String>()
+        queue += path
+        while (queue.isNotEmpty() && !truncated) {
+            val dir = queue.removeFirst()
+            val entries = runCatching { backend.list(dir, null) }.getOrElse { emptyList() }
+            for (entry in entries) {
+                if (entry.isDirectory) {
+                    queue += entry.path
+                    continue
+                }
+                if (MediaKindGuesser.guess(entry.name) != MediaKind.VIDEO) continue
+                if (found.size >= CACHE_PICK_MAX_FILES) {
+                    truncated = true
+                    break
+                }
+                found += entry.path to entry.name
+            }
+        }
+        return CachePickResult(entries = found, truncated = truncated)
+    }
+
+    /**
      * **缓存明细**（2026-10-15 用户要求：「关于缓存部分，是否可以增加一个可视化界面，告诉我哪些缓存过，哪些没有」）。
      *
      * 纯读盘：列出每个已缓存的文件（显示名 / 已缓存字节 / 段数 / 覆盖率），按占用从多到少。
      */
     suspend fun cachedFileEntries(): List<io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend.CachedFileEntry> =
         remoteCache?.cachedFiles() ?: emptyList()
+
+    /** 固定/取消固定某个文件的缓存（手动预约的那些默认固定，不被自动清理）。 */
+    suspend fun setCachePinned(path: String, pinned: Boolean) {
+        remoteCache?.setPinned(path, pinned)
+    }
 
     /** 删掉某一个文件的缓存段；返回释放的字节数。 */
     suspend fun removeCachedFile(
@@ -1851,7 +1924,10 @@ class AppContainer(context: Context) :
 
 
         /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
-        /** 播放指标留几条（诊断卡里够看清最近几次就够）。 */
+        /** 一次最多预约多少个文件（防止误点一个大目录）。 */
+    const val CACHE_PICK_MAX_FILES = 300
+
+    /** 播放指标留几条（诊断卡里够看清最近几次就够）。 */
     const val PLAYBACK_METRICS_KEEP = 5
 
     /** 自研引擎探针的超时（自检里要开一次 AAudio 流，比 LibVLC 那套慢一点）。 */

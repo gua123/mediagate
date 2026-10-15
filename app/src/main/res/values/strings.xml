@@ -39,6 +39,26 @@
     <string name="trusted_host_keys_forget_all">全部忘掉</string>
 
     <!-- 诊断（2026-10-03 真机闪退之后补）：崩溃报告摆到界面上，用户复制给我即可定位 -->
+    <!-- 预约缓存（2026-10-15 用户要求：「不打开对应文件夹就可以缓存视频」） -->
+    <string name="cache_pick_title">预约缓存</string>
+    <string name="cache_pick_scanning_title">正在统计</string>
+    <string name="cache_pick_scanning_body">正在看「%1$s」里有多少视频…</string>
+    <string name="cache_pick_body">将缓存「%1$s」里的 %2$d 个视频。</string>
+    <string name="cache_pick_not_video">「%1$s」不是视频文件，只有视频能预约缓存。</string>
+    <string name="cache_pick_empty">「%1$s」里没有找到视频文件。</string>
+    <string name="cache_pick_truncated">文件太多，只选了前一部分（可以再长按几次分批加）。</string>
+    <string name="cache_pick_note">会在后台按顺序下载；播放时会自动让路。这些文件不会被自动清理（可在「缓存明细」里取消）。</string>
+    <string name="cache_pick_confirm">加入队列</string>
+    <string name="cache_pick_cancel">取消</string>
+    <string name="cache_pick_failed_title">统计失败</string>
+    <string name="cache_pick_enqueued">已加入缓存队列</string>
+    <string name="cache_queue_title">缓存队列</string>
+    <string name="cache_queue_pause">暂停</string>
+    <string name="cache_queue_resume">继续</string>
+    <string name="cache_queue_cancel">取消</string>
+    <string name="cache_queue_clear">清掉已结束</string>
+    <string name="cache_pinned_badge">手动缓存（不会被自动清理）</string>
+    <string name="cache_pin_release">取消固定</string>
     <!-- 缓存明细（2026-10-15 用户要求：「告诉我哪些缓存过，哪些没有」） -->
     <string name="cache_detail_title">缓存明细</string>
     <string name="cache_detail_back">返回</string>
