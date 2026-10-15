@@ -269,6 +269,12 @@
   `api.github.com` 匿名限额会被共享出口 IP 用尽（实测 remaining=0），所以更新源用 raw/Release 资产而不是 API。
 - **下一步：真机验收**（本机无 adb 设备）。需真机验证清单与已知限制见 `docs/验收记录-M2-M8.md` 第 4、5 节；
   验收记录共三份：M0 / M1 / M2-M8。
+- **修：通知栏一直没有媒体通知（2026-10-15 用户反馈「现在点开有封面的视频快了很多，这很好，但是通知栏还是没有」）**：
+  两条链路一起修——① **点视频时漏申请通知权限**（音频那条路一直在申请，视频没有；Android 13+ 没有 POST_NOTIFICATIONS
+  就**什么通知都不显示**，媒体通知也一样）⇒ 视频点击分支补 `ensureNotificationPermission()`；
+  ② **让 App 自己说原因**：`VideoSessionController.diagnostic()` 输出「视频会话：控制器 已连接/连接失败:原因 · 会话源 有/无 · 通知权限 已授予/未授予」，
+  接进设置页诊断卡（与引擎自述同屏），连接成功/失败各打一条面包屑——通知栏不出现有三条互相独立的链路（权限/控制器/会话源），
+  没有 adb 时这一行截图就能定位是哪一条断的。
 - **用户拍板：自研引擎与 LibVLC 双双下线，只保留原有引擎（2026-10-15）**：用户原话「**画面全没有，所以我想切回原先的引擎，
   将自研引擎和 libvlc 都去掉吧，原有引擎就可以。**」⇒ `EngineSelection.availableEngines()` 只含 Media3（"有几个内核可用"的唯一判据）、
   `canSwitchEngine()` 为 false ⇒ 播放页**不再有「内核」按钮**；`resolvePreference()` 把旧偏好解析回 Media3；`fallbackFrom()` 恒 null

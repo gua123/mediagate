@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost
 import io.github.gua123.mediagate.feature.player.video.VideoSessionActionSink
 import io.github.gua123.mediagate.feature.player.video.VideoSession
@@ -62,6 +63,34 @@ class VideoSessionController(
     private var controller: MediaController? = null
 
     private var connecting = false
+
+    /** 最近一次连接会话服务失败的原因（中文；null = 没失败过）。 */
+    private var lastConnectError: String? = null
+
+    /**
+     * **一行自述**（设置页诊断卡显示）：通知权限 / 控制器状态 / 有没有会话源。
+     *
+     * 为什么要它：通知栏不出现这件事有三条互相独立的链路（权限、控制器、会话源），
+     * 没有 adb 时用户截图这一行就能直接指出是哪一条断了——本项目一贯的做法：**让 App 自己说原因**。
+     */
+    fun diagnostic(): String {
+        val permission = if (android.os.Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(appContext, android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            "已授予"
+        } else {
+            "未授予（没有它系统不会显示媒体通知）"
+        }
+        val controllerState = when {
+            controller != null -> "已连接"
+            connecting -> "连接中"
+            lastConnectError != null -> "连接失败：" + lastConnectError
+            else -> "未连接"
+        }
+        val sourceState = source?.let { "有（" + it.title + "）" } ?: "无"
+        return "视频会话：控制器 " + controllerState + " · 会话源 " + sourceState + " · 通知权限 " + permission
+    }
 
     // ------------------------------------------------------------ VideoSessionHost（服务反查）
 
@@ -140,9 +169,15 @@ class VideoSessionController(
                 runCatching { future.get() }
                     .onSuccess { connected ->
                         controller = connected
+                        lastConnectError = null
                         AppLog.i(TAG, "已连接视频会话服务（R18 视频侧）")
+                        runCatching { Breadcrumbs.mark("视频会话：控制器已连接") }
                     }
-                    .onFailure { AppLog.w(TAG, "连接视频会话服务失败", it) }
+                    .onFailure { error ->
+                        lastConnectError = error.message ?: error.javaClass.simpleName
+                        AppLog.w(TAG, "连接视频会话服务失败", error)
+                        runCatching { Breadcrumbs.mark("视频会话：连接失败（" + lastConnectError + "）") }
+                    }
             },
             ContextCompat.getMainExecutor(appContext),
         )
