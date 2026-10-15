@@ -26,10 +26,16 @@ data class SettingsConnectionUi(
 /**
  * 设置页的一条只读说明（**R7** 网络切换策略 / **R6** 凭据口径）。
  *
+ * **R21（2026-10-15）**：说明多了「归属分组」——说明本来就该贴在它解释的那个分组里
+ * （选路规则跟着连接、缓存跟着网络、凭据跟着安全），而不是全部塞进一张「网络策略」卡片，
+ * 那样既离题又占地方。
+ *
  * @param title 小标题（中文）。
  * @param detail 详细说明（中文，可多行）。
+ * @param group 这条说明属于哪个分组（默认连接组，老调用点不受影响）。
  */
 data class SettingsNote(
     val title: String,
     val detail: String,
+    val group: SettingsGroup = SettingsGroup.CONNECTION,
 )

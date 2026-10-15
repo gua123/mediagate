@@ -1,8 +1,8 @@
 package io.github.gua123.mediagate.feature.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +21,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,10 +61,12 @@ fun SettingsScreen(
     onKeepAliveAction: (KeepAliveAction) -> Unit = {},
     onKeepAliveConfirm: (KeepAliveItemKind, Boolean) -> Unit = { _, _ -> },
     /**
-     * 追加区块（由 :app 注入，例如「应用更新」R20 与「语音识别模型」R14）——
+     * 各分组的内容插槽（由 :app 注入：播放 / 网络与缓冲 / 更新 / 主机密钥 / 诊断）——
      * 让 :feature:settings 不必反向依赖那些模块，插槽里的内容仍遵守"组合函数零 IO"。
+     *
+     * **R21（2026-10-15）**：从"整体追加在最后"改成**按分组归位**；没给内容的分组不渲染空卡片。
      */
-    extraSections: @Composable ColumnScope.() -> Unit = {},
+    sections: SettingsSections = SettingsSections.EMPTY,
 ) {
     Scaffold(
         modifier = modifier,
@@ -74,86 +80,168 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.settings_current_connection),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (connection.configured) {
-                        Text(
-                            text = stringResource(
-                                R.string.settings_current_value,
-                                connection.name.orEmpty(),
-                                connection.protocolText.orEmpty(),
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        connection.primaryAddress?.let { address ->
-                            Text(
-                                text = stringResource(R.string.settings_current_primary, address),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
+            // 分组顺序与"哪几组有内容"都是纯逻辑（SettingsLayout.kt，有 JVM 单测）：
+            // 常用的在前（连接 → 播放 → 网络 → 更新），排障类垫底（安全 → 诊断）。
+            val visibleGroups = sections.groupsWithContent()
+            settingsGroupOrder().forEach { group ->
+                if (group !in visibleGroups) return@forEach
+                // 折叠状态按会话记住（转屏不丢；重进设置页回到默认——只有诊断组默认折叠）
+                var expanded by rememberSaveable(group.name) { mutableStateOf(!group.collapsedByDefault) }
+                SettingsGroupHeader(
+                    group = group,
+                    expanded = expanded,
+                    onToggle = { expanded = !expanded },
+                )
+                if (expanded) {
+                    when (group) {
+                        SettingsGroup.CONNECTION ->
+                            ConnectionCard(connection = connection, onOpenConnections = onOpenConnections)
+
+                        SettingsGroup.PLAYBACK -> {
+                            // 后台与保活（R18）：四项状态 + 一键跳转 + 手动确认
+                            KeepAliveCard(
+                                guide = keepAlive,
+                                onAction = onKeepAliveAction,
+                                onConfirm = onKeepAliveConfirm,
                             )
+                            sections.playback?.invoke(this)
                         }
-                        connection.selectionReason?.let { reason ->
-                            Text(
-                                text = reason,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (!connection.browsable) {
-                            Text(
-                                text = stringResource(R.string.settings_current_not_browsable),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = stringResource(R.string.settings_current_none),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+
+                        SettingsGroup.NETWORK -> sections.network?.invoke(this)
+                        SettingsGroup.UPDATE -> sections.update?.invoke(this)
+                        SettingsGroup.SECURITY -> sections.security?.invoke(this)
+                        SettingsGroup.DIAGNOSTICS -> sections.diagnostics?.invoke(this)
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedButton(onClick = onOpenConnections, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.settings_open_connections))
-                    }
+                    // 说明贴在它解释的那一组里（R21：不再把 4 条不同主题的说明塞进一张「网络策略」卡）
+                    NotesBlock(notes = settingsNotesFor(notes, group))
                 }
             }
-
-            // 后台与保活（R18）：四项状态 + 一键跳转 + 手动确认
-            KeepAliveCard(
-                guide = keepAlive,
-                onAction = onKeepAliveAction,
-                onConfirm = onKeepAliveConfirm,
-            )
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.settings_network_policy),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    notes.forEach { note ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(note.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        Text(
-                            text = note.detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            extraSections()
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * 分组标题行（**R21**）：一行小标题 + 一句说明 + 展开/收起。
+ *
+ * 整行可点（比只让箭头可点好按）；**折叠时仍显示副标题**，不看内容也知道这组管什么。
+ */
+@Composable
+private fun SettingsGroupHeader(
+    group: SettingsGroup,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(group.titleRes),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = stringResource(group.subtitleRes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            text = stringResource(
+                if (expanded) R.string.settings_group_collapse else R.string.settings_group_expand,
+            ),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+/** 一组的只读说明（**R21**：说明归到它解释的分组里，空了就不渲染）。 */
+@Composable
+private fun NotesBlock(notes: List<SettingsNote>) {
+    if (notes.isEmpty()) return
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_notes_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+            )
+            notes.forEach { note ->
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(note.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    text = note.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** 「当前连接」卡片（**R8**）：显示当前连接与首选地址，并可跳到连接管理页。 */
+@Composable
+private fun ConnectionCard(
+    connection: SettingsConnectionUi,
+    onOpenConnections: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_current_connection),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            if (connection.configured) {
+                Text(
+                    text = stringResource(
+                        R.string.settings_current_value,
+                        connection.name.orEmpty(),
+                        connection.protocolText.orEmpty(),
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                connection.primaryAddress?.let { address ->
+                    Text(
+                        text = stringResource(R.string.settings_current_primary, address),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                connection.selectionReason?.let { reason ->
+                    Text(
+                        text = reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (!connection.browsable) {
+                    Text(
+                        text = stringResource(R.string.settings_current_not_browsable),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            } else {
+                Text(
+                    text = stringResource(R.string.settings_current_none),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(onClick = onOpenConnections, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.settings_open_connections))
+            }
         }
     }
 }
