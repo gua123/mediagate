@@ -227,6 +227,14 @@
 
 ### 4.6 播放内核：多引擎 + 硬解/软解（R9/R10，v2 新增）
 
+> ⚠️ **2026-10-15 变更（以此为准）**：**播放内核回到单一 Media3**——自研引擎与 LibVLC **双双下线**。
+> 用户原话：「**画面全没有，所以我想切回原先的引擎，将自研引擎和 libvlc 都去掉吧，原有引擎就可以。**」
+> 背景：自研引擎能在播放页切过去，但真机上**不出画面**；LibVLC 在这台机器上会把 App 整个带走（历史面包屑为证）。
+> 执行口径：`EngineSelection.availableEngines()` 只含 Media3（"有几个内核可用"的唯一判据）⇒ 播放页不再有「内核」按钮；
+> `resolvePreference()` 把旧版本存过的偏好解析回 Media3；`fallbackFrom()` 恒 null（不再有"改用另一内核续播"）；
+> **三种解码档位都在 Media3 内部实现**（`FORCE_SW` 走 `softwareOnly` 解码器筛选）。下面的表格与降级链是**历史设计**，
+> 保留是为了说明"当初为什么这么设计"；复活路径见 `docs/方案-播放引擎重写.md` §9.4i。
+
     interface PlayerEngine {
         fun setMedia(src: MediaSourceRef)      // 内部映射到 ExoPlayer MediaSource 或 VLC Media
         fun prepare(); fun play(); fun pause(); fun seekTo(ms: Long)

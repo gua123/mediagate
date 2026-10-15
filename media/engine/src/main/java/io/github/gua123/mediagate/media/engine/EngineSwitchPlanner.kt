@@ -65,39 +65,62 @@ data class SwitchPlan(
 object EngineSelection {
 
     /**
-     * 某个解码模式「倾向」用哪个内核：
-     * - [DecoderMode.FORCE_SW] → LibVLC（自带软解，Media3 只有设备带软解码器时才软得起来）；
-     * - [DecoderMode.AUTO_HW] / [DecoderMode.FORCE_HW] → Media3（MediaCodec 硬解，seek/字幕联动最顺）。
+     * **当前在用的内核清单**（界面据此决定要不要显示「内核」按钮；也是"能不能切"的唯一判据）。
+     *
+     * **2026-10-15 用户拍板：只保留原有引擎（Media3）**——
+     * 原话「画面全没有，所以我想切回原先的引擎，将自研引擎和 libvlc 都去掉吧，原有引擎就可以」。
+     * 背景：自研引擎在真机上能切过去但**不出画面**；LibVLC 在这台机器上会把 App 整个带走（历史面包屑为证）。
+     * 两个都不再出现在任何入口里；代码与设计留档见 docs/方案-播放引擎重写.md（真要复活有据可查）。
      */
-    fun preferredFor(decoderMode: DecoderMode): EngineKind =
-        if (decoderMode.prefersVlcEngine) EngineKind.VLC else EngineKind.MEDIA3
+    fun availableEngines(): List<EngineKind> = listOf(EngineKind.MEDIA3)
+
+    /** 现在只能有一个内核（界面据此隐藏切换入口）。 */
+    fun canSwitchEngine(): Boolean = availableEngines().size > 1
 
     /**
-     * 出错后的降级目标（plan 4.6 自动降级链）：Media3 出错 → LibVLC；LibVLC 再出错 → null（无处可退）。
-     */
-    /**
-     * 用户点「内核」按钮时的**下一档**（轮转，因为过渡期有三个内核并存）。
+     * 把（可能来自旧版本的）**偏好**解析成实际要用的内核。
      *
-     * 顺序：Media3 → 自研引擎 → LibVLC → Media3。LibVLC **已验证不可用**时跳过它
-     *（回环代理起不来就切不过去，别让用户白点一下）；"未知"时不跳，由界面按老规矩先弹确认。
+     * 老版本可能把 LibVLC / 自研引擎写进偏好；那些内核已下线，所以这里统一回到唯一可用的那个。
+     * 放在契约层（纯函数、有单测）而不是藏在 :app 的容器里——这样"旧偏好怎么办"有唯一答案、也能被测到。
+     */
+    fun resolvePreference(preferred: EngineKind): EngineKind =
+        if (availableEngines().contains(preferred)) preferred
+        else availableEngines().firstOrNull() ?: EngineKind.MEDIA3
+
+    /**
+     * 某个解码模式「倾向」用哪个内核。
+     *
+     * Media3 三种档位都支持（[DecoderMode.FORCE_SW] 走 softwareOnly 解码器筛选，
+     * 见 ExoPlayerEngine.codecSelectorFor），所以**一律 Media3**，不再靠 LibVLC 软解。
+     */
+    fun preferredFor(decoderMode: DecoderMode): EngineKind = EngineKind.MEDIA3
+
+    /**
+     * 用户点「内核」按钮时的**下一档**。
+     *
+     * 只有一个内核可用时**原地不动**（按钮本身也会被界面隐藏，这里只是兜底）。
      */
     fun cycleNext(current: EngineKind, canUseVlc: Boolean): EngineKind {
-        val order = listOf(EngineKind.MEDIA3, EngineKind.NATIVE, EngineKind.VLC)
+        val order = availableEngines()
+        // 只有一个可用内核时：**返回它**（而不是当前的旧值）——万一当前值来自旧版本存的偏好，
+        // 这样也能把它拉回唯一可用的那个内核
+        if (order.size <= 1) return order.firstOrNull() ?: current
         var index = order.indexOf(current).coerceAtLeast(0)
         repeat(order.size) {
             index = (index + 1) % order.size
             val candidate = order[index]
             if (candidate != EngineKind.VLC || canUseVlc) return candidate
         }
-        return EngineKind.MEDIA3
+        return current
     }
 
-    fun fallbackFrom(current: EngineKind): EngineKind? = when (current) {
-        EngineKind.MEDIA3 -> EngineKind.VLC
-        EngineKind.VLC -> null
-        // 自研引擎是"唯一的那一套"，过渡期它打不开就退到默认内核 Media3（不静默：界面要说明原因）
-        EngineKind.NATIVE -> EngineKind.MEDIA3
-    }
+    /**
+     * 出错后的降级目标：**没有别的内核可退 ⇒ null**（界面因此不显示「改用 X 续播」）。
+     *
+     * 2026-10-15 之前这里是 Media3 → VLC → 自研引擎 的降级链；VLC 与自研引擎下线后链路为空。
+     */
+    fun fallbackFrom(current: EngineKind): EngineKind? =
+        availableEngines().firstOrNull { it != current && it != EngineKind.MEDIA3 } ?: null
 }
 
 /**

@@ -99,6 +99,8 @@ class VideoPlayerViewModelTest {
 
     @Test
     fun persistedEngineAndDecoderModeAreUsedOnEntry() = playerTest {
+        // 2026-10-15 用户拍板只保留原有引擎：偏好里的解码档位照旧生效，
+        // 但**已下线的内核**会被契约层解析回 Media3（旧版本存过 LibVLC 也不会切不过去）
         val env = FakeVideoPlayerEnvironment(
             entries = movieEntries(),
             preferences = FakeVideoPreferences(engine = EngineKind.VLC, decoderMode = DecoderMode.FORCE_SW),
@@ -107,10 +109,70 @@ class VideoPlayerViewModelTest {
         val vm = player(env, "Movies/b.mp4")
         settle()
 
-        assertEquals(listOf(EngineKind.VLC), env.createCalls)
+        assertEquals(listOf(EngineKind.MEDIA3), env.createCalls)
         assertEquals(DecoderMode.FORCE_SW, env.last!!.decoderMode)
-        assertEquals(EngineKind.VLC, vm.state.value.engineKind)
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
         assertEquals(DecoderMode.FORCE_SW, vm.state.value.decoderMode)
+    }
+
+    // ------------------------------------------------ 单内核契约（2026-10-15 用户拍板：只保留原有引擎）
+
+    @Test
+    fun 旧偏好里的已下线内核一律回到原有引擎() = playerTest {
+        listOf(EngineKind.VLC, EngineKind.NATIVE).forEach { legacy ->
+            val env = environment(preferences = FakeVideoPreferences(engine = legacy))
+            val vm = player(env, "Movies/b.mp4")
+            settle()
+            assertEquals(legacy.name + " 应回到原有引擎", listOf(EngineKind.MEDIA3), env.createCalls)
+            assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
+            assertEquals(legacy.name + " 不该报错", null, vm.state.value.errorDetail)
+        }
+    }
+
+    @Test
+    fun 点内核在只剩一个内核时是空操作() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        assertEquals(listOf(EngineKind.MEDIA3), env.createCalls)
+
+        repeat(3) {
+            vm.switchEngine()
+            settle()
+        }
+
+        assertEquals("不该再建第二个内核", listOf(EngineKind.MEDIA3), env.createCalls)
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
+        assertFalse("界面也不该给切换入口", vm.state.value.canSwitchEngine)
+    }
+
+    @Test
+    fun 会话绑不上照样能播() = playerTest {
+        val env = environment()
+        env.playback.failBind = IllegalStateException("Failed to resolve SessionToken for …VideoPlaybackService")
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
+        assertEquals("会话是附属能力，绑不上不该变成播放错误", null, vm.state.value.errorDetail)
+        assertTrue("仍然会试着绑一次会话", env.playback.sessions.isNotEmpty())
+    }
+
+    @Test
+    fun 解码档位循环落在原有引擎并持久化() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+
+        val seen = mutableSetOf<DecoderMode>()
+        repeat(4) {
+            vm.cycleDecoderMode()
+            settle()
+            seen += vm.state.value.decoderMode
+            assertEquals("改档位不该换内核", listOf(EngineKind.MEDIA3), env.createCalls)
+        }
+        assertTrue("三档都该轮到过", seen.size >= 3)
+        assertTrue("档位要落盘", env.preferences.decoderWrites.isNotEmpty())
     }
 
     @Test
@@ -166,42 +228,7 @@ class VideoPlayerViewModelTest {
         assertEquals(42_000L, progress.lastPositionOf("Movies/b.mp4"))
     }
 
-    @Test
-    fun switchingToNativeEngineKeepsPositionAndSubtitles() = playerTest {
-        val env = environment()
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        val old = env.last!!
-        old.position = 12_000L
-        old.duration = 60_000L
-        old.speedValue = 1.5f
-        old.isPlaying = true
-        old.subtitles().selectTrack("mediagate://fake:video/Movies/b.srt")
-        old.subtitles().setEnabled(true)
-
-        vm.switchEngine()  // Media3 → 自研引擎（轮转）
-        settle()
-
-        assertTrue(old.released)
-        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.NATIVE), env.createCalls)
-        val fresh = env.last!!
-        assertEquals(12_000L, fresh.position)
-        assertTrue(fresh.isPlaying)
-        assertEquals("mediagate://fake:video/Movies/b.srt", fresh.subtitles().state.value.uri)
-        assertTrue(fresh.subtitles().state.value.enabled)
-        assertEquals(listOf(EngineKind.NATIVE), env.preferences.engineWrites)
-
-        // 自研引擎还没有倍速（capabilities.speed = false）⇒ **如实回到 1.0×**，
-        // 而不是把 1.5× 带过去让界面显示一个假的倍速
-        assertEquals(1.0f, fresh.speed, 0.0001f)
-
-        val state = vm.state.value
-        assertEquals(EngineKind.NATIVE, state.engineKind)
-        assertEquals(12_000L, state.positionMs)
-        assertEquals(1.0f, state.speed, 0.0001f)
-        assertFalse(state.switching)
-    }
-
+    
     @Test
     fun 出第一帧之后要上报一次播放指标_而且只报一次() = playerTest {
         val env = environment()
@@ -221,109 +248,8 @@ class VideoPlayerViewModelTest {
         assertEquals(1, env.playbackMetrics.size)
     }
 
-    @Test
-    fun 自研引擎播不了这个文件要自动换回_Media3_并且给一句说明() = playerTest {
-        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.NATIVE))
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        assertEquals("先按偏好用自研引擎起播", EngineKind.NATIVE, env.last!!.kind)
-        assertEquals(null, vm.state.value.engineFallbackNotice)
-
-        // 内核报错：格式/编码不认、数据读不动……（真机上就是"点了没反应/黑屏"那类）
-        env.last!!.state.value = EngineState.Error("这个文件里没有能解码的视频流")
-        settle()
-
-        // 自动换回 Media3：用户不用动手，但界面上要有一句说明（口径：不硬切、不静默）
-        assertEquals(listOf(EngineKind.NATIVE, EngineKind.MEDIA3), env.createCalls)
-        val notice = vm.state.value.engineFallbackNotice
-        assertNotNull("自动换内核必须告诉用户一声", notice)
-        assertTrue(notice!!.contains("已自动换回"))
-        assertTrue(notice.contains("Media3"))
-        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
-    }
-
-    @Test
-    fun 自动回退只做一次_免得画面来回跳() = playerTest {
-        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.NATIVE))
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        env.last!!.state.value = EngineState.Error("解码器打不开")
-        settle()
-        assertEquals(listOf(EngineKind.NATIVE, EngineKind.MEDIA3), env.createCalls)
-
-        // 换回 Media3 之后又出错：这次不再自动切（是别的问题了，交给错误卡片与用户决定）
-        env.last!!.state.value = EngineState.Error("网络读不动")
-        settle()
-        assertEquals(
-            "已经回退过一次就不再自动切换",
-            listOf(EngineKind.NATIVE, EngineKind.MEDIA3),
-            env.createCalls,
-        )
-        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
-    }
-
-    @Test
-    fun 会话绑不上不该让换内核失败() = playerTest {
-        // 真机事故（2026-10-15）：视频会话服务在清单里缺 Media3 的会话 action ⇒
-        // SessionToken 解析抛 IllegalArgumentException（Failed to resolve SessionToken for …）⇒
-        // 换内核那一行没兜住 ⇒ 自研引擎被判成「播不了」⇒ 自动回退 Media3，用户根本切不过去。
-        // 口径：**会话（通知栏/锁屏）是附属能力，它失败不该影响播放与换内核本身**。
-        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.MEDIA3))
-        env.playback.failBind = IllegalStateException(
-            "Failed to resolve SessionToken for ComponentInfo{…VideoPlaybackService}. Manifest doesn't declare one of either …",
-        )
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        assertEquals("起播本身不该受会话绑定影响", EngineKind.MEDIA3, vm.state.value.engineKind)
-
-        vm.switchEngine()  // Media3 → 自研引擎
-        settle()
-
-        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.NATIVE), env.createCalls)
-        assertEquals("换内核必须成功落到自研引擎", EngineKind.NATIVE, vm.state.value.engineKind)
-        assertEquals("不该被自动回退回 Media3", 2, env.createCalls.size)
-        assertEquals("会话绑不上不该变成播放错误", null, vm.state.value.errorDetail)
-        assertTrue("每次换内核都还要试着绑一次会话", env.playback.sessions.size >= 2)
-    }
-
-    @Test
-    fun switchingBetweenSpeedCapableEnginesKeepsSpeed() = playerTest {
-        // 从 LibVLC 出发轮转回 Media3（两个都支持倍速）⇒ 1.5× 必须原样保留
-        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.VLC))
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        val old = env.last!!
-        old.position = 12_000L
-        old.duration = 60_000L
-        old.speedValue = 1.5f
-        old.isPlaying = true
-
-        vm.switchEngine()  // LibVLC → Media3
-        settle()
-
-        assertEquals(listOf(EngineKind.VLC, EngineKind.MEDIA3), env.createCalls)
-        val fresh = env.last!!
-        // 目标内核支持倍速 ⇒ 原样恢复（这里只看内核；界面上的倍速只在用户点倍速芯片时才变）
-        assertEquals(1.5f, fresh.speed, 0.0001f)
-        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
-    }
-
-    @Test
-    fun decoderModeCycleSwitchesToVlcAndPersistsChoice() = playerTest {
-        val env = environment()
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-
-        vm.cycleDecoderMode()
-        settle()
-
-        assertEquals(listOf(DecoderMode.FORCE_SW), env.preferences.decoderWrites)
-        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.VLC), env.createCalls)
-        assertEquals(EngineKind.VLC, vm.state.value.engineKind)
-        assertEquals(DecoderMode.FORCE_SW, vm.state.value.decoderMode)
-    }
-
-    @Test
+    
+        @Test
     fun decoderModeWithoutProxyRebuildsInPlaceAndHintsBlackout() = playerTest {
         val env = environment(proxy = null)
         val vm = player(env, "Movies/b.mp4")
@@ -343,29 +269,7 @@ class VideoPlayerViewModelTest {
         assertFalse(vm.state.value.blackoutHint)
     }
 
-    @Test
-    fun engineErrorOffersFallbackAndFallbackKeepsPosition() = playerTest {
-        val env = environment()
-        val vm = player(env, "Movies/b.mp4")
-        settle()
-        val broken = env.last!!
-        broken.position = 30_000L
-        broken.state.value = EngineState.Error("本机解码器无法解码该媒体")
-        settle()
-
-        assertEquals(VideoPlayerStatus.ERROR, vm.state.value.status)
-        assertEquals(VideoErrorKind.PLAYBACK, vm.state.value.errorKind)
-        assertTrue(vm.state.value.canFallback)
-
-        vm.fallbackFromFailure()
-        settle()
-
-        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.VLC), env.createCalls)
-        assertEquals(30_000L, env.last!!.position)
-        assertEquals(VideoPlayerStatus.READY, vm.state.value.status)
-        assertEquals(EngineKind.VLC, vm.state.value.engineKind)
-    }
-
+    
     @Test
     fun fallbackIsNotOfferedOrRunWithoutProxy() = playerTest {
         val env = environment(proxy = null)
@@ -550,30 +454,7 @@ class VideoPlayerViewModelTest {
         assertEquals("也不该重建内核", engineBefore, env.created.size)
     }
 
-    @Test
-    fun `切换内核时新内核初始化失败要落到错误态而不是崩掉`() = playerTest {
-        val env = environment()
-        val vm = player(env, "Movies/a.mp4")
-        settle()
-        val old = env.last!!
-
-        // 让下一个建出来的内核在 setMedia 时抛异常——模拟真机上点右上角「内核」切到 LibVLC 挂掉
-        //（2026-10-03 真机反馈："点右上角内核还会闪退"）
-        env.failSetMediaNext = IllegalStateException("libvlc 初始化失败")
-
-        vm.switchEngine()
-        settle()
-
-        assertEquals(VideoPlayerStatus.ERROR, vm.state.value.status)
-        assertTrue(
-            "错误详情要带上原因：" + vm.state.value.errorDetail,
-            vm.state.value.errorDetail.orEmpty().contains("libvlc"),
-        )
-        assertTrue("旧内核应已释放", old.released)
-        assertFalse("不该还显示在播放", vm.state.value.playing)
-    }
-
-    // ------------------------------------------------------------------ 测试脚手架
+// ------------------------------------------------------------------ 测试脚手架
 
     private fun TestScope.player(env: FakeVideoPlayerEnvironment, path: String): VideoPlayerViewModel {
         val vm = VideoPlayerViewModel(

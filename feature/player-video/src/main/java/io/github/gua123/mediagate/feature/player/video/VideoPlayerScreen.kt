@@ -779,7 +779,10 @@ private fun Controls(
             )
             // 旋转（2026-10-03 用户要求）：点一下在横屏/竖屏之间切换；退出播放页恢复"跟随系统"
             RotateButton(onRotated = onRotated)
-            EngineChip(state = state, onClick = onRequestSwitchEngine)
+            // 只有一个内核时不给「内核」按钮（2026-10-15：自研引擎与 LibVLC 下线，只剩 Media3）
+            if (state.canSwitchEngine) {
+                EngineChip(state = state, onClick = onRequestSwitchEngine)
+            }
         }
 
         Spacer(modifier = Modifier.weight(1f))
