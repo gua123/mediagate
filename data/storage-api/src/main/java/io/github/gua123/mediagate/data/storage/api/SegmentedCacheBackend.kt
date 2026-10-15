@@ -11,6 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -188,6 +190,41 @@ class SegmentedCacheBackend(
                 return
             }
             index++
+        }
+    }
+
+    /**
+     * **并行预取**（**2026-10-14 用户要求**：「可否单文件多线程…在打开文件夹时自动进行缓存」）。
+     *
+     * 与 [prefetch] 的唯一区别：同一文件一次发 [concurrency] 个请求（按段分批），
+     * 把"每次请求的往返延迟"藏起来——高延迟链路上这才是"更快"的来源（不是带宽）。
+     *
+     * **播放路径不受影响**：读数据仍旧是"要哪段取哪段、一个请求顺序写完"；
+     * 而且因为**按段单飞**，预取正在下的段与播放要的段是同一个任务，不会重复下载。
+     *
+     * 失败只记日志、不抛出：预取永远不许把播放搞挂。
+     */
+    suspend fun prefetchParallel(
+        path: String,
+        offset: Long,
+        length: Long = segmentBytes,
+        concurrency: Int = SegmentBatches.DEFAULT_PREFETCH_CONCURRENCY,
+    ) {
+        val start = offset.coerceAtLeast(0L)
+        val end = start + length.coerceAtLeast(1L)
+        val firstIndex = start / segmentBytes
+        val lastIndex = (end - 1L) / segmentBytes
+        for (batch in SegmentBatches.batch(firstIndex, lastIndex, concurrency)) {
+            try {
+                coroutineScope {
+                    batch.map { index -> async { ensureSegment(path, index) } }.awaitAll()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                AppLog.w(TAG, "并行预取失败：$path @$batch", t)
+                return
+            }
         }
     }
 

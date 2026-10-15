@@ -93,6 +93,17 @@ interface BrowserEnvironment {
 
     /** 改排序并落盘。 */
     suspend fun setSort(sort: EntrySort)
+
+    /**
+     * **把一个文件的"开头字节"先缓存下来**（**2026-10-14 用户要求**：「同时加载多个文件，
+     * 定在同文件夹下…在打开文件夹时自动进行缓存」）。
+     *
+     * 由 :app 实现（它才拿得到分段缓存与调优参数）：同一文件**并发**取头部几段（隐藏往返延迟），
+     * 顺手把尾段也拿了（非 faststart 的 MP4 把 moov 放在末尾——0.1.63 真机教训）。
+     *
+     * 默认空实现：浏览器单测与预览不需要它；**失败/被取消都不许影响播放**。
+     */
+    suspend fun warmUpFile(path: String) = Unit
 }
 
 /**

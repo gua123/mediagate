@@ -416,6 +416,37 @@ class AppContainer(context: Context) :
         settings.setSort(sort)
     }
 
+    /**
+     * **打开文件夹时自动缓存**（**2026-10-14 用户要求**：「可否单文件多线程，并且同时加载多个文件，
+     * 定在同文件夹下，连接连接并且在打开文件夹时自动进行缓存」）。
+     *
+     * 分层实现（"多文件并发"在浏览器层，这里是"**单文件多线程**"）：
+     * - **头部**：`PREFETCH_HEAD_SEGMENTS` 段**并发**取（`prefetchParallel`，一次 4 个 Range 请求）
+     *   ——高延迟链路上这才是"更快"的来源（并发隐藏每次请求的往返）；
+     * - **尾部**：再取 1 段（非 faststart 的 MP4 把 moov 放末尾，播放器一打开就要读它）；
+     * - **播放不受影响**：读数据仍走"要哪段取哪段、单请求顺序写完"，而且**按段单飞**保证
+     *   预取与播放不会重复下载同一段。
+     *
+     * 任何失败都只记日志（预取是尽力而为，绝不许影响播放）。
+     */
+    override suspend fun warmUpFile(path: String) {
+        val cache = remoteCache ?: return
+        val segment = networkTuning.tuning.value.segmentBytes
+        val headBytes = segment * PREFETCH_HEAD_SEGMENTS
+        runCatching {
+            cache.prefetchParallel(
+                path = path,
+                offset = 0L,
+                length = headBytes,
+                concurrency = PREFETCH_CONCURRENCY,
+            )
+        }.onFailure { AppLog.w(TAG, "打开文件夹预热（头部）失败，不影响播放：" + path, it) }
+        val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return
+        val tail = PrefetchTargets.tailOffset(size, segment, headBytes) ?: return
+        runCatching { cache.prefetch(path, tail, segment) }
+            .onFailure { AppLog.w(TAG, "打开文件夹预热（尾段）失败，不影响播放：" + path, it) }
+    }
+
     override val thumbnails: ThumbnailRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         val imagePreview = ImageThumbnailExtractor()
         ThumbnailRepository(
@@ -1675,6 +1706,14 @@ class AppContainer(context: Context) :
 
         /** 打开即预取的段数（2 段 ≈ 8 MB，内网几乎瞬间，公网也不至于太铺张）。 */
         const val PREFETCH_HEAD_SEGMENTS = 2L
+
+        /**
+         * 预取时的**同一文件并发请求数**（**2026-10-14 用户问"可否单文件多线程"**）。
+         *
+         * 4 是折中：每次请求的往返（本项目实测公网 ≈600 ms）能被藏掉大部分，
+         * 又不至于把一条家用上行/反代链路压出队头阻塞。**只用于预取，播放路径不并发。**
+         */
+        const val PREFETCH_CONCURRENCY = 4
 
         /** 拖拽预取的字节数（R4）：4 MB = 一个段。 */
         const val PREFETCH_BYTES = 4L * 1024 * 1024
