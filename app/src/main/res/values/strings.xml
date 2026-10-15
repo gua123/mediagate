@@ -39,6 +39,14 @@
     <string name="trusted_host_keys_forget_all">全部忘掉</string>
 
     <!-- 诊断（2026-10-03 真机闪退之后补）：崩溃报告摆到界面上，用户复制给我即可定位 -->
+    <!-- 缓存明细（2026-10-15 用户要求：「告诉我哪些缓存过，哪些没有」） -->
+    <string name="cache_detail_title">缓存明细</string>
+    <string name="cache_detail_back">返回</string>
+    <string name="cache_detail_summary">已缓存的文件</string>
+    <string name="cache_detail_limit">缓存上限：%1$s（超出会按最久未用的段淘汰）</string>
+    <string name="cache_detail_clear_all">清空全部缓存</string>
+    <string name="cache_detail_empty">还没有缓存过任何文件：打开过的远端视频会按段缓存到本地，下次打开直接读本地。</string>
+    <string name="cache_detail_remove">删除</string>
     <string name="diagnostics_title">诊断与崩溃日志</string>
     <string name="diagnostics_subtitle">App 崩溃时会自动把堆栈与出事前的日志写进本机；这里能看到并复制全文。</string>
     <string name="diagnostics_no_crash">还没有崩溃记录。</string>

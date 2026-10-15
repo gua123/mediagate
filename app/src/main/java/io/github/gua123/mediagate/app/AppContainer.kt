@@ -635,6 +635,19 @@ class AppContainer(context: Context) :
 
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
 
+    /**
+     * **缓存明细**（2026-10-15 用户要求：「关于缓存部分，是否可以增加一个可视化界面，告诉我哪些缓存过，哪些没有」）。
+     *
+     * 纯读盘：列出每个已缓存的文件（显示名 / 已缓存字节 / 段数 / 覆盖率），按占用从多到少。
+     */
+    suspend fun cachedFileEntries(): List<io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend.CachedFileEntry> =
+        remoteCache?.cachedFiles() ?: emptyList()
+
+    /** 删掉某一个文件的缓存段；返回释放的字节数。 */
+    suspend fun removeCachedFile(
+        entry: io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend.CachedFileEntry,
+    ): Long = remoteCache?.removeCached(entry) ?: 0L
+
     /** 清空缓存，返回释放的字节数。 */
     suspend fun clearRemoteCache(): Long = remoteCache?.clearAll() ?: 0L
 

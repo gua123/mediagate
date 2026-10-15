@@ -47,6 +47,8 @@ fun NetworkTuningSection(
     /** 当前缓存占用（字节）；null = 还没读到（本地根目录时为 0）。 */
     cacheUsedBytes: Long?,
     onClearCache: () -> Unit,
+    /** 打开「缓存明细」页（列出哪些文件缓存过、缓存到什么程度）。 */
+    onOpenCacheDetail: () -> Unit = {},
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -143,7 +145,11 @@ fun NetworkTuningSection(
                 text = "现在已用 " + (cacheUsedBytes?.let { humanBytes(it) } ?: "读取中…"),
                 style = MaterialTheme.typography.bodySmall,
             )
-            TextButton(onClick = onClearCache) { Text("清空缓存") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onClearCache) { Text("清空缓存") }
+                // **缓存明细**（2026-10-15 用户要求：「告诉我哪些缓存过，哪些没有」）
+                TextButton(onClick = onOpenCacheDetail) { Text("查看缓存明细") }
+            }
 
             Text("段大小（缓存最小单位，下次连接生效）", style = MaterialTheme.typography.bodyMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

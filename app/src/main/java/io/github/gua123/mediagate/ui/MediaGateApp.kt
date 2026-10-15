@@ -384,6 +384,33 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                     )
                 }
 
+                // 缓存明细（2026-10-15 用户要求：「关于缓存部分，是否可以增加一个可视化界面，
+                // 告诉我哪些缓存过，哪些没有」）：列出已缓存文件（名/大小/段数/占比）+ 单条删除 + 清空全部
+                composable(route = CacheDetailRoutes.ROUTE) {
+                    var cacheEntries by remember {
+                        mutableStateOf(emptyList<io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend.CachedFileEntry>())
+                    }
+                    val tuningNow by container.networkTuning.tuning.collectAsStateWithLifecycle()
+                    LaunchedEffect(Unit) { cacheEntries = container.cachedFileEntries() }
+                    CacheDetailScreen(
+                        entries = cacheEntries,
+                        cacheLimitBytes = tuningNow.maxBytes,
+                        onRemove = { entry ->
+                            scope.launch {
+                                container.removeCachedFile(entry)
+                                cacheEntries = container.cachedFileEntries()
+                            }
+                        },
+                        onClearAll = {
+                            scope.launch {
+                                container.clearRemoteCache()
+                                cacheEntries = container.cachedFileEntries()
+                            }
+                        },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+
                 // 连接管理（M4，R6/R7/R8）：列表 + 新建/编辑/删除 + 测试连通性/测试全部 + 设为当前连接
                 composable(TopLevelDestination.CONNECTIONS.navRoute) {
                     ConnectionsRoute(
@@ -402,6 +429,7 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                         onNotice = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                         onOpenConnections = { navController.switchTopLevel(TopLevelDestination.CONNECTIONS) },
                         onRequestNotification = ::ensureNotificationPermission,
+                        onOpenCacheDetail = { navController.navigate(CacheDetailRoutes.ROUTE) },
                     )
                 }
             }
@@ -567,6 +595,8 @@ private fun SettingsRoute(
     onOpenConnections: () -> Unit,
     onRequestNotification: () -> Unit,
     onNotice: (String) -> Unit = {},
+    /** 打开「缓存明细」页（导航由 :app 的 NavHost 提供）。 */
+    onOpenCacheDetail: () -> Unit = {},
 ) {
     val connection by container.settingsConnection.collectAsStateWithLifecycle()
     val keepAlive by container.keepAlive.guide.collectAsStateWithLifecycle()
@@ -683,6 +713,7 @@ private fun SettingsRoute(
                         }
                     },
                     onReset = { scope.launch { container.networkTuning.reset() } },
+                    onOpenCacheDetail = onOpenCacheDetail,
                 )
             },
             // 应用内更新（R20）：检查 → 下载（断点续传）→ 签名校验 → 系统安装器
