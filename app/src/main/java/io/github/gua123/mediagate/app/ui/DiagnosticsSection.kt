@@ -65,6 +65,12 @@ fun DiagnosticsSection(
      * 把它自己的自述摆到屏幕上，用户在真机上一眼就能确认"引擎活着、FFmpeg 版本对得上"。
      */
     engineInfo: String? = null,
+    /**
+     * 最近几次播放的指标（新 → 旧；2026-10-15）：起播耗时 / seek 等待 / 丢帧 / 欠载 / 音画偏差。
+     *
+     * 这是"变快没变快、卡没卡"的第一手数据 —— 用户截图就能带上。
+     */
+    playbackMetrics: List<String> = emptyList(),
 ) {
     var showFull by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -103,6 +109,15 @@ fun DiagnosticsSection(
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+
+            // 最近播放指标（有才显示）：起播耗时是"打开变快"这条线唯一的客观证据
+            if (playbackMetrics.isNotEmpty()) {
+                Text(
+                    text = "最近播放：" + playbackMetrics.joinToString("\n"),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
                 )
             }
 

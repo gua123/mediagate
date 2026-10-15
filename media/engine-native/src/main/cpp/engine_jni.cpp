@@ -218,7 +218,7 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSeekTo(
 /**
  * 播放器自述（一条竖线分隔的状态串，Kotlin 侧 NativePlayerStatus 负责解析）：
  *
- *   状态|位置ms|时长ms|已显示帧数|丢帧数|宽x高|视频解码器|音频解码器|采样率|声道|音频欠载|音画偏差ms|音频输出说明
+ *   状态|位置ms|时长ms|已显示帧数|丢帧数|宽x高|视频解码器|音频解码器|采样率|声道|音频欠载|音画偏差ms|音频输出说明|起播ms|seek等待ms
  *
  * 出错时返回 "错误：…"。字段只增不改序——M4 接进 PlayerEngine 契约之后界面也要读它。
  */
@@ -278,5 +278,6 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayerStat
                      std::to_string(status.videoHeight) + "|" + status.codec + "|" + status.audioCodec + "|" +
                      std::to_string(status.sampleRate) + "|" + std::to_string(status.channels) + "|" +
                      std::to_string(status.audioUnderruns) + "|" + std::to_string(status.avOffsetMs) + "|" +
-                     status.audioError);
+                     status.audioError + "|" + std::to_string(status.firstFrameMs) + "|" +
+                     std::to_string(status.lastSeekMs));
 }

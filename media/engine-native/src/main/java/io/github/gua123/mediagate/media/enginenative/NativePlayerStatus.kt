@@ -25,10 +25,28 @@ data class NativePlayerStatus(
     val audioUnderruns: Long = 0,
     val avOffsetMs: Long = 0,
     val audioNote: String = "",
+    /** 起播耗时（毫秒）：开始打开 → 第一帧送屏；0 = 还没有（native 侧量好填进来）。 */
+    val firstFrameMs: Long = 0,
+    /** 最近一次 seek 的等待（毫秒）：请求 → 落点第一帧送屏；0 = 还没 seek 过。 */
+    val lastSeekMs: Long = 0,
     val error: String? = null,
 ) {
     /** 有没有音频（native 报的采样率 > 0 才算）。 */
     val hasAudio: Boolean get() = sampleRate > 0
+
+    /**
+     * 一行中文**播放指标**（诊断卡用）：起播 / seek 等待 / 丢帧 / 音频欠载 / 音画偏差。
+     *
+     * 为什么要摆出来（网络加载方案 P0.4）：没有基线就证明不了"变快"，
+     * 而用户能截图发过来的东西，才是真机上的第一手数据。
+     */
+    fun metricsLine(): String = buildString {
+        append("起播 ").append(firstFrameMs).append(" ms")
+        if (lastSeekMs > 0) append(" · seek 等待 ").append(lastSeekMs).append(" ms")
+        append(" · 丢帧 ").append(droppedFrames)
+        append(" · 音频欠载 ").append(audioUnderruns)
+        append(" · 音画偏差 ").append(avOffsetMs).append(" ms")
+    }
 
     /** 给诊断卡 / 日志用的一行中文自述。 */
     fun describe(): String {
@@ -75,6 +93,9 @@ data class NativePlayerStatus(
                 audioUnderruns = parts[10].toLongOrNull() ?: 0L,
                 avOffsetMs = parts[11].toLongOrNull() ?: 0L,
                 audioNote = parts[12],
+                // 起播 / seek 指标是 2026-10-15 追加的字段（老串没有就按 0 算，不许因为缺字段炸掉解析）
+                firstFrameMs = parts.getOrNull(13)?.toLongOrNull() ?: 0L,
+                lastSeekMs = parts.getOrNull(14)?.toLongOrNull() ?: 0L,
             )
         }
     }

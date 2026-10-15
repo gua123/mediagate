@@ -209,6 +209,9 @@ class NativeEnginePlayer(
         if (opened) NativeEngine.setVolume(playbackVolume)
     }
 
+    /** 播放指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）；还没出第一帧时返回 null。 */
+    override fun metricsLine(): String? = lastStatus?.takeIf { it.firstFrameMs > 0 }?.metricsLine()
+
     override fun positionMs(): Long = if (released) 0L else NativeEngine.positionMs()
 
     override fun durationMs(): Long = if (released) 0L else NativeEngine.durationMs()

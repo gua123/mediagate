@@ -203,6 +203,25 @@ class VideoPlayerViewModelTest {
     }
 
     @Test
+    fun 出第一帧之后要上报一次播放指标_而且只报一次() = playerTest {
+        val env = environment()
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        assertEquals("还没出第一帧时不该上报", emptyList<String>(), env.playbackMetrics)
+
+        // 内核量好了起播耗时（native 在第一帧送屏时结算）
+        env.last!!.metrics = "起播 380 ms · 丢帧 0 · 音频欠载 0 · 音画偏差 -12 ms"
+        tick(2)
+        assertEquals(1, env.playbackMetrics.size)
+        assertTrue(env.playbackMetrics.first().contains("起播 380 ms"))
+        assertTrue("上报时要带上是哪个内核", env.playbackMetrics.first().contains("Media3"))
+
+        // 再采几轮也不会重复上报（免得诊断卡被刷屏）
+        tick(3)
+        assertEquals(1, env.playbackMetrics.size)
+    }
+
+    @Test
     fun 自研引擎播不了这个文件要自动换回_Media3_并且给一句说明() = playerTest {
         val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.NATIVE))
         val vm = player(env, "Movies/b.mp4")

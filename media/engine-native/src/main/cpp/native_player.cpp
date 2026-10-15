@@ -170,6 +170,8 @@ PlayerStatus NativePlayer::status() const {
     snapshot.frames = frames_.load();
     snapshot.droppedFrames = droppedFrames_.load();
     snapshot.avOffsetMs = avOffsetMs_.load();
+    snapshot.firstFrameMs = firstFrameMs_.load();
+    snapshot.lastSeekMs = lastSeekMs_.load();
     snapshot.audioUnderruns = audio_.underruns();
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot.durationMs = durationMs_;
@@ -225,6 +227,13 @@ void NativePlayer::threadLoop() {
     double wallClockMs = 0;         // 本"播放段"累计走过的真实时间
     int64_t wallBaseMediaMs = 0;    // 这段真实时间对应的媒体位置
     int64_t lastTickUs = 0;
+
+    // 指标打点（P0.4「可观测指标」）：起播耗时与 seek 等待都在"第一帧送屏"那一刻结算。
+    // ⚠️ 必须在下面那些 lambda **之前**声明：lambda 捕获的是它定义点可见的变量。
+    const int64_t loopStartUs = av_gettime_relative();
+    bool firstFrameRecorded = false;
+    int64_t seekRequestUs = 0;
+    bool seekPending = false;
 
     auto fail = [&](const std::string& message) {
         __android_log_print(ANDROID_LOG_WARN, kTag, "自研播放失败：%s", message.c_str());
@@ -421,6 +430,16 @@ void NativePlayer::threadLoop() {
         if (globalSurfaceRenderer().blitRgba(rgba.data(), dstW, dstH)) {
             frames_.fetch_add(1);
             avOffsetMs_.store(static_cast<int64_t>(normMs - masterClockMs()));
+            // 第一帧送屏 = 起播完成；seek 后第一帧送屏 = 这次 seek 的等待时间
+            const int64_t nowUs = av_gettime_relative();
+            if (!firstFrameRecorded) {
+                firstFrameRecorded = true;
+                firstFrameMs_.store((nowUs - loopStartUs) / 1000);
+            }
+            if (seekPending) {
+                seekPending = false;
+                lastSeekMs_.store((nowUs - seekRequestUs) / 1000);
+            }
         }
     };
 
@@ -589,6 +608,9 @@ void NativePlayer::threadLoop() {
                 const int64_t streamTs = av_rescale_q(videoTimeline.toStreamTime(targetMs),
                                                       AVRational{1, 1000}, videoTimeBase);
                 if (av_seek_frame(format, videoIndex, streamTs, AVSEEK_FLAG_BACKWARD) >= 0) {
+                    // seek 等待从"用户拖到那儿"开始算，到落点第一帧送屏为止
+                    seekRequestUs = av_gettime_relative();
+                    seekPending = true;
                     avcodec_flush_buffers(videoCtx);
                     if (audioCtx != nullptr) avcodec_flush_buffers(audioCtx);
                     if (swr != nullptr) {
