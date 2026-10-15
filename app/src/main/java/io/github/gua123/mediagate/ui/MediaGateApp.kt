@@ -464,7 +464,63 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                                 }
                             }
                         },
+                        onOpenFolderPicker = { navController.navigate(CacheFolderPickerRoutes.ROUTE) },
                     )
+                }
+
+                // 添加文件夹到缓存队列（2026-10-15 用户要求：「将添加文件夹进队列和清理缓存界面放到一块」）：
+                // 只列目录、点进去看下一层，点右边「加入队列」就把那个文件夹里的视频（含子目录）排上队
+                composable(route = CacheFolderPickerRoutes.ROUTE) {
+                    var pickerPath by remember { mutableStateOf("") }
+                    var pickerFolders by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
+                    var pickerLoading by remember { mutableStateOf(true) }
+                    var pickerError by remember { mutableStateOf<String?>(null) }
+                    var pickerPick by remember { mutableStateOf<CachePickUi?>(null) }
+                    LaunchedEffect(pickerPath) {
+                        pickerLoading = true
+                        pickerError = null
+                        runCatching { container.listCacheFolders(pickerPath) }
+                            .onSuccess { pickerFolders = it }
+                            .onFailure {
+                                pickerFolders = emptyList()
+                                pickerError = it.message ?: "列文件夹失败"
+                            }
+                        pickerLoading = false
+                    }
+                    // 点「加入队列」：先递归统计（确认框里说清有多少个视频），确认后才真的排队
+                    val askToQueue: (String, String) -> Unit = { folderPath, label ->
+                        pickerPick = CachePickUi.Scanning(label)
+                        scope.launch {
+                            val result = runCatching { container.collectCacheTargets(folderPath, true) }
+                            pickerPick = result.fold(
+                                onSuccess = { CachePickUi.Ready(label, it) },
+                                onFailure = { CachePickUi.Failed(it.message ?: "统计失败") },
+                            )
+                        }
+                    }
+                    CacheFolderPickerScreen(
+                        path = pickerPath,
+                        folders = pickerFolders,
+                        loading = pickerLoading,
+                        error = pickerError,
+                        onEnter = { pickerPath = it },
+                        onPickFolder = { folderPath, name -> askToQueue(folderPath, name) },
+                        onPickCurrent = { askToQueue(pickerPath, pickerPath.substringAfterLast('/').ifEmpty { "根目录" }) },
+                        onBack = { navController.popBackStack() },
+                    )
+                    pickerPick?.let { pick ->
+                        CacheEnqueueDialog(
+                            state = pick,
+                            onConfirm = { picked ->
+                                container.enqueueCache(picked.entries)
+                                pickerPick = null
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(context.getString(R.string.cache_pick_enqueued))
+                                }
+                            },
+                            onDismiss = { pickerPick = null },
+                        )
+                    }
                 }
 
                 // 连接管理（M4，R6/R7/R8）：列表 + 新建/编辑/删除 + 测试连通性/测试全部 + 设为当前连接
