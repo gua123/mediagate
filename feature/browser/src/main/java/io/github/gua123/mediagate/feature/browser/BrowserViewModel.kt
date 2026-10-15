@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,6 +79,9 @@ class BrowserViewModel(
     /** 正在进行的列目录任务；新请求先取消它。 */
     private var loadJob: Job? = null
 
+    /** 封面空闲预热的协程（用户一操作就取消，见 [scheduleCoverWarmup]）。 */
+    private var warmupJob: Job? = null
+
     init {
         viewModelScope.launch {
             environment.root.collect { root -> onRootChanged(root) }
@@ -114,23 +120,27 @@ class BrowserViewModel(
      * 改排序（2026-10-03 用户要求）：先更新界面，再落盘（落盘失败不影响本次浏览）。
      */
     fun setSort(sort: EntrySort) {
+        warmupJob?.cancel()
         _state.update { it.reduce(BrowserEvent.SortChanged(sort)) }
         viewModelScope.launch { environment.setSort(sort) }
     }
 
     /** 进入子目录（[path] 为相对根目录的 POSIX 路径）。 */
     fun open(path: String) {
+        warmupJob?.cancel()
         load(path, refreshing = false)
     }
 
     /** 返回上级；已在根目录时什么都不做。 */
     fun up() {
+        warmupJob?.cancel()
         val parent = BrowserPaths.parentOf(_state.value.path) ?: return
         load(parent, refreshing = false)
     }
 
     /** 下拉刷新：保留当前内容，只转圈。 */
     fun refresh() {
+        warmupJob?.cancel()
         load(_state.value.path, refreshing = true)
     }
 
@@ -167,6 +177,7 @@ class BrowserViewModel(
 
     private fun load(path: String, refreshing: Boolean) {
         val root = currentRoot
+        warmupJob?.cancel()
         loadJob?.cancel()
         if (root == null) {
             _state.update { it.reduce(BrowserEvent.RootMissing) }
@@ -193,6 +204,39 @@ class BrowserViewModel(
                     is LoadOutcome.Success -> state.reduce(BrowserEvent.LoadSucceeded(outcome.entries))
                     is LoadOutcome.Failure -> state.reduce(BrowserEvent.LoadFailed(outcome.kind, outcome.detail))
                 }
+            }
+            // 列表出来了：空闲预热"视频开头封面"（用户 2026-10-14 的要求）
+            if (outcome is LoadOutcome.Success) scheduleCoverWarmup(root, target)
+        }
+    }
+
+    /**
+     * 空闲预热封面（**2026-10-14 用户要求**：打开软件的空闲时先取视频文件开头，用开头画面当封面，
+     * 取到后刷新列表里的封面）。
+     *
+     * 三条纪律（都在 [CoverWarmupPolicy] 里定死，可单测）：
+     * ① **先等一会儿**再动手（用户多半正在翻列表）；② **同一远端连接最多 2 个并发**
+     * （用户问"多线程会不会更快"——会，但开太多会互相抢带宽、还可能被服务端限流，反而拖慢播放）；
+     * ③ **用户一操作就整体取消**（切目录/下拉刷新/改排序都取消），绝不给正在看的人添堵。
+     *
+     * 预热本身走的还是 [ThumbnailRepository]——**已缓存的会直接命中、不发网络请求**。
+     */
+    private fun scheduleCoverWarmup(root: BrowserRootState, path: String) {
+        warmupJob?.cancel()
+        val targets = CoverWarmupPolicy.targets(_state.value.visibleEntries)
+        if (targets.isEmpty()) return
+        warmupJob = viewModelScope.launch {
+            delay(CoverWarmupPolicy.DELAY_AFTER_LIST_MS)
+            for (batch in CoverWarmupPolicy.batches(targets)) {
+                // 期间用户已经换了目录/刷新过就不要再干了
+                if (_state.value.path != path || _state.value.status != BrowserStatus.CONTENT) return@launch
+                batch.map { entry ->
+                    async(io) {
+                        runCatching { environment.thumbnails.thumbnail(entry, root.backend) }
+                    }
+                }.awaitAll()
+                _state.update { it.reduce(BrowserEvent.CoverWarmed) }
+                delay(CoverWarmupPolicy.GAP_BETWEEN_BATCHES_MS)
             }
         }
     }

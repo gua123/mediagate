@@ -321,6 +321,8 @@ private fun EntryListPanel(
                             isDirectory = entry.isDirectory,
                             lastPlayedPath = state.lastPlayedPath,
                         ),
+                        // 封面预热版本号（2026-10-14）：预热好就刷新这一格
+                        coverEpoch = state.coverEpoch,
                     )
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
@@ -339,6 +341,8 @@ private fun EntryRow(
     imageLoader: ImageLoader,
     onClick: () -> Unit,
     highlight: HighlightKind = HighlightKind.NONE,
+    /** 封面预热版本号：预热好一格的封面就 +1，让那一格重新取图（此时是磁盘缓存命中、瞬间出图）。 */
+    coverEpoch: Int = 0,
 ) {
     val kind = remember(entry.name) { MediaKindGuesser.guess(entry.name) }
     // 高亮色：视频本身用主色；**祖先目录用同色但淡一点**（从根一路贯穿到那个文件夹）
@@ -360,7 +364,7 @@ private fun EntryRow(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ThumbnailSlot(entry = entry, backend = backend, kind = kind, imageLoader = imageLoader)
+        ThumbnailSlot(entry = entry, backend = backend, kind = kind, imageLoader = imageLoader, coverEpoch = coverEpoch)
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -408,6 +412,7 @@ private fun ThumbnailSlot(
     backend: StorageBackend,
     kind: MediaKind,
     imageLoader: ImageLoader,
+    coverEpoch: Int = 0,
 ) {
     Box(
         modifier = Modifier
@@ -423,7 +428,8 @@ private fun ThumbnailSlot(
             modifier = Modifier.size(26.dp),
         )
         if (!entry.isDirectory && (kind == MediaKind.VIDEO || kind == MediaKind.IMAGE)) {
-            val model = remember(entry, backend, kind) { ThumbnailRequest(entry, backend, kind) }
+            // coverEpoch 进 key：空闲预热完成后这一格会重新取图（命中磁盘缓存，不再发网络请求）
+            val model = remember(entry, backend, kind, coverEpoch) { ThumbnailRequest(entry, backend, kind) }
             AsyncImage(
                 model = model,
                 contentDescription = null,

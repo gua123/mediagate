@@ -75,6 +75,13 @@ data class BrowserUiState(
     val errorDetail: String? = null,
     /** 是否是下拉刷新（内容保留，只转圈）。 */
     val refreshing: Boolean = false,
+    /**
+     * 封面预热版本号（**2026-10-14**：空闲时预热"视频开头封面"，好了就把那一格刷新出来）。
+     *
+     * 缩略图的 `remember` key 带上它 ⇒ 预热完成 +1 ⇒ Coil 重新取一次；
+     * 此时磁盘缓存已命中，是"瞬间出图"而不是又下一次网络。
+     */
+    val coverEpoch: Int = 0,
 ) {
 
     /** 面包屑（含根），供路径栏渲染。 */
@@ -117,6 +124,9 @@ sealed interface BrowserEvent {
 
     /** 切换 / 清除类型过滤。 */
     data class FilterChanged(val filter: MediaKind?) : BrowserEvent
+
+    /** 某个视频的开头封面已经预热好（+1 触发那一格刷新）。 */
+    data object CoverWarmed : BrowserEvent
 }
 
 /**
@@ -180,6 +190,9 @@ fun BrowserUiState.reduce(event: BrowserEvent): BrowserUiState = when (event) {
         filter = event.filter,
         visibleEntries = EntrySorter.sort(BrowserFilters.apply(entries, event.filter), sort),
     )
+
+    // 列表内容不变，只把"封面版本号"往前推一格，让那一格重新取图（此时是缓存命中）
+    BrowserEvent.CoverWarmed -> copy(coverEpoch = coverEpoch + 1)
 }
 
 /**
