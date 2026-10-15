@@ -965,7 +965,67 @@ class AppContainer(context: Context) :
             // 与"点按预取"同一套分级计划（2026-10-15 统一）：首段 / 尾段 / 续播落点，
             // ≥1 GiB 的大文件多抓两段开头；区间并发发出、失败的只记日志
             warmUpForOpen(path)
+            // 换文件了 ⇒ 「下一集预热」的"每个文件只做一次"标记要重置（P1.7）
+            nextEpisodeWarmedPath = null
         }
+
+        /** 上一个做窗口预取时的位置（0 = 还没发过）；每个文件一份。 */
+        private var lastWindowPositionMs = 0L
+
+        /** 已经预热过"下一集"的那个文件（每个文件只预热一次）。 */
+        private var nextEpisodeWarmedPath: String? = null
+
+        /**
+         * **播放中的滑窗预取 + 下一集预热**（docs/方案-网络加载增强.md 的 P1.6 / P1.7）。
+         *
+         * 判据全在纯函数 [PrefetchWindow] 里（有单测）：位置至少前进 20 秒才发一次、
+         * 只抓当前位置往后 30 秒那一段、快播完不发、大小未知不动——**预取永远给播放让路**。
+         */
+        override fun prefetchAhead(path: String, positionMs: Long, durationMs: Long) {
+            val cache = remoteCache ?: return
+            if (lastWarmedPath != path) {
+                // 换文件：窗口与"下一集已预热"都重新开始
+                lastWarmedPath = path
+                lastWindowPositionMs = 0L
+            }
+            val segment = networkTuning.tuning.value.segmentBytes
+            ioScope.launch {
+                runCatching {
+                    val size = cache.knownSizeOf(path)
+                    val window = PrefetchWindow.decide(
+                        positionMs = positionMs,
+                        durationMs = durationMs,
+                        size = size,
+                        segmentBytes = segment,
+                        lastWindowPositionMs = lastWindowPositionMs,
+                    )
+                    if (window != null) {
+                        lastWindowPositionMs = positionMs
+                        AppLog.i(TAG, "滑窗预取 @" + (positionMs / 1000) + "s：" + path)
+                        cache.prefetch(path, offset = window.offset, length = window.length)
+                    }
+                    // 下一集预热（P1.7）：播到 80% 时只抓下一集的头尾——连播切集几乎瞬时
+                    if (PrefetchWindow.shouldWarmNextEpisode(
+                            positionMs = positionMs,
+                            durationMs = durationMs,
+                            alreadyWarmed = nextEpisodeWarmedPath == path,
+                        )
+                    ) {
+                        nextEpisodeWarmedPath = path
+                        val siblings = runCatching { siblings(path) }.getOrElse { emptyList() }
+                        val index = siblings.indexOfFirst { it.path == path }
+                        val next = if (index >= 0) siblings.getOrNull(index + 1) else null
+                        if (next != null) {
+                            AppLog.i(TAG, "下一集预热：" + next.name)
+                            warmUpForOpen(next.path)
+                        }
+                    }
+                }.onFailure { AppLog.w(TAG, "滑窗预取失败（不影响播放）：" + path, it) }
+            }
+        }
+
+        /** 上一个上报位置的文件（换文件时重置窗口节流）。 */
+        private var lastWarmedPath: String? = null
 
 
 

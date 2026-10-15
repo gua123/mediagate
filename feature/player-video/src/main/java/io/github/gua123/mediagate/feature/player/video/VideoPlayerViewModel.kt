@@ -1414,6 +1414,11 @@ class VideoPlayerViewModel(
                 val tick = sampleNow() ?: continue
                 saveOnTick(tick)
                 reportMetricsOnce()
+                // P1.6/P1.7：播放中把位置报给宿主做「滑窗预取 + 下一集预热」
+                // （要不要真发请求由宿主的纯函数判据决定；这里只负责把事实报上去）
+                if (tick.playing && !tick.ended) {
+                    source?.let { ref -> environment.prefetchAhead(ref.path, tick.positionMs, tick.durationMs) }
+                }
             }
         }
     }
