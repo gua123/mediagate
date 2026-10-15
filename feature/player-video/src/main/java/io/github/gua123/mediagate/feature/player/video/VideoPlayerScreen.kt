@@ -196,6 +196,9 @@ fun VideoPlayerScreen(
     var vlcWarningVisible by remember { mutableStateOf(false) }
     // 启动探针判定"本机跑不了 LibVLC" → 直接不让切，并给「重新测试」出口
     var vlcUnavailableVisible by remember { mutableStateOf(false) }
+    // 切到**自研引擎**之前先说清能力差异（2026-10-15：它还没有倍速与硬解档位）——
+    // 口径是"不做静默降级"：宁可多一次确认，也不让用户切过去发现"点了没反应"
+    var nativeNoticeVisible by remember { mutableStateOf(false) }
     // **2026-10-03 用户要求**：「记住上一次播放时是横屏还是竖屏」
     //   ① 进播放页：有记录就直接套用（没有才跟随系统）；
     //   ② 点旋转按钮：切换并落盘；
@@ -438,13 +441,18 @@ fun VideoPlayerScreen(
                     },
                     onOpenPlaylist = { playlistVisible = true },
                     onRequestSwitchEngine = {
-                        // 判定收敛在纯函数里（VlcSwitchDecision，有单测）：
-                        // 已验证可用 → 直接切；未知（含"上次崩过"）→ 弹窗，主按钮是「先测试再切换」；
-                        // 已验证不可用 → 弹窗说明原因，不给切换按钮。
-                        when (vlcKernelTap(state.otherEngine == EngineKind.VLC, state.vlcUsable)) {
-                            VlcKernelTap.DIRECT -> viewModel.switchEngine()
-                            VlcKernelTap.ASK_WITH_TEST -> vlcWarningVisible = true
-                            VlcKernelTap.BLOCKED -> vlcUnavailableVisible = true
+                        if (state.otherEngine == EngineKind.NATIVE) {
+                            // 自研引擎：先告知能力差异（还没有倍速/硬解档位），再切
+                            nativeNoticeVisible = true
+                        } else {
+                            // 判定收敛在纯函数里（VlcSwitchDecision，有单测）：
+                            // 已验证可用 → 直接切；未知（含"上次崩过"）→ 弹窗，主按钮是「先测试再切换」；
+                            // 已验证不可用 → 弹窗说明原因，不给切换按钮。
+                            when (vlcKernelTap(state.otherEngine == EngineKind.VLC, state.vlcUsable)) {
+                                VlcKernelTap.DIRECT -> viewModel.switchEngine()
+                                VlcKernelTap.ASK_WITH_TEST -> vlcWarningVisible = true
+                                VlcKernelTap.BLOCKED -> vlcUnavailableVisible = true
+                            }
                         }
                     },
                     // 记住这次旋转的结果（2026-10-03 用户要求：上次横屏下次还是横屏）
@@ -480,6 +488,28 @@ fun VideoPlayerScreen(
 
             // 切 LibVLC 前的提示（2026-10-03 真机：点内核 → 切 LibVLC → 进程被带走）
             // 主按钮改成「先测试再切换」——用户反馈「我没找到测试内核的地方」，这里就是最自然的入口。
+            // 自研引擎的能力告知（2026-10-15）：确认后按同一套切换流程换内核
+            if (nativeNoticeVisible) {
+                AlertDialog(
+                    onDismissRequest = { nativeNoticeVisible = false },
+                    title = { Text(stringResource(R.string.video_native_engine_title)) },
+                    text = { Text(stringResource(R.string.video_native_engine_body)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                nativeNoticeVisible = false
+                                viewModel.switchEngine()
+                            },
+                        ) { Text(stringResource(R.string.video_native_engine_confirm)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { nativeNoticeVisible = false }) {
+                            Text(stringResource(R.string.video_native_engine_cancel))
+                        }
+                    },
+                )
+            }
+
             if (vlcWarningVisible) {
                 AlertDialog(
                     onDismissRequest = { vlcWarningVisible = false },
@@ -1090,18 +1120,24 @@ private fun ChipsRow(
                 )
             },
         )
-        AssistChip(
-            onClick = viewModel::cycleSpeed,
-            label = { Text(stringResource(R.string.video_speed, state.speedLabel)) },
-            colors = playerChipColors(),
-            border = playerChipBorder(),
-        )
-        AssistChip(
-            onClick = viewModel::cycleDecoderMode,
-            label = { Text(stringResource(R.string.video_decoder, state.decoderLabel)) },
-            colors = playerChipColors(),
-            border = playerChipBorder(),
-        )
+        // 倍速 / 解码档位：内核如实声明不支持时**不显示芯片**（点了也没用），
+        // 原因写在下面那行说明里（项目红线：控件不可用要写原因，不能让人以为按钮丢了）
+        if (state.canChangeSpeed) {
+            AssistChip(
+                onClick = viewModel::cycleSpeed,
+                label = { Text(stringResource(R.string.video_speed, state.speedLabel)) },
+                colors = playerChipColors(),
+                border = playerChipBorder(),
+            )
+        }
+        if (state.canChangeDecoder) {
+            AssistChip(
+                onClick = viewModel::cycleDecoderMode,
+                label = { Text(stringResource(R.string.video_decoder, state.decoderLabel)) },
+                colors = playerChipColors(),
+                border = playerChipBorder(),
+            )
+        }
         AssistChip(
             onClick = viewModel::cycleResizeMode,
             label = { Text(stringResource(R.string.video_resize, state.resizeLabel)) },
@@ -1124,6 +1160,13 @@ private fun ChipsRow(
                 },
             )
         }
+        state.engineNotice?.let { notice ->
+            Text(
+                text = notice,
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
         if (state.count > 1) {
             Text(
                 text = stringResource(R.string.video_queue_position, state.position, state.count),
@@ -1134,7 +1177,10 @@ private fun ChipsRow(
     }
 }
 
-/** 内核按钮（R9）：显示当前内核，点一下在 Media3 与 LibVLC 之间互切。 */
+/**
+ * 内核按钮（R9）：显示当前内核，点一下**轮转**到下一档
+ * （Media3 → 自研引擎 → LibVLC → Media3；LibVLC 不可用时跳过它）。
+ */
 @Composable
 private fun EngineChip(state: VideoPlayerUiState, onClick: () -> Unit) {
     AssistChip(

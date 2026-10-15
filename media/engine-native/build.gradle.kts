@@ -16,6 +16,8 @@ android {
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
+        // 自研引擎的 JNI 桥要原样保留（native 按名字 GetMethodID；被 R8 改名只在 release 包炸）
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     // 只出 arm64-v8a（与全项目口径一致），并交给 CMake 外部构建

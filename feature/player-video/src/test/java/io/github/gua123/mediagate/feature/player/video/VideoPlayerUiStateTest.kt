@@ -245,10 +245,17 @@ class VideoPlayerUiStateTest {
     fun derivedLabelsFollowCurrentEngine() {
         val media3 = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
         assertEquals("Media3", media3.engineLabel)
-        assertEquals(EngineKind.VLC, media3.otherEngine)
-        assertEquals("LibVLC", media3.otherEngineLabel)
+        // 2026-10-15 起按钮是**轮转**：Media3 → 自研引擎 → LibVLC → Media3
+        assertEquals(EngineKind.NATIVE, media3.otherEngine)
+        assertEquals("自研引擎", media3.otherEngineLabel)
 
-        val vlc = media3.reduce(
+        val native = media3.reduce(
+            VideoPlayerEvent.SwitchCompleted(EngineKind.NATIVE, DecoderMode.AUTO_HW, 0L, playing = false),
+        )
+        assertEquals("自研引擎", native.engineLabel)
+        assertEquals(EngineKind.VLC, native.otherEngine)
+
+        val vlc = native.reduce(
             VideoPlayerEvent.SwitchCompleted(EngineKind.VLC, DecoderMode.AUTO_HW, 0L, playing = false),
         )
         assertEquals(EngineKind.MEDIA3, vlc.otherEngine)
@@ -265,5 +272,43 @@ class VideoPlayerUiStateTest {
             VideoPlayerErrors.classify(io.github.gua123.mediagate.data.storage.api.StorageException.Network("断网")),
         )
         assertEquals(VideoErrorKind.UNKNOWN, VideoPlayerErrors.classify(IllegalStateException("???")))
+    }
+
+    // ------------------------------------------------ 内核轮转与能力提示（2026-10-15 M4 下半）
+
+    @Test
+    fun 内核按钮在三个内核之间轮转() {
+        val media3 = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
+        assertEquals(EngineKind.NATIVE, media3.otherEngine)
+
+        val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
+        assertEquals(EngineKind.VLC, native.otherEngine)
+
+        val vlc = VideoPlayerUiState(engineKind = EngineKind.VLC)
+        assertEquals(EngineKind.MEDIA3, vlc.otherEngine)
+    }
+
+    @Test
+    fun LibVLC_已知不可用时轮转要跳过它() {
+        val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = false)
+        assertEquals(EngineKind.MEDIA3, native.otherEngine)
+    }
+
+    @Test
+    fun 自研引擎要藏掉它不支持的档位并把原因写在旁边() {
+        val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
+        assertFalse("倍速芯片不该出现（点了也没用）", native.canChangeSpeed)
+        assertFalse("解码档位芯片不该出现", native.canChangeDecoder)
+        assertEquals("自研引擎暂无倍速与硬解档位", native.engineNotice)
+    }
+
+    @Test
+    fun 旧内核的能力齐平_不该多出提示() {
+        for (kind in listOf(EngineKind.MEDIA3, EngineKind.VLC)) {
+            val state = VideoPlayerUiState(engineKind = kind)
+            assertTrue(kind.label + " 应当能调倍速", state.canChangeSpeed)
+            assertTrue(kind.label + " 应当能调解码档位", state.canChangeDecoder)
+            assertNull(kind.label + " 不该出现能力提示", state.engineNotice)
+        }
     }
 }

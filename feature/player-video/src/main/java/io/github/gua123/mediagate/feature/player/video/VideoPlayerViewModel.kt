@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.media.engine.DecoderMode
+import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.EngineState
 import io.github.gua123.mediagate.media.engine.MediaSourceRef
@@ -250,8 +251,9 @@ class VideoPlayerViewModel(
         sampleNow()
     }
 
-    /** 倍速轮转：0.5 → 1 → 1.5 → 2 → 0.5。 */
+    /** 倍速轮转：0.5 → 1 → 1.5 → 2 → 0.5。内核不支持倍速时（自研引擎）直接不动。 */
     fun cycleSpeed() {
+        if (!_state.value.canChangeSpeed) return
         val next = VideoPlayerMath.nextSpeed(_state.value.speed)
         engine?.setSpeed(next)
         _state.update { it.reduce(VideoPlayerEvent.SpeedChanged(next)) }
@@ -460,6 +462,7 @@ class VideoPlayerViewModel(
 
     /** 解码档位轮转（R10）：自动（硬解优先）→ 强制软解 → 强制硬解 → 自动；选择会持久化。 */
     fun cycleDecoderMode() {
+        if (!_state.value.canChangeDecoder) return
         setDecoderMode(VideoPlayerMath.nextDecoderMode(_state.value.decoderMode))
     }
 
@@ -470,6 +473,8 @@ class VideoPlayerViewModel(
      */
     fun setDecoderMode(mode: DecoderMode) {
         if (_state.value.switching) return
+        // 当前内核如实声明"不支持解码档位"（自研引擎只有软解一条路）⇒ 别假装切了
+        if (!_state.value.canChangeDecoder) return
         viewModelScope.launch {
             withContext(io) { runCatching { environment.preferences.setDecoderMode(mode) } }
             val current = engine
@@ -1173,7 +1178,7 @@ class VideoPlayerViewModel(
             return
         }
         val failed = current.state.value is EngineState.Error
-        val plan = VideoEngineSwitch.planFor(
+        val planned = VideoEngineSwitch.planFor(
             engine = current,
             target = target,
             reason = reason,
@@ -1182,6 +1187,10 @@ class VideoPlayerViewModel(
             positionFloorMs = if (failed) _state.value.positionMs else 0L,
             playWhenReady = if (failed) _state.value.playing else current.isPlaying,
         )
+        // 目标内核如实声明"不支持倍速"（自研引擎）⇒ 把倍速收回 1.0×，
+        // 而不是把 1.5× 带过去、界面上显示 1.5× 实际按 1.0× 播（那是骗人）
+        val speedReset = !EngineCatalog.capabilitiesOf(target).speed && planned.restore.speed != 1f
+        val plan = if (speedReset) planned.copy(restore = planned.restore.copy(speed = 1f)) else planned
         _state.update { it.reduce(VideoPlayerEvent.SwitchPlanned(plan)) }
         saveProgress(plan.stopAtMs)
         runCatching { current.pause() }
@@ -1232,6 +1241,10 @@ class VideoPlayerViewModel(
                         playing = plan.restore.playWhenReady,
                     ),
                 )
+            }
+            if (speedReset) {
+                // 界面上的倍速也要跟着回到 1.0×（否则芯片仍显示 1.5×）
+                _state.update { it.reduce(VideoPlayerEvent.SpeedChanged(1f)) }
             }
             msSinceSave = 0L
             wasPlaying = plan.restore.playWhenReady

@@ -11,6 +11,7 @@ import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.DefaultSubtitleTrackController
 import io.github.gua123.mediagate.media.engine.EngineCapabilities
+import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.EngineState
 import io.github.gua123.mediagate.media.engine.MediaSourceRef
@@ -61,7 +62,8 @@ class NativeEnginePlayer(
 
     override val kind: EngineKind = EngineKind.NATIVE
 
-    override val capabilities: EngineCapabilities = NativeEngineCapabilities.VALUE
+    /** 能力从契约层的能力表取（唯一一份声明；本模块不许自己再写一遍）。 */
+    override val capabilities: EngineCapabilities = EngineCatalog.capabilitiesOf(kind)
 
     private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
     override val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -88,6 +90,15 @@ class NativeEnginePlayer(
     private var opened = false
     private var surfaceReady = false
     private var playWhenReady = false
+
+    /**
+     * 打开完成之前收到的 seek（**必须先记下来**）。
+     *
+     * 真实踩点：切内核 / 断点续播都是「prepare() → seekTo(上次位置)」的调用顺序，
+     * 而 prepare 是异步打开数据源的（要 stat + openRead，可能几百毫秒）。
+     * 如果这时直接丢掉 seek，续播位置就没了 —— R9「位置保持」当场破功。
+     */
+    private var pendingSeekMs: Long? = null
     private var released = false
     private var pollJob: Job? = null
 
@@ -120,6 +131,8 @@ class NativeEnginePlayer(
 
     override fun setMedia(src: MediaSourceRef) {
         closeSource()
+        pendingSeekMs = null
+        playWhenReady = false
         currentMedia = src
         lastStatus = null
         _state.value = EngineState.Idle
@@ -166,7 +179,13 @@ class NativeEnginePlayer(
     }
 
     override fun seekTo(positionMs: Long) {
-        if (opened) NativeEngine.seekTo(positionMs.coerceAtLeast(0L))
+        val target = positionMs.coerceAtLeast(0L)
+        if (opened) {
+            NativeEngine.seekTo(target)
+        } else {
+            // 还没打开完：记下来，等 startIfReady 起播时补上
+            pendingSeekMs = target
+        }
     }
 
     override fun setSpeed(x: Float) {
@@ -237,6 +256,14 @@ class NativeEnginePlayer(
         // 起播时把档位与音量一并带上（native 默认 1.0 / 适应屏幕）
         NativeEngine.setVolume(playbackVolume)
         NativeEngine.setScaleMode(resize.ordinal)
+        // 打开期间攒下的 seek：补上（R9「位置保持」/ 断点续播都靠它）
+        pendingSeekMs?.let { target ->
+            pendingSeekMs = null
+            NativeEngine.seekTo(target)
+        }
+        // native 的 playSource 是"打开即播"：如果调用方要的是"准备好但先别播"（切内核时原来是暂停），
+        // 这里如实按停，别让用户看到"切完内核自己播起来了"
+        if (!playWhenReady) NativeEngine.pausePlayback()
         startPolling()
     }
 
