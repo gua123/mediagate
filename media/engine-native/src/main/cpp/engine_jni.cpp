@@ -4,6 +4,7 @@
 
 #include <android/native_window_jni.h>
 
+#include "avio_source.h"
 #include "engine_core.h"
 #include "surface_renderer.h"
 #include "first_frame.h"
@@ -42,6 +43,15 @@ SurfaceRenderer& globalSurfaceRenderer() {
 namespace {
 
 }  // namespace
+
+/**
+ * 库加载时把 JVM 记下来：走数据层播放时，native 的播放线程要回调 Kotlin
+ *（那个线程 JVM 不认识 ⇒ 需要 JavaVM 才能 AttachCurrentThread）。
+ */
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    mediagate::setJavaVm(vm);
+    return JNI_VERSION_1_6;
+}
 
 /**
  * JNI 边界（M1）：只回答"引擎是谁、内核是什么版本、内部有哪几条解码路径"。
@@ -158,6 +168,23 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlayFile(
     if (!surfaceRenderer().hasWindow()) return toJString(env, "还没有绑定画面（Surface 为空）");
     std::string error;
     if (!nativePlayer().open(filePath, &error)) return toJString(env, error);
+    nativePlayer().play();
+    return toJString(env, "");
+}
+
+/**
+ * 用**我们自己的数据层**播放（M3：本地 / SAF / WebDAV / SFTP / FTP 同一条路）。
+ *
+ * 参数是实现 `NativeMediaSource` 的 Kotlin 对象；native 只借用（存全局引用），
+ * 不负责关闭它——数据源由创建它的那一侧释放。返回 "" 表示已开始，否则是中文原因。
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativePlaySource(
+        JNIEnv* env, jclass, jobject source) {
+    if (source == nullptr) return toJString(env, "没有可用的数据来源");
+    if (!surfaceRenderer().hasWindow()) return toJString(env, "还没有绑定画面（Surface 为空）");
+    std::string error;
+    if (!nativePlayer().openSource(env, source, &error)) return toJString(env, error);
     nativePlayer().play();
     return toJString(env, "");
 }

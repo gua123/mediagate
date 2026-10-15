@@ -143,6 +143,17 @@ object NativeEngine {
         return safe { nativePlayFile(path) } ?: "启动播放失败（native 调用异常，详见日志）"
     }
 
+    /**
+     * 用**我们自己的数据层**播放（本地 / SAF / WebDAV / SFTP / FTP 走同一条路）。
+     *
+     * 需要先 [setSurface]；返回空串表示已开始，否则是中文原因。
+     * **数据源由调用方负责关闭**（native 只借用，不接管它的生命周期）。
+     */
+    fun playSource(source: NativeMediaSource): String {
+        if (!isAvailable) return "自研引擎不可用：${loadFailure ?: "native 库没加载"}"
+        return safe { nativePlaySource(source) } ?: "启动播放失败（native 调用异常，详见日志）"
+    }
+
     /** 暂停（画面停住）。 */
     fun pausePlayback() = runCatching { nativePausePlayback() }
 
@@ -168,6 +179,8 @@ object NativeEngine {
     fun playerStatus(): String = safe { nativePlayerStatus() } ?: "状态不可用"
 
     private external fun nativePlayFile(path: String): String
+
+    private external fun nativePlaySource(source: NativeMediaSource): String
 
     private external fun nativePausePlayback()
 

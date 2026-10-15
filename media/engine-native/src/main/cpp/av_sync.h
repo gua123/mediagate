@@ -72,6 +72,37 @@ struct Timeline {
     }
 };
 
+// -------------------------------------------------------------- IO 位置换算
+
+/**
+ * 自定义 AVIO 的 seek 位置计算（纯函数，FFmpeg 的 whence 语义）。
+ *
+ * @param current 当前位置
+ * @param offset  请求的偏移（可负）
+ * @param base    0=SEEK_SET（从文件头）1=SEEK_CUR（从当前位置）2=SEEK_END（从末尾）
+ * @param length  数据总长度（base=2 时要用）
+ * @param lengthKnown 长度是否已知（数据层可能报 -1）
+ * @param out     算出来的绝对位置
+ * @return 能不能算（算不出 / 越界返回 false，调用方要回 AVERROR(EINVAL)）
+ */
+inline bool resolveSeekPosition(int64_t current, int64_t offset, int base, int64_t length,
+                                bool lengthKnown, int64_t* out) {
+    if (out == nullptr) return false;
+    int64_t origin = 0;
+    if (base == 1) {
+        origin = current;
+    } else if (base == 2) {
+        if (!lengthKnown || length < 0) return false;
+        origin = length;
+    } else if (base != 0) {
+        return false;
+    }
+    const int64_t target = origin + offset;
+    if (target < 0) return false;
+    *out = target;
+    return true;
+}
+
 // ------------------------------------------------------------------ 同步判据
 
 /** 视频帧该不该现在送屏。 */

@@ -23,6 +23,9 @@ namespace {
 
 constexpr const char* kTag = "mediagate-engine";
 
+/** 走数据层时 FFmpeg 的读缓冲大小：一次 64 KB，比逐包小读省 JNI 往返。 */
+constexpr int kAvioBufferBytes = 64 * 1024;
+
 /** 暂停/停止时的轮询间隔：够了，不要再密（省电）。 */
 constexpr auto kIdlePoll = std::chrono::milliseconds(5);
 
@@ -69,6 +72,7 @@ NativePlayer::~NativePlayer() {
 
 void NativePlayer::closeLocked() {
     // 这里只清"元信息"；FFmpeg 资源在 worker 线程里成对创建与释放（避免跨线程释放）
+    source_.detach();
     std::lock_guard<std::mutex> lock(mutex_);
     path_.clear();
     codecName_.clear();
@@ -83,8 +87,25 @@ void NativePlayer::closeLocked() {
 
 bool NativePlayer::open(const std::string& path, std::string* error) {
     if (running_.load()) stop();
+    source_.detach();  // 换成"本地路径"模式：把上一次的数据来源还掉
     std::lock_guard<std::mutex> lock(mutex_);
     path_ = path;
+    error_.clear();
+    audioError_.clear();
+    if (error != nullptr) error->clear();
+    state_.store(static_cast<int>(PlayerState::IDLE));
+    return true;
+}
+
+bool NativePlayer::openSource(JNIEnv* env, jobject source, std::string* error) {
+    if (running_.load()) stop();
+    std::string message;
+    if (!source_.attach(env, source, &message)) {
+        if (error != nullptr) *error = message;
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    path_.clear();
     error_.clear();
     audioError_.clear();
     if (error != nullptr) error->clear();
@@ -159,6 +180,7 @@ PlayerStatus NativePlayer::status() const {
  */
 void NativePlayer::threadLoop() {
     AVFormatContext* format = nullptr;
+    AVIOContext* sourceAvio = nullptr;  // 走数据层时的读回调上下文（我们自己建、自己释放）
     AVCodecContext* videoCtx = nullptr;
     AVCodecContext* audioCtx = nullptr;
     AVPacket* packet = nullptr;
@@ -379,22 +401,47 @@ void NativePlayer::threadLoop() {
 
     // ---------------------------------------------------------------- 打开
     bool ready = false;
+    const bool fromSource = source_.valid();
     std::string path;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         path = path_;
     }
     do {
-        if (path.empty()) {
-            fail("没有要播放的文件");
-            break;
-        }
-        if (avformat_open_input(&format, path.c_str(), nullptr, nullptr) < 0 || format == nullptr) {
-            fail("打不开这个文件");
-            break;
+        if (fromSource) {
+            // 走我们的数据层：FFmpeg 的读/seek 都回调到 Kotlin（本地/SAF/远端同一套）
+            sourceAvio = openSourceAvio(&source_, kAvioBufferBytes);
+            if (sourceAvio == nullptr) {
+                fail("打不开数据来源（引擎侧建读缓冲失败）");
+                break;
+            }
+            format = avformat_alloc_context();
+            if (format == nullptr) {
+                fail("内存不足，打不开播放器");
+                break;
+            }
+            format->pb = sourceAvio;
+            format->flags |= AVFMT_FLAG_CUSTOM_IO;
+            if (avformat_open_input(&format, nullptr, nullptr, nullptr) < 0 || format == nullptr) {
+                const std::string reason = source_.lastError();
+                fail(reason.empty() ? std::string("打不开这个文件（数据层没给出可用的媒体信息）")
+                                    : ("打不开这个文件：" + reason));
+                break;
+            }
+        } else {
+            if (path.empty()) {
+                fail("没有要播放的文件");
+                break;
+            }
+            if (avformat_open_input(&format, path.c_str(), nullptr, nullptr) < 0 || format == nullptr) {
+                fail("打不开这个文件");
+                break;
+            }
         }
         if (avformat_find_stream_info(format, nullptr) < 0) {
-            fail("读不出媒体信息（文件可能损坏或还没下完）");
+            const std::string reason = fromSource ? source_.lastError() : std::string();
+            fail(reason.empty() ? std::string("读不出媒体信息（文件可能损坏或还没下完）")
+                                : ("读不出媒体信息：" + reason));
             break;
         }
 
@@ -546,6 +593,15 @@ void NativePlayer::threadLoop() {
             if (!eof) {
                 const int readRet = av_read_frame(format, packet);
                 if (readRet < 0) {
+                    if (fromSource && readRet != AVERROR_EOF) {
+                        // 读数据真的失败了（不是正常读完）：把数据层记的中文原因带出来，
+                        // 否则用户只会看到"播着播着停了"。
+                        const std::string reason = source_.lastError();
+                        if (!reason.empty()) {
+                            fail("读取数据出错：" + reason);
+                            break;
+                        }
+                    }
                     eof = true;
                     eofSinceUs = av_gettime_relative();
                 } else if (packet->stream_index == videoIndex) {
@@ -600,6 +656,8 @@ void NativePlayer::threadLoop() {
     avcodec_free_context(&audioCtx);
     avcodec_free_context(&videoCtx);
     avformat_close_input(&format);
+    // 顺序要紧：format 关掉之后才能还 AVIO（还完 format->pb 就是野指针了）
+    closeSourceAvio(&sourceAvio);
 }
 
 }  // namespace mediagate

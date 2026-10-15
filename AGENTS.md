@@ -269,9 +269,12 @@
   验收记录共三份：M0 / M1 / M2-M8。
 - **自研引擎（2026-10-06 起，当前最大在办事项）**：M1 骨架 ✅ → M2 出画面 ✅ →
   **M3 连续播放 ✅（视频帧循环 `a3dc53e` + 音频与音画同步）** → M4 接进 `PlayerEngine` 契约（播放页真正用它）→ M5 覆盖打满。
-  · 纯逻辑（pts 换算 / 时间轴归一 / 同步判据 / 音频时钟 / PCM 环形缓冲）抽在 `av_sync.h`，
-  用 `bash scripts/test-engine-native-host.sh` 在开发机直跑（93 项断言，含真并发用例），并被 `gradlew test` 自动带上；
+  · 纯逻辑（pts 换算 / 时间轴归一 / 同步判据 / 音频时钟 / PCM 环形缓冲 / AVIO seek 换算）抽在 `av_sync.h`，
+  用 `bash scripts/test-engine-native-host.sh` 在开发机直跑（104 项断言，含真并发用例），并被 `gradlew test` 自动带上；
   · ⚠️ 改了 `media/engine-native/src/{main,test}/cpp` 下的文件就会触发这些测试（已在 build.gradle.kts 里声明成 Test 输入）；
-  · **还没做的**：接 `RandomAccessSource`（自定义 AVIO 回调进 Kotlin 数据层 ⇒ 现在只能播本地路径，SAF/远端都还不行）、
-  音量/字幕/画中画/后台播放、以及**切播放页**；
-  · **至今没有 UI 入口**，所以也**没有发版**（按发版纪律攒着）；全量单测 **1527 例 0 失败（31 模块）**。
+  · **M3 已完整**：视频帧循环 + 音频/音画同步 + **接我们的数据层**（`NativeMediaSource` / `RandomAccessMediaSource`：
+    FFmpeg 的读/seek 经 JNI 回调进 Kotlin，落回 `StorageBackend → RandomAccessSource` ⇒ 本地/SAF/WebDAV/SFTP/FTP 对引擎是同一条路，
+    分段缓存与超时层也都在链路上）；`JNI_OnLoad` 存 `JavaVM`，native 播放线程按需 Attach/Detach；
+  · **下一步（M4）**：写 `NativeEnginePlayer` 实现 `PlayerEngine` 契约 → 播放页真正走自研引擎（那时才第一次有 UI 入口、才能真机验收）；
+    之后 M5 覆盖打满再删 Media3/LibVLC；
+  · **至今没有 UI 入口**，所以也**没有发版**（按发版纪律攒着）；全量单测 **1536 例 0 失败（31 模块）**。

@@ -128,6 +128,29 @@ void testAudioClock() {
     CHECK_NEAR(mediagate::audioClockMs(1234, 0, 999, 0), 1234.0, 0.001);
 }
 
+void testSeekPosition() {
+    std::printf("- 自定义 AVIO 的 seek 位置\n");
+    int64_t out = 0;
+    // SEEK_SET：从文件头
+    CHECK(mediagate::resolveSeekPosition(1234, 500, 0, 9999, true, &out));
+    CHECK_EQ(out, 500);
+    // SEEK_CUR：从当前位置
+    CHECK(mediagate::resolveSeekPosition(1234, -234, 1, 9999, true, &out));
+    CHECK_EQ(out, 1000);
+    // SEEK_END：从末尾（要长度）
+    CHECK(mediagate::resolveSeekPosition(0, -10, 2, 9999, true, &out));
+    CHECK_EQ(out, 9989);
+    // 长度未知时 SEEK_END 算不出来（调用方要回 EINVAL，别瞎猜）
+    CHECK(!mediagate::resolveSeekPosition(0, -10, 2, -1, false, &out));
+    // 越界（负位置）也要拒绝
+    CHECK(!mediagate::resolveSeekPosition(0, -1, 0, 9999, true, &out));
+    // 不认识的 whence
+    CHECK(!mediagate::resolveSeekPosition(0, 0, 7, 9999, true, &out));
+    // 越过末尾不做 clamp：数据层读到末尾会返回 EOF
+    CHECK(mediagate::resolveSeekPosition(0, 99999, 0, 9999, true, &out));
+    CHECK_EQ(out, 99999);
+}
+
 void testRingBasics() {
     std::printf("- PCM 环形缓冲：基本读写\n");
     mediagate::PcmRing ring;
@@ -303,6 +326,7 @@ int main() {
     testTimeline();
     testSyncDecision();
     testAudioClock();
+    testSeekPosition();
     testRingBasics();
     testRingWrapAround();
     testRingFlush();
