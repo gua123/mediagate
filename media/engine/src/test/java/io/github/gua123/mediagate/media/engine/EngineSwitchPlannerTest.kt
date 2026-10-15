@@ -156,16 +156,19 @@ class EngineSwitchPlannerTest {
     }
 
     @Test
-    fun `强制软解倾向 LibVLC 内核`() {
-        assertEquals(EngineKind.VLC, EngineSelection.preferredFor(DecoderMode.FORCE_SW))
+    fun `三种解码档位都在原有引擎上生效`() {
+        // 2026-10-15 用户拍板只保留 Media3 之后：强制软解不再靠 LibVLC，
+        // Media3 自己按 softwareOnly 筛解码器（ExoPlayerEngine.codecSelectorFor）
+        assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.FORCE_SW))
         assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.AUTO_HW))
         assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.FORCE_HW))
     }
 
     @Test
-    fun `出错后按降级链回退内核`() {
-        assertEquals(EngineKind.VLC, EngineSelection.fallbackFrom(EngineKind.MEDIA3))
-        assertEquals("LibVLC 已是最后一道，无处可退", null, EngineSelection.fallbackFrom(EngineKind.VLC))
+    fun `没有别的内核可退`() {
+        assertEquals("只剩一个内核时降级链为空", null, EngineSelection.fallbackFrom(EngineKind.MEDIA3))
+        assertEquals(null, EngineSelection.fallbackFrom(EngineKind.VLC))
+        assertEquals(null, EngineSelection.fallbackFrom(EngineKind.NATIVE))
     }
 
     @Test

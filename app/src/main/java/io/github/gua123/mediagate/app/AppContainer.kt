@@ -873,32 +873,19 @@ class AppContainer(context: Context) :
          *
          * 调用方（播放页 ViewModel）在主线程上调用，所以这里是真的在主线程构造播放器——两个内核都要求如此。
          */
-        override suspend fun createEngine(kind: EngineKind): PlayerEngine = when (kind) {
-            EngineKind.MEDIA3 -> ExoPlayerEngine(appContext, BackendDataSourceFactory { _root.value?.backend })
-
-            EngineKind.VLC -> {
-                // 起代理要绑监听端口（阻塞）；先在 IO 上起好，再回主线程构造播放器
-                // 细粒度面包屑（2026-10-03）：真机面包屑停在"切换内核：→ LibVLC（已释放旧内核）"之后没了，
-                // 说明进程死在下面这段里——再拆三步，下次就能分辨是回环代理、LibVLC 实例还是画面 View。
-                Breadcrumbs.mark("VLC：起回环代理")
-                val proxy = withContext(Dispatchers.IO) { requireVideoProxy() }
-                Breadcrumbs.mark("VLC：代理就绪 " + proxy)
-                Breadcrumbs.mark("VLC：建 LibVLC 实例")
-                val engine = VlcEngine(
-                    context = appContext,
-                    proxy = proxy,
-                    // 解码档位是 LibVLC 的实例级选项（改档位要重建实例），建实例时就带上持久化的那一档
-                    initialDecoderMode = preferences.decoderMode.value,
-                    videoView = SurfaceView(appContext),
-                )
-                Breadcrumbs.mark("VLC：实例建好了")
-                engine
+        override suspend fun createEngine(kind: EngineKind): PlayerEngine {
+            // **2026-10-15 用户拍板：只保留原有引擎（Media3）**——自研引擎在真机上不出画面，
+            // LibVLC 会把 App 整个带走。这里对下线的内核**回落**而不是抛异常：
+            // 万一偏好里还存着旧值（老版本切过），播放也不能受影响。
+            if (kind != EngineKind.MEDIA3) {
+                AppLog.w(TAG, "请求的内核已下线（" + kind.label + "），改用原有引擎")
+                Breadcrumbs.mark("内核已下线：" + kind.label + " → Media3")
             }
-
-            // 自研引擎（M4）：数据层直接交给它（本地 / SAF / WebDAV / SFTP / FTP 同一条路），
-            // 画面是它自己的 SurfaceView；能力差异见 NativeEngineCapabilities（界面据此提示）
-            EngineKind.NATIVE -> NativeEnginePlayer(appContext, { _root.value?.backend })
+            return ExoPlayerEngine(appContext, BackendDataSourceFactory { _root.value?.backend })
         }
+
+        // VLC 与自研引擎的构造代码已在 2026-10-15 随用户拍板删除（见上面的 createEngine）。
+        // 真要复活：git 历史里搜 "VlcEngine(" / "NativeEnginePlayer("，设计留档在 docs/方案-播放引擎重写.md。
 
         /**
          * 列出 [path] 所在目录里的视频与音频（R1 上下集队列）。
@@ -1405,7 +1392,8 @@ class AppContainer(context: Context) :
                     }
                 }
             }
-            runCatching { nativeEngineProbeNow() }
+            // 自研引擎已下线（2026-10-15）：不再在启动时跑它的探针——没必要为下线的内核拉一个独立进程
+            // runCatching { nativeEngineProbeNow() }
         }
         // 冷启动先把"最后一次播放的文件"读进内存：浏览页高亮与"恢复上次文件夹"都要它
         ioScope.launch {

@@ -22,6 +22,7 @@ import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
+import io.github.gua123.mediagate.media.engine.EngineSelection
 import io.github.gua123.mediagate.media.engine.EngineState
 import io.github.gua123.mediagate.media.engine.MediaSourceRef
 import io.github.gua123.mediagate.media.engine.PlayerEngine
@@ -527,6 +528,9 @@ class VideoPlayerViewModel(
 
     /** 内核互切（R9）：Media3 ⇄ LibVLC，位置/倍速/解码档位/字幕全部保持。 */
     fun switchEngine() {
+        // **只剩一个内核时切换根本没有意义**（2026-10-15 用户拍板只保留原有引擎）：
+        // 界面已经不显示「内核」按钮，这里再兜一道——否则会白重建一次播放器（画面闪一下、位置重来）。
+        if (!EngineSelection.canSwitchEngine()) return
         launchSwitch(
             target = _state.value.otherEngine,
             reason = SwitchReason.USER_REQUEST,
@@ -1048,7 +1052,8 @@ class VideoPlayerViewModel(
                 return@launch
             }
             val preferences = environment.preferences
-            val kind = preferences.engine.value
+            // 偏好里可能存着已下线的内核（LibVLC / 自研引擎）：交给契约层解析成实际要用的那个
+            val kind = EngineSelection.resolvePreference(preferences.engine.value)
             val mode = preferences.decoderMode.value
             val entries = try {
                 withContext(io) { environment.siblings(path) }
@@ -1211,7 +1216,12 @@ class VideoPlayerViewModel(
             if (running == null) {
                 // 内核已经不在了（切换失败/已释放）：按偏好重新建一个
                 val preferences = environment.preferences
-                open(path, backendId, preferences.engine.value, preferences.decoderMode.value)
+                open(
+                    path,
+                    backendId,
+                    EngineSelection.resolvePreference(preferences.engine.value),
+                    preferences.decoderMode.value,
+                )
                 return@launch
             }
             val ref = MediaSourceRef(backendId = backendId, path = path, title = VideoPlayerMath.fileNameOf(path))

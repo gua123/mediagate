@@ -245,25 +245,9 @@ class VideoPlayerUiStateTest {
     fun derivedLabelsFollowCurrentEngine() {
         val media3 = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
         assertEquals("Media3", media3.engineLabel)
-        // 2026-10-15 起按钮是**轮转**：Media3 → 自研引擎 → LibVLC → Media3
-        assertEquals(EngineKind.NATIVE, media3.otherEngine)
-        assertEquals("自研引擎", media3.otherEngineLabel)
-
-        val native = media3.reduce(
-            VideoPlayerEvent.SwitchCompleted(EngineKind.NATIVE, DecoderMode.AUTO_HW, 0L, playing = false),
-        )
-        assertEquals("自研引擎", native.engineLabel)
-        // 没被探针确认过的 LibVLC 不进轮转（2026-10-15 收紧），所以从自研引擎下一个是回 Media3
-        assertEquals(EngineKind.MEDIA3, native.otherEngine)
-
-        // 确认能用时它才回到轮转里
-        val confirmed = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = true)
-        assertEquals(EngineKind.VLC, confirmed.otherEngine)
-
-        val vlc = confirmed.reduce(
-            VideoPlayerEvent.SwitchCompleted(EngineKind.VLC, DecoderMode.AUTO_HW, 0L, playing = false),
-        )
-        assertEquals(EngineKind.MEDIA3, vlc.otherEngine)
+        // 2026-10-15 用户拍板只保留原有引擎：没有第二档可切，界面也不显示「内核」按钮
+        assertFalse(media3.canSwitchEngine)
+        assertEquals("目标内核＝当前内核（空操作）", EngineKind.MEDIA3, media3.otherEngine)
     }
 
     @Test
@@ -282,34 +266,17 @@ class VideoPlayerUiStateTest {
     // ------------------------------------------------ 内核轮转与能力提示（2026-10-15 M4 下半）
 
     @Test
-    fun 内核按钮在_Media3_与自研引擎之间轮转() {
-        val media3 = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
-        assertEquals(EngineKind.NATIVE, media3.otherEngine)
-
-        // 默认（探针没给过结论）只有两档：Media3 ⇄ 自研引擎
-        val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
-        assertEquals(EngineKind.MEDIA3, native.otherEngine)
-    }
-
-    @Test
-    fun 探针确认能用时_LibVLC_才回到轮转里() {
-        val confirmed = VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = true)
-        assertEquals(EngineKind.VLC, confirmed.otherEngine)
-    }
-
-    @Test
-    fun LibVLC_已知不可用或未知时轮转都要跳过它() {
-        // 已知不可用：跳过（老口径）
-        assertEquals(
-            EngineKind.MEDIA3,
-            VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = false).otherEngine,
-        )
-        // 未知：也跳过（2026-10-15 收紧——LibVLC 在用户机器上会把 App 带走，
-        // 探针改成按需跑之后「未知」是常态，不改的话点两下内核就撞上吓人的确认框）
-        assertEquals(
-            EngineKind.MEDIA3,
-            VideoPlayerUiState(engineKind = EngineKind.NATIVE, vlcUsable = null).otherEngine,
-        )
+    fun 只剩一个内核时不该出现切换入口() {
+        // 三种"曾经的当前内核"都试一遍：界面一律不给切换入口，otherEngine 也退回自己
+        listOf(EngineKind.MEDIA3, EngineKind.VLC, EngineKind.NATIVE).forEach { kind ->
+            val state = VideoPlayerUiState(engineKind = kind)
+            assertFalse(kind.name + " 不该显示内核按钮", state.canSwitchEngine)
+            assertEquals(kind.name + " 的 otherEngine 应是它自己（空操作）", kind, state.otherEngine)
+        }
+        // 探针结论（老状态）也不该把它重新拉回来
+        val withProbe = VideoPlayerUiState(engineKind = EngineKind.MEDIA3, vlcUsable = true)
+        assertFalse(withProbe.canSwitchEngine)
+        assertEquals(EngineKind.MEDIA3, withProbe.otherEngine)
     }
 
     @Test

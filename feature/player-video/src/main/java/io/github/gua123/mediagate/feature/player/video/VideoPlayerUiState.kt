@@ -288,7 +288,15 @@ data class VideoPlayerUiState(
      * 用户点内核只会在 Media3 与自研引擎之间轮转；真要用 LibVLC，得先让探针给出 ok。
      */
     val otherEngine: EngineKind
-        get() = EngineSelection.cycleNext(engineKind, canUseVlc = vlcUsable == true)
+        get() = if (canSwitchEngine) EngineSelection.cycleNext(engineKind, canUseVlc = vlcUsable == true) else engineKind
+
+    /**
+     * **要不要显示「内核」按钮**（2026-10-15 用户拍板只保留原有引擎之后）。
+     *
+     * 只有一个内核时按钮没有任何意义——而"有几个内核可用"的唯一判据是
+     * [EngineSelection.availableEngines]（契约层，不是界面自己数）。
+     */
+    val canSwitchEngine: Boolean get() = EngineSelection.canSwitchEngine()
 
     /** 目标内核展示名。 */
     val otherEngineLabel: String get() = otherEngine.label

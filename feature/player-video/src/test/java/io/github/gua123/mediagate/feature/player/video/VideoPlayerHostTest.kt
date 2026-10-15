@@ -268,25 +268,7 @@ class VideoPlayerHostTest {
         assertEquals("c.mp3", session.title)
     }
 
-    @Test
-    fun switchingEngineRebindsTheSessionToTheNewEngine() = hostTest {
-        val env = environment()
-        val vm = player(env)
-        settle()
-        val first = env.last
-
-        vm.switchEngine()
-        settle()
-
-        val session = env.playback.last
-        assertNotNull(session)
-        // 轮转顺序是 Media3 → 自研引擎 → LibVLC：从默认内核出发，第一次点到的就是自研引擎
-        assertEquals(EngineKind.NATIVE, session!!.engine.kind)
-        assertFalse("旧内核不该再被会话持有", session.engine === first)
-    }
-
-    // ---------------------------------------------------------------- R19 让路
-
+    
     @Test
     fun playbackActiveIsReportedWhilePlaying() = hostTest {
         val env = environment()
