@@ -166,7 +166,7 @@ class VideoPlayerViewModelTest {
     }
 
     @Test
-    fun switchingEngineKeepsPositionSpeedAndSubtitles() = playerTest {
+    fun switchingToNativeEngineKeepsPositionAndSubtitles() = playerTest {
         val env = environment()
         val vm = player(env, "Movies/b.mp4")
         settle()
@@ -178,23 +178,49 @@ class VideoPlayerViewModelTest {
         old.subtitles().selectTrack("mediagate://fake:video/Movies/b.srt")
         old.subtitles().setEnabled(true)
 
-        vm.switchEngine()
+        vm.switchEngine()  // Media3 → 自研引擎（轮转）
         settle()
 
         assertTrue(old.released)
-        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.VLC), env.createCalls)
+        assertEquals(listOf(EngineKind.MEDIA3, EngineKind.NATIVE), env.createCalls)
         val fresh = env.last!!
         assertEquals(12_000L, fresh.position)
-        assertEquals(1.5f, fresh.speed, 0.0001f)
         assertTrue(fresh.isPlaying)
         assertEquals("mediagate://fake:video/Movies/b.srt", fresh.subtitles().state.value.uri)
         assertTrue(fresh.subtitles().state.value.enabled)
-        assertEquals(listOf(EngineKind.VLC), env.preferences.engineWrites)
+        assertEquals(listOf(EngineKind.NATIVE), env.preferences.engineWrites)
+
+        // 自研引擎还没有倍速（capabilities.speed = false）⇒ **如实回到 1.0×**，
+        // 而不是把 1.5× 带过去让界面显示一个假的倍速
+        assertEquals(1.0f, fresh.speed, 0.0001f)
 
         val state = vm.state.value
-        assertEquals(EngineKind.VLC, state.engineKind)
+        assertEquals(EngineKind.NATIVE, state.engineKind)
         assertEquals(12_000L, state.positionMs)
+        assertEquals(1.0f, state.speed, 0.0001f)
         assertFalse(state.switching)
+    }
+
+    @Test
+    fun switchingBetweenSpeedCapableEnginesKeepsSpeed() = playerTest {
+        // 从 LibVLC 出发轮转回 Media3（两个都支持倍速）⇒ 1.5× 必须原样保留
+        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.VLC))
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        val old = env.last!!
+        old.position = 12_000L
+        old.duration = 60_000L
+        old.speedValue = 1.5f
+        old.isPlaying = true
+
+        vm.switchEngine()  // LibVLC → Media3
+        settle()
+
+        assertEquals(listOf(EngineKind.VLC, EngineKind.MEDIA3), env.createCalls)
+        val fresh = env.last!!
+        // 目标内核支持倍速 ⇒ 原样恢复（这里只看内核；界面上的倍速只在用户点倍速芯片时才变）
+        assertEquals(1.5f, fresh.speed, 0.0001f)
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
     }
 
     @Test

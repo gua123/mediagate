@@ -30,3 +30,29 @@ data class EngineCapabilities(
         val ALL: EngineCapabilities = EngineCapabilities()
     }
 }
+
+/**
+ * 内核能力表（**按种类就能查，不需要先造出一个内核实例**）。
+ *
+ * 为什么需要它：界面得在**切换之前**告诉用户"目标内核少什么"，
+ * 而 [PlayerEngine.capabilities] 只有把实例造出来才读得到。所以这里是唯一的一份能力声明，
+ * 各引擎实现也从这里取（不许自己再写一份 —— 有源码护栏钉着，见 NativeEngineContractTest）。
+ *
+ * 现状（2026-10-15）：
+ * - Media3 / LibVLC ＝过渡期兜底内核，能力齐平；
+ * - NATIVE（自研引擎）如实声明：**倍速 ✗、解码档位 ✗**（只有 FFmpeg 软解一条路），
+ *   缩放四档 ✓、音量 >100% ✓（软件增益）、外挂字幕 ✓（由 App 的覆盖层渲染，与内核无关）。
+ */
+object EngineCatalog {
+
+    fun capabilitiesOf(kind: EngineKind): EngineCapabilities = when (kind) {
+        EngineKind.MEDIA3, EngineKind.VLC -> EngineCapabilities.ALL
+
+        EngineKind.NATIVE -> EngineCapabilities(
+            speed = false,
+            resizeModes = ResizeMode.entries.toSet(),
+            volumeBoost = true,
+            decoderModes = false,
+        )
+    }
+}

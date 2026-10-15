@@ -75,6 +75,23 @@ object EngineSelection {
     /**
      * 出错后的降级目标（plan 4.6 自动降级链）：Media3 出错 → LibVLC；LibVLC 再出错 → null（无处可退）。
      */
+    /**
+     * 用户点「内核」按钮时的**下一档**（轮转，因为过渡期有三个内核并存）。
+     *
+     * 顺序：Media3 → 自研引擎 → LibVLC → Media3。LibVLC **已验证不可用**时跳过它
+     *（回环代理起不来就切不过去，别让用户白点一下）；"未知"时不跳，由界面按老规矩先弹确认。
+     */
+    fun cycleNext(current: EngineKind, canUseVlc: Boolean): EngineKind {
+        val order = listOf(EngineKind.MEDIA3, EngineKind.NATIVE, EngineKind.VLC)
+        var index = order.indexOf(current).coerceAtLeast(0)
+        repeat(order.size) {
+            index = (index + 1) % order.size
+            val candidate = order[index]
+            if (candidate != EngineKind.VLC || canUseVlc) return candidate
+        }
+        return EngineKind.MEDIA3
+    }
+
     fun fallbackFrom(current: EngineKind): EngineKind? = when (current) {
         EngineKind.MEDIA3 -> EngineKind.VLC
         EngineKind.VLC -> null

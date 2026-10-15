@@ -103,6 +103,33 @@ class NativeEngineContractTest {
     }
 
     @Test
+    fun 数据层桥的_R8_keep_规则必须在() {
+        // 这条护栏救过一次真机预览包：R8 把 NativeMediaSource 与 read/length/lastError 改名之后，
+        // release 包里的 GetMethodID 会返回 null（"数据来源接口不匹配"），而 debug 与 JVM 单测都测不出来。
+        val rules = find("consumer-rules.pro")
+        assertTrue("引擎模块必须带 consumer-rules.pro（R8 keep 规则）", rules.exists())
+        val text = rules.readText()
+        assertTrue("要保留 NativeMediaSource 接口本身", text.contains("io.github.gua123.mediagate.media.enginenative.NativeMediaSource { *; }"))
+        assertTrue("要保留它的实现类（RandomAccessMediaSource 等）", text.contains("implements io.github.gua123.mediagate.media.enginenative.NativeMediaSource"))
+        val build = find("build.gradle.kts").readText()
+        assertTrue(
+            "build.gradle.kts 要声明 consumerProguardFiles，否则规则不会进 release 构建",
+            build.contains("consumerProguardFiles(\"consumer-rules.pro\")"),
+        )
+    }
+
+    @Test
+    fun 引擎能力只能从契约层的能力表取_不许在本模块另写一份() {
+        // 两份能力声明必然会在某次改动后不一致（界面按 A 提示、引擎按 B 行事）
+        val source = find("src/main/java/io/github/gua123/mediagate/media/enginenative/NativeEnginePlayer.kt").readText()
+        assertTrue(
+            "NativeEnginePlayer 的 capabilities 应当来自 EngineCatalog.capabilitiesOf(kind)",
+            source.contains("EngineCatalog.capabilitiesOf(kind)"),
+        )
+        assertTrue("本模块不该再有第二份能力声明", !File(find("src/main/cpp").parentFile, "java/io/github/gua123/mediagate/media/enginenative/NativeEngineCapabilities.kt").exists())
+    }
+
+    @Test
     fun 缩放档位的序号必须与_native_的_ScaleMode_一一对应() {
         // Kotlin 侧传的是 ResizeMode.ordinal（NativeEnginePlayer.setResizeMode → setScaleMode），
         // native 侧按 av_sync.h 的 ScaleMode 数值分支。两边顺序一旦错位，

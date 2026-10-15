@@ -2,7 +2,10 @@ package io.github.gua123.mediagate.feature.player.video
 
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.media.engine.DecoderMode
+import io.github.gua123.mediagate.media.engine.EngineCapabilities
+import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
+import io.github.gua123.mediagate.media.engine.EngineSelection
 import io.github.gua123.mediagate.media.engine.EngineSwitchPlanner
 import io.github.gua123.mediagate.media.engine.ResizeMode
 import io.github.gua123.mediagate.media.engine.SwitchPlan
@@ -260,12 +263,41 @@ data class VideoPlayerUiState(
     /** 当前内核展示名（Media3 / LibVLC）。 */
     val engineLabel: String get() = engineKind.label
 
-    /** 点「内核」按钮会切到的目标内核（R9：Media3 与 LibVLC 互切）。 */
+    /**
+     * 点「内核」按钮会切到的目标内核。
+     *
+     * **2026-10-15 改成轮转**：Media3 → 自研引擎 → LibVLC → Media3
+     *（过渡期三个内核并存，但交互上仍是一个按钮）。LibVLC 已验证不可用时跳过它。
+     */
     val otherEngine: EngineKind
-        get() = if (engineKind == EngineKind.MEDIA3) EngineKind.VLC else EngineKind.MEDIA3
+        get() = EngineSelection.cycleNext(engineKind, canUseVlc = vlcUsable != false)
 
     /** 目标内核展示名。 */
     val otherEngineLabel: String get() = otherEngine.label
+
+    /** 当前内核**如实声明**的能力（见 EngineCatalog）：界面据此决定给不给档位。 */
+    val engineCaps: EngineCapabilities get() = EngineCatalog.capabilitiesOf(engineKind)
+
+    /** 倍速档位能不能用（自研引擎还不支持 ⇒ 界面不显示那个芯片）。 */
+    val canChangeSpeed: Boolean get() = engineCaps.speed
+
+    /** 解码档位能不能用（自研引擎目前只有软解一条路）。 */
+    val canChangeDecoder: Boolean get() = engineCaps.decoderModes
+
+    /**
+     * 「这个内核少什么」的一句话说明；能力齐平时为 null。
+     *
+     * 口径（项目红线：**控件不可用要写原因**）：缺的档位**不显示芯片**，但原因得摆在原来那排位置上，
+     * 否则用户只会觉得"倍速按钮怎么没了"。
+     */
+    val engineNotice: String?
+        get() {
+            val missing = buildList {
+                if (!engineCaps.speed) add("倍速")
+                if (!engineCaps.decoderModes) add("硬解档位")
+            }
+            return if (missing.isEmpty()) null else engineKind.label + "暂无" + missing.joinToString("与")
+        }
 
     /** 解码档位展示名（R10，中文来自 media:engine 的档位定义）。 */
     val decoderLabel: String get() = decoderMode.label
