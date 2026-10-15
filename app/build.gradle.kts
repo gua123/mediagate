@@ -1,8 +1,19 @@
 import java.util.Properties
+import org.gradle.api.tasks.PathSensitivity
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// 源码级护栏读的**非编译输入**必须声明成 Test 输入（2026-10-15 真机事故后补）：
+// 清单少一个会话 action 时，SessionServiceDeclarationTest 本该报红，但 Gradle 因为"清单不是测试输入"
+// 判定测试 UP-TO-DATE 直接跳过 —— 护栏看着绿、其实根本没跑（改了 .kt 会重跑，因为编译产物是输入；
+// **清单/res 这类不参与编译的文件不会**，所以必须显式声明）。
+tasks.withType<Test>().configureEach {
+    inputs.files(fileTree("src/main/java"), fileTree("src/main/res"), "src/main/AndroidManifest.xml")
+        .withPropertyName("sourceGuardrailInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // 签名材料不进 git：keystore/ 与 keystore.properties 均已在 .gitignore
@@ -24,8 +35,8 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.65：自研引擎第一次能在播放页点到（内核按钮三档轮转）。**尚未发布**——
         // 先出本机预览包给用户真机试播，试通再走一次正式发版。
-        versionCode = 67
-        versionName = "0.1.66"
+        versionCode = 68
+        versionName = "0.1.67"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

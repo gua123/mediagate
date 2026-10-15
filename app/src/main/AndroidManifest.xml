@@ -83,13 +83,26 @@
         <!--
           视频后台播放（M8-A / R18 视频侧）：MediaSessionService + 前台服务（mediaPlayback 类型）。
           只提供"会话与通知"——播放本体仍是播放页的内核（见 :media:playback 的 VideoPlaybackService），
-          因此 exported=false：系统媒体控制走 MediaSession，不需要系统来 bind 这个服务。
+          因此 exported=false（显式写 false 也挡住了 intent-filter 带来的隐式导出）：
+          这个服务只由本应用自己 bind，系统媒体控制走会话，不需要系统来 bind 它。
+
+          ⚠️ **那段 intent-filter 不是装饰，缺了它 _App 连不上自己的服务_**（2026-10-15 真机事故：
+          「切换内核失败：自研引擎 → Failed to resolve SessionToken for ComponentInfo{…VideoPlaybackService}」）：
+          Media3 的 SessionToken(context, ComponentName(...)) 会用 queryIntentServices 按
+          androidx.media3.session.MediaSessionService / MediaLibraryService / MediaBrowserService
+          三个 action 反查服务的**类型**，一个都没声明就抛 IllegalArgumentException（Manifest doesn't declare
+          one of either …）——同应用、非导出也照样查得到，所以 exported=false 与它并不冲突。
+          回归护栏见 :app 的 SessionServiceDeclarationTest（按源码里的 SessionToken 调用点核清单）。
         -->
         <service
             android:name="io.github.gua123.mediagate.media.playback.VideoPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
-            android:stopWithTask="false" />
+            android:stopWithTask="false">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
         <!--
           应用内更新（R20）：把下载到 filesDir/updates 的 APK 通过 content:// 交给系统安装器
