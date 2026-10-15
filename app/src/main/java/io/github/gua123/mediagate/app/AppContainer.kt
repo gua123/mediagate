@@ -698,6 +698,14 @@ class AppContainer(context: Context) :
      */
     val videoSession: VideoSessionController = VideoSessionController(appContext, thumbnails)
 
+    /**
+     * 视频会话/通知这条链路的一行自述（设置页诊断卡显示）。
+     *
+     * 2026-10-15 用户反馈「通知栏还是没有」之后加的：通知栏不出现有三条互相独立的链路
+     * （通知权限 / 会话控制器 / 会话源），没有 adb 时**让 App 自己说清是哪一条断了**。
+     */
+    fun videoSessionDiagnostic(): String = videoSession.diagnostic()
+
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {
 

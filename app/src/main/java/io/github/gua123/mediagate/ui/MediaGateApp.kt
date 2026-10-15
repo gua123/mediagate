@@ -326,6 +326,10 @@ fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
                                 }
 
                                 MediaKind.VIDEO -> {
+                                    // **通知栏/锁屏的媒体控制需要通知权限**（2026-10-15 用户反馈「通知栏还是没有」）：
+                                    // 音频那条路一直在申请，视频这条**漏了** —— 而 Android 13+ 没有 POST_NOTIFICATIONS
+                                    // 就什么通知都不显示（媒体通知也一样），用户看到的就是"通知栏里没有它"。
+                                    ensureNotificationPermission()
                                     // **点一下就预取**（2026-10-15 用户反馈「上 G 的视频第一次点还是要等挺久」）：
                                     // 从"点下"到"播放页发出第一条 Range 请求"之间还有几百毫秒（导航 + 组合 + 建内核），
                                     // 高延迟链路（公网 RTT ≈600 ms）上这几百毫秒够把一个往返发出去。
@@ -710,7 +714,7 @@ private fun SettingsRoute(
                     breadcrumbs = breadcrumbs,
                     // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
                     // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
-                    engineInfo = NativeEngine.describe() + "\n" + engineProbeLine,
+                    engineInfo = NativeEngine.describe() + "\n" + engineProbeLine + "\n" + container.videoSessionDiagnostic(),
                     playbackMetrics = playbackMetrics,
                     onClear = {
                         container.clearCrashes()
