@@ -279,11 +279,16 @@ data class VideoPlayerUiState(
     /**
      * 点「内核」按钮会切到的目标内核。
      *
-     * **2026-10-15 改成轮转**：Media3 → 自研引擎 → LibVLC → Media3
-     *（过渡期三个内核并存，但交互上仍是一个按钮）。LibVLC 已验证不可用时跳过它。
+     * **2026-10-15 改成轮转**：Media3 → 自研引擎 → LibVLC → Media3（过渡期三个内核并存，交互上仍是一个按钮）。
+     *
+     * ⚠️ **只有探针「确认能用」才把 LibVLC 放进轮转**（2026-10-15 真机截图之后收紧的口径）：
+     * 原来写的是「未知也放」（vlcUsable != false），而 LibVLC 在用户这台机器上**是会把 App 整个带走的**
+     * （有面包屑为证），探针又改成了按需跑 ⇒ 平时就是「未知」，于是点两下内核就撞上那个吓人的
+     * 「上次切到 LibVLC 时 App 直接退出了」确认框。现在改成**没被确认过就不出现在轮转里**：
+     * 用户点内核只会在 Media3 与自研引擎之间轮转；真要用 LibVLC，得先让探针给出 ok。
      */
     val otherEngine: EngineKind
-        get() = EngineSelection.cycleNext(engineKind, canUseVlc = vlcUsable != false)
+        get() = EngineSelection.cycleNext(engineKind, canUseVlc = vlcUsable == true)
 
     /** 目标内核展示名。 */
     val otherEngineLabel: String get() = otherEngine.label
