@@ -75,7 +75,15 @@ androidComponents {
 
 dependencies {
     implementation(project(":core:common"))
+    // RandomAccessSource 出现在 RandomAccessMediaSource 的公开构造签名里（M4 由播放会话创建），故用 api 传递
+    api(project(":data:storage-api"))
+    // 把挂起的数据层桥接成 native 要的阻塞读（RandomAccessMediaSource 里用 runBlocking）
+    implementation(libs.kotlinx.coroutines.android)
+
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    // 用真实临时文件 + FileStorageBackend 验证"引擎读数据"这条链路（不需要设备）
+    testImplementation(project(":data:storage-local"))
 }
 
 /**

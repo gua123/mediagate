@@ -72,6 +72,37 @@ class NativeEngineContractTest {
     }
 
     @Test
+    fun 数据层调用的_JNI_签名要与_Kotlin_接口逐字一致() {
+        // GetMethodID 的名字或描述符写错一个字符，编译期与 JVM 单测都不会报，
+        // 只在真机上表现成「数据来源接口不匹配」——所以这里逐条钉住。
+        val native = find("src/main/cpp/avio_source.cpp").readText()
+        val kotlin = find("src/main/java/io/github/gua123/mediagate/media/enginenative/NativeMediaSource.kt").readText()
+        val expected = mapOf(
+            "read" to "(JLjava/nio/ByteBuffer;I)I",
+            "length" to "()J",
+            "lastError" to "()Ljava/lang/String;",
+        )
+        for ((name, descriptor) in expected) {
+            assertTrue(
+                "avio_source.cpp 里要按 \"$name\" / \"$descriptor\" 取方法（改名或改类型都会在真机上失败）",
+                native.contains("\"$name\", \"$descriptor\""),
+            )
+            assertTrue("Kotlin 的 NativeMediaSource 里没有 fun $name(...)", kotlin.contains("fun $name("))
+        }
+    }
+
+    @Test
+    fun 数据层播放链路要真的参与编译并且能拿到_JavaVM() {
+        val cmake = find("src/main/cpp/CMakeLists.txt").readText()
+        assertTrue("avio_source.cpp 没进 add_library ⇒ 数据层那条路根本没编进去", cmake.contains("avio_source.cpp"))
+        val jni = find("src/main/cpp/engine_jni.cpp").readText()
+        // 播放线程是 native 自己建的，JVM 不认识它：没有 JavaVM 就没法 AttachCurrentThread，
+        // 于是远端/SAF 播放会在读第一个字节时失败。
+        assertTrue("engine_jni.cpp 要提供 JNI_OnLoad", jni.contains("JNI_OnLoad"))
+        assertTrue("JNI_OnLoad 里要把 JavaVM 交给引擎", jni.contains("setJavaVm(vm)"))
+    }
+
+    @Test
     fun 音画同步的纯逻辑要有能跑的开发机单测() {
         // 这一层错了（时间换算 / 同步判据 / 环形缓冲）在真机上就是"音画错位"这种最难查的问题，
         // 所以它必须有一份**不需要设备**的单测，并且每次 gradlew test 都会跑（见 NativeHostLogicTest）。
@@ -83,5 +114,6 @@ class NativeEngineContractTest {
         assertTrue("宿主单测要覆盖 PCM 环形缓冲", text.contains("PcmRing"))
         assertTrue("宿主单测要覆盖音画同步判据", text.contains("decideVideoSync"))
         assertTrue("宿主单测要覆盖音频时钟", text.contains("audioClockMs"))
+        assertTrue("宿主单测要覆盖自定义 AVIO 的 seek 换算", text.contains("resolveSeekPosition"))
     }
 }

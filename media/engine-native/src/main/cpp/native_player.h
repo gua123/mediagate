@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "audio_output.h"
+#include "avio_source.h"
 
 namespace mediagate {
 
@@ -61,8 +62,14 @@ public:
     NativePlayer(const NativePlayer&) = delete;
     NativePlayer& operator=(const NativePlayer&) = delete;
 
-    /** 打开文件并准备解码器；成功后再 [play]。失败原因写回 [error]（中文）。 */
+    /** 打开本地路径并准备解码器；成功后再 [play]。失败原因写回 [error]（中文）。 */
     bool open(const std::string& path, std::string* error);
+
+    /**
+     * 用**我们的数据层**打开（本地 / SAF / WebDAV / SFTP / FTP 都走这条）：
+     * [source] 是实现 NativeMediaSource 的 Kotlin 对象，native 只借用（存全局引用，不负责 close）。
+     */
+    bool openSource(JNIEnv* env, jobject source, std::string* error);
 
     /** 开始（或从暂停继续）播放。 */
     void play();
@@ -97,6 +104,9 @@ private:
 
     /** 音频输出（AAudio）。打开失败时记录原因，视频照放。 */
     AudioOutput audio_;
+
+    /** 数据来源（走我们数据层时才有效；本地路径打开时是空的）。 */
+    SourceBridge source_;
 
     std::atomic<int> state_{static_cast<int>(PlayerState::IDLE)};
     std::atomic<bool> running_{false};

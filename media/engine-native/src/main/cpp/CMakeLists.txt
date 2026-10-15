@@ -13,7 +13,8 @@ add_library(mediagate_engine SHARED
         media_probe.cpp
         first_frame.cpp
         native_player.cpp
-        audio_output.cpp)
+        audio_output.cpp
+        avio_source.cpp)
 
 # 16 KB 页对齐（Android 15+ 要求；历史上 19 个 .so 都做过这个核对）
 target_link_options(mediagate_engine PRIVATE "-Wl,-z,max-page-size=16384")
