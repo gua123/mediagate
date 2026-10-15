@@ -63,6 +63,11 @@ fun CacheDetailScreen(
     onClearFinishedTasks: () -> Unit = {},
     /** 取消固定（手动缓存的文件默认不被自动清理）。 */
     onUnpin: (SegmentedCacheBackend.CachedFileEntry) -> Unit = {},
+    /**
+     * **添加文件夹到队列**（2026-10-15 用户要求：「将添加文件夹进队列和清理缓存界面放到一块」）——
+     * 缓存相关的动作都收在这一页：加文件夹、看队列、看已缓存、删单条、清全部。
+     */
+    onOpenFolderPicker: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -97,8 +102,13 @@ fun CacheDetailScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (entries.isNotEmpty()) {
-                        TextButton(onClick = onClearAll) { Text(stringResource(R.string.cache_detail_clear_all)) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = onOpenFolderPicker) {
+                            Text(stringResource(R.string.cache_detail_add_folder))
+                        }
+                        if (entries.isNotEmpty()) {
+                            TextButton(onClick = onClearAll) { Text(stringResource(R.string.cache_detail_clear_all)) }
+                        }
                     }
                 }
             }

@@ -664,6 +664,20 @@ class AppContainer(context: Context) :
     }
 
     /**
+     * 列出一个目录下的**子目录**（2026-10-15 用户要求：「将添加文件夹进队列和清理缓存界面放到一块」——
+     * 缓存明细页里要能直接挑文件夹加队列，所以需要一个只列目录的轻量入口）。
+     *
+     * 只返回目录、按名字排序；列不出来的返回空（界面照常显示"没有子文件夹"）。
+     */
+    suspend fun listCacheFolders(path: String): List<Pair<String, String>> =
+        runCatching {
+            currentBackend().list(path, null)
+                .filter { it.isDirectory }
+                .map { it.path to it.name }
+                .sortedBy { it.second.lowercase() }
+        }.getOrElse { emptyList() }
+
+    /**
      * 收集「要预约缓存的文件」（2026-10-15 用户要求：「可以不打开对应文件夹就缓存视频」）。
      *
      * 单个视频 → 就它一个；**文件夹 → 递归找里面的视频（含子目录）**。

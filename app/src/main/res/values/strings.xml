@@ -40,6 +40,16 @@
 
     <!-- 诊断（2026-10-03 真机闪退之后补）：崩溃报告摆到界面上，用户复制给我即可定位 -->
     <!-- 预约缓存（2026-10-15 用户要求：「不打开对应文件夹就可以缓存视频」） -->
+    <string name="cache_picker_title">添加文件夹到缓存队列</string>
+    <string name="cache_picker_current">当前所在文件夹</string>
+    <string name="cache_picker_root">根目录</string>
+    <string name="cache_picker_hint">点文件夹进去看下一层；点右边「加入队列」就把它里面的视频（含子目录）排上队。</string>
+    <string name="cache_picker_pick_current">把当前这个文件夹加进队列</string>
+    <string name="cache_picker_tap_to_enter">点这里进入</string>
+    <string name="cache_picker_add">加入队列</string>
+    <string name="cache_picker_loading">正在列文件夹…</string>
+    <string name="cache_picker_empty">这个文件夹里没有子文件夹（也可以直接把当前文件夹加进队列）。</string>
+    <string name="cache_detail_add_folder">添加文件夹到队列</string>
     <string name="cache_pick_title">预约缓存</string>
     <string name="cache_pick_scanning_title">正在统计</string>
     <string name="cache_pick_scanning_body">正在看「%1$s」里有多少视频…</string>
