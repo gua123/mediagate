@@ -38,6 +38,8 @@ struct PlayerStatus {
     int channels = 0;
     uint64_t audioUnderruns = 0;
     int64_t avOffsetMs = 0;     // 最近一帧的音画偏差（视频 pts − 主时钟）
+    int64_t firstFrameMs = 0;   // 起播耗时：开始打开 → 第一帧送屏（0＝还没有）
+    int64_t lastSeekMs = 0;     // 最近一次 seek 的等待：请求 → 落点第一帧送屏（0＝还没 seek 过）
     std::string audioError;     // 音频输出不正常时的中文说明（空＝正常）
     std::string error;
 };
@@ -138,6 +140,8 @@ private:
     std::atomic<int64_t> frames_{0};
     std::atomic<int64_t> droppedFrames_{0};
     std::atomic<int64_t> avOffsetMs_{0};
+    std::atomic<int64_t> firstFrameMs_{0};
+    std::atomic<int64_t> lastSeekMs_{0};
     std::atomic<int> scaleMode_{0};
     std::atomic<float> volume_{1.0f};
     std::thread worker_;

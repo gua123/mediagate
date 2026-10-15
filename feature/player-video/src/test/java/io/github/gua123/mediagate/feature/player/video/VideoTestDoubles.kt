@@ -120,6 +120,11 @@ internal class FakePlayerEngine(
     /** seekTo 的历史。 */
     val seekCalls = mutableListOf<Long>()
 
+    /** 内核自报的播放指标（null = 不提供，与两个旧内核一致）。 */
+    var metrics: String? = null
+
+    override fun metricsLine(): String? = metrics
+
     /** 装载媒体时抛出的异常（模拟真机上内核/解码器初始化失败）。null = 正常。 */
     var failOnSetMedia: Throwable? = null
 
@@ -404,6 +409,13 @@ internal class FakeVideoPlayerEnvironment(
 
     /** 建内核失败注入。 */
     var failCreateFor: (EngineKind) -> Throwable? = { null }
+
+    /** 播放页上报的播放指标（起播耗时那一行），按上报顺序。 */
+    val playbackMetrics = mutableListOf<String>()
+
+    override fun reportPlaybackMetrics(line: String) {
+        playbackMetrics += line
+    }
 
     /** 列目录失败注入：key 是目录路径。 */
     val failSiblings = mutableMapOf<String, Throwable>()

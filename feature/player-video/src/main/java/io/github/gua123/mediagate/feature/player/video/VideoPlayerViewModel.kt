@@ -141,6 +141,9 @@ class VideoPlayerViewModel(
      * 反复自动切换只会让用户看到画面来回跳。
      */
     private var autoFallbackDone: Boolean = false
+
+    /** 本次打开是否已经上报过播放指标（一个文件只报一次，避免刷屏）。 */
+    private var metricsReported: Boolean = false
     private var endedSaved: Boolean = false
 
     /** 平移结果的缓存键（cue 列表 + 偏移），避免 100 ms 一次的字幕刷新反复做 O(n) 平移。 */
@@ -1056,8 +1059,9 @@ class VideoPlayerViewModel(
 
     /** 建内核 → 挂视图 → 装载媒体 → 准备 → 起播 → 读断点（R18）。 */
     private suspend fun open(path: String, backendId: String, kind: EngineKind, mode: DecoderMode) {
-        // 每打开一个新文件，允许再自动回退一次
+        // 每打开一个新文件，允许再自动回退一次；指标也重新计一次
         autoFallbackDone = false
+        metricsReported = false
         val ref = MediaSourceRef(backendId = backendId, path = path, title = VideoPlayerMath.fileNameOf(path))
         source = ref
         val created = try {
@@ -1324,6 +1328,19 @@ class VideoPlayerViewModel(
         }
     }
 
+    /**
+     * 上报一次播放指标（起播耗时等），**一个文件只报一次**。
+     *
+     * 时序：native 在"第一帧送屏"时把起播耗时记下来，我们等采样到第一帧之后再取，
+     * 所以取到 null（还没出第一帧）就下一轮再试。
+     */
+    private fun reportMetricsOnce() {
+        if (metricsReported) return
+        val line = engine?.metricsLine() ?: return
+        metricsReported = true
+        runCatching { environment.reportPlaybackMetrics(_state.value.engineKind.label + "：" + line) }
+    }
+
     // ------------------------------------------------------------------ 内核状态与进度
 
     /** 订阅内核状态机：出错就暴露「一键切 LibVLC」动作（plan 4.6）。 */
@@ -1367,6 +1384,7 @@ class VideoPlayerViewModel(
                 delay(tickMs)
                 val tick = sampleNow() ?: continue
                 saveOnTick(tick)
+                reportMetricsOnce()
             }
         }
     }

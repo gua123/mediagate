@@ -589,6 +589,8 @@ private fun SettingsRoute(
     var breadcrumbs by remember { mutableStateOf(container.readBreadcrumbs()) }
     // 自研引擎探针结论（2026-10-15）：独立进程测的"本机能不能跑"，摆在诊断卡里方便截图反馈
     val engineProbeLine by container.engineProbeLineState.collectAsStateWithLifecycle()
+    // 最近几次播放的指标（起播耗时等）：诊断卡里显示，用户截图就是证据
+    val playbackMetrics by container.playbackMetricsState.collectAsStateWithLifecycle()
 
     LaunchedEffect(updateState.notice) {
         val notice = updateState.notice ?: return@LaunchedEffect
@@ -665,6 +667,7 @@ private fun SettingsRoute(
                 // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
                 // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
                 engineInfo = NativeEngine.describe() + "\n" + engineProbeLine,
+                playbackMetrics = playbackMetrics,
                 onClear = {
                     container.clearCrashes()
                     container.clearBreadcrumbs()

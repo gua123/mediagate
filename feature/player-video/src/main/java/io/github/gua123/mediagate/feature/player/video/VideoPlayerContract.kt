@@ -191,6 +191,14 @@ interface VideoPlayerEnvironment {
     fun retestEngine() = Unit
 
     /**
+     * 上报**这次播放的指标**（一行中文：起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。
+     *
+     * 宿主把它留在内存里给设置页的诊断卡显示 —— 自用 sideload 拿不到 logcat，
+     * 用户截图里带上这几个数，就是"变快没变快、卡没卡"的第一手证据。默认什么都不做。
+     */
+    fun reportPlaybackMetrics(line: String) = Unit
+
+    /**
      * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
      *
      * 播放页一确定要播这个文件就调它：宿主在后台把**开头几段**先拉进分段缓存，

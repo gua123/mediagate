@@ -96,6 +96,14 @@ interface PlayerEngine {
     /** 设置音量倍率（实现内部夹到 0..[MAX_VOLUME]）。 */
     fun setVolume(volume: Float)
 
+    /**
+     * 内核自己记的"这次播放"指标（一行中文，可直接显示）；null = 这个内核不提供。
+     *
+     * 默认 null ⇒ 旧内核不用改。诊断卡把它显示出来，用户截图就能给出
+     * "起播多慢 / 卡了几次 / 音画偏多少"的第一手数据（网络加载方案 P0.4）。
+     */
+    fun metricsLine(): String? = null
+
     /** 当前播放位置（毫秒）。 */
     fun positionMs(): Long
 

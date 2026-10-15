@@ -67,6 +67,30 @@ class NativePlayerStatusTest {
     }
 
     @Test
+    fun 起播与_seek_指标要能解析出来并排成一行() {
+        val raw = "播放中|12500|7200000|301|4|1920x1080|h264|aac|48000|2|0|-3||380|120"
+        val status = NativePlayerStatus.parse(raw)
+        requireNotNull(status)
+        assertEquals(380L, status.firstFrameMs)
+        assertEquals(120L, status.lastSeekMs)
+        val line = status.metricsLine()
+        assertTrue(line.contains("起播 380 ms"))
+        assertTrue(line.contains("seek 等待 120 ms"))
+        assertTrue(line.contains("丢帧 4"))
+        assertTrue(line.contains("音画偏差 -3 ms"))
+    }
+
+    @Test
+    fun 老版本的状态串_没有指标字段也要能解析() {
+        // 字段是 2026-10-15 追加的：少两个字段不能把整条状态串判成"不认识"
+        val status = NativePlayerStatus.parse("播放中|1000|60000|25|0|1280x720|hevc|aac|48000|2|0|0|")
+        requireNotNull(status)
+        assertEquals(0L, status.firstFrameMs)
+        assertEquals(0L, status.lastSeekMs)
+        assertTrue("没 seek 过就不显示 seek 等待", !status.metricsLine().contains("seek 等待"))
+    }
+
+    @Test
     fun 不认识的串返回空而不是抛异常() {
         assertNull(NativePlayerStatus.parse(""))
         assertNull(NativePlayerStatus.parse("随便什么东西"))

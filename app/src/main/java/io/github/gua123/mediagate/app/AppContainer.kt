@@ -802,6 +802,11 @@ class AppContainer(context: Context) :
             nativeEngineProbeNow()
         }
 
+        /** 播放页每次打开文件后上报一行指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。 */
+        override fun reportPlaybackMetrics(line: String) {
+            recordPlaybackMetrics(line)
+        }
+
         /**
          * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
          *
@@ -1061,6 +1066,26 @@ class AppContainer(context: Context) :
     private val playbackActive: StateFlow<Boolean> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         combine(audioSession.state.map { it.playing }, videoSession.active) { audio, video -> audio || video }
             .stateIn(ioScope, SharingStarted.Eagerly, false)
+    }
+
+    // ------------------------------------------------------------ 播放指标（2026-10-15）
+
+    /**
+     * 最近几次播放的指标（新 → 旧，最多 [PLAYBACK_METRICS_KEEP] 条）。
+     *
+     * 来源是播放页每次打开文件后上报的那一行（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。
+     * 摆进诊断卡的目的：用户截图就能给出"自研引擎起播多慢、卡不卡"的第一手数据。
+     */
+    private val _playbackMetrics = MutableStateFlow<List<String>>(emptyList())
+
+    val playbackMetricsState: StateFlow<List<String>> = _playbackMetrics.asStateFlow()
+
+    /** 记一条播放指标（播放页通过宿主回调进来；带时间戳，新的在前）。 */
+    fun recordPlaybackMetrics(line: String) {
+        if (line.isBlank()) return
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date())
+        // kotlinx.coroutines.flow.update 在这个文件里没导入：直接用 value 赋值（单线程写入点，够用）
+        _playbackMetrics.value = (listOf(stamp + "  " + line) + _playbackMetrics.value).take(PLAYBACK_METRICS_KEEP)
     }
 
     // ------------------------------------------------------------ 自研引擎启动探针（2026-10-15）
@@ -1800,7 +1825,10 @@ class AppContainer(context: Context) :
 
 
         /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
-        /** 自研引擎探针的超时（自检里要开一次 AAudio 流，比 LibVLC 那套慢一点）。 */
+        /** 播放指标留几条（诊断卡里够看清最近几次就够）。 */
+    const val PLAYBACK_METRICS_KEEP = 5
+
+    /** 自研引擎探针的超时（自检里要开一次 AAudio 流，比 LibVLC 那套慢一点）。 */
     const val ENGINE_PROBE_TIMEOUT_MS = 8_000L
 
     /** 自研引擎探针的轮询间隔。 */
