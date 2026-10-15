@@ -136,6 +136,19 @@ data class VideoPlayerUiState(
     val vlcSuspectCrash: Boolean = false,
     /** LibVLC 在本机能不能跑；false = 探针被带走 → 不让切（2026-10-03 用户建议）。 */
     val vlcUsable: Boolean? = null,
+    /**
+     * **自研引擎**在本机能不能跑（2026-10-15；与 LibVLC 同一套独立进程探针）。
+     * false = 自检没通过 → 界面先拦住并说明原因，不让用户切过去踩坑。
+     */
+    val engineUsable: Boolean? = null,
+    /** 正在跑自研引擎的自检（界面显示「正在测试…」）。 */
+    val engineProbeRunning: Boolean = false,
+    /** 自研引擎自检没通过的原因（中文）。 */
+    val engineProbeReason: String? = null,
+    /**
+     * 「自研引擎播不了这个文件，已自动换回 Media3」这类**一次性说明**（用户不需要动手，但要知道为什么换了内核）。
+     */
+    val engineFallbackNotice: String? = null,
     /** 正在跑 LibVLC 内核探针（独立进程；界面显示「正在测试…」）。 */
     val vlcProbeRunning: Boolean = false,
     /** 探针结果文案（测试通过 / 失败原因 / 没结论）。 */
@@ -290,7 +303,7 @@ data class VideoPlayerUiState(
      * 口径（项目红线：**控件不可用要写原因**）：缺的档位**不显示芯片**，但原因得摆在原来那排位置上，
      * 否则用户只会觉得"倍速按钮怎么没了"。
      */
-    val engineNotice: String?
+    val capsNotice: String?
         get() {
             val missing = buildList {
                 if (!engineCaps.speed) add("倍速")
@@ -412,11 +425,20 @@ sealed interface VideoPlayerEvent {
     /** 预览帧就绪（抽不到就不会发这个事件）。 */
 
     /** LibVLC 内核探针：开始/结束（[usable] = null 表示没结论）。 */
+    data class EngineProbeChanged(val running: Boolean, val usable: Boolean?, val message: String?) :
+        VideoPlayerEvent
+
+    /** 自研引擎自检通过/失败（与 [VlcProbeChanged] 同一套：跑的时候 running=true）。 */
     data class VlcProbeChanged(val running: Boolean, val usable: Boolean?, val message: String?) :
         VideoPlayerEvent
 
     /** 黑屏/切换提示到时间收掉。 */
     data object SwitchHintCleared : VideoPlayerEvent
+
+    /** 自研引擎播不了 → 已自动换回 Media3（给用户一句说明，不需要他动手）。 */
+    data class EngineFallbackNoticeRaised(val text: String) : VideoPlayerEvent
+
+    data object EngineFallbackNoticeCleared : VideoPlayerEvent
 
     /** 播放失败（内核错误或存储错误）。 */
     data class Failed(val kind: VideoErrorKind, val detail: String?, val canFallback: Boolean) : VideoPlayerEvent
@@ -629,6 +651,16 @@ fun VideoPlayerUiState.reduce(event: VideoPlayerEvent): VideoPlayerUiState = whe
         vlcUsable = event.usable ?: vlcUsable,
         vlcProbeMessage = event.message,
     )
+
+    is VideoPlayerEvent.EngineProbeChanged -> copy(
+        engineProbeRunning = event.running,
+        engineUsable = event.usable ?: engineUsable,
+        engineProbeReason = if (event.usable == false) event.message else engineProbeReason,
+    )
+
+    is VideoPlayerEvent.EngineFallbackNoticeRaised -> copy(engineFallbackNotice = event.text)
+
+    VideoPlayerEvent.EngineFallbackNoticeCleared -> copy(engineFallbackNotice = null)
 
     is VideoPlayerEvent.SwitchFailed -> copy(
         status = VideoPlayerStatus.ERROR,

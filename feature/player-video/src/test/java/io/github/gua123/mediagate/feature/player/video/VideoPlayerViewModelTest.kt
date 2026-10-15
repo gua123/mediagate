@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -199,6 +200,47 @@ class VideoPlayerViewModelTest {
         assertEquals(12_000L, state.positionMs)
         assertEquals(1.0f, state.speed, 0.0001f)
         assertFalse(state.switching)
+    }
+
+    @Test
+    fun 自研引擎播不了这个文件要自动换回_Media3_并且给一句说明() = playerTest {
+        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.NATIVE))
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        assertEquals("先按偏好用自研引擎起播", EngineKind.NATIVE, env.last!!.kind)
+        assertEquals(null, vm.state.value.engineFallbackNotice)
+
+        // 内核报错：格式/编码不认、数据读不动……（真机上就是"点了没反应/黑屏"那类）
+        env.last!!.state.value = EngineState.Error("这个文件里没有能解码的视频流")
+        settle()
+
+        // 自动换回 Media3：用户不用动手，但界面上要有一句说明（口径：不硬切、不静默）
+        assertEquals(listOf(EngineKind.NATIVE, EngineKind.MEDIA3), env.createCalls)
+        val notice = vm.state.value.engineFallbackNotice
+        assertNotNull("自动换内核必须告诉用户一声", notice)
+        assertTrue(notice!!.contains("已自动换回"))
+        assertTrue(notice.contains("Media3"))
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
+    }
+
+    @Test
+    fun 自动回退只做一次_免得画面来回跳() = playerTest {
+        val env = environment(preferences = FakeVideoPreferences(engine = EngineKind.NATIVE))
+        val vm = player(env, "Movies/b.mp4")
+        settle()
+        env.last!!.state.value = EngineState.Error("解码器打不开")
+        settle()
+        assertEquals(listOf(EngineKind.NATIVE, EngineKind.MEDIA3), env.createCalls)
+
+        // 换回 Media3 之后又出错：这次不再自动切（是别的问题了，交给错误卡片与用户决定）
+        env.last!!.state.value = EngineState.Error("网络读不动")
+        settle()
+        assertEquals(
+            "已经回退过一次就不再自动切换",
+            listOf(EngineKind.NATIVE, EngineKind.MEDIA3),
+            env.createCalls,
+        )
+        assertEquals(EngineKind.MEDIA3, vm.state.value.engineKind)
     }
 
     @Test

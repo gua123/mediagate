@@ -103,6 +103,28 @@ class NativeEngineContractTest {
     }
 
     @Test
+    fun 探针必须注册在独立进程并且真的跑自检() {
+        // 探针的全部价值就在"独立进程"这四个字上：少写 android:process 就变成在主进程里
+        // 跑最危险的那几步（FFmpeg/AAudio 初始化），崩了直接带走 App —— 而单测与构建都不会报错。
+        var dir: File? = File("").absoluteFile
+        var manifest: File? = null
+        while (dir != null && manifest == null) {
+            val candidate = File(dir, "app/src/main/AndroidManifest.xml")
+            if (candidate.exists()) manifest = candidate
+            dir = dir.parentFile
+        }
+        val text = manifest?.readText() ?: error("找不到 app 的 AndroidManifest.xml")
+        assertTrue(
+            "探针服务要在清单里声明为独立进程 :engineprobe",
+            text.contains("NativeEngineProbeService") && text.contains(":engineprobe"),
+        )
+        val service = find("src/main/java/io/github/gua123/mediagate/media/enginenative/NativeEngineProbeService.kt").readText()
+        assertTrue("探针必须真的调 NativeEngine.selfCheck()", service.contains("NativeEngine.selfCheck()"))
+        assertTrue("探针要先写 start（跨进程证据）", service.contains("FILE_START"))
+        assertTrue("探针要写 done 作为末尾标记", service.contains("FILE_DONE"))
+    }
+
+    @Test
     fun 数据层桥的_R8_keep_规则必须在() {
         // 这条护栏救过一次真机预览包：R8 把 NativeMediaSource 与 read/length/lastError 改名之后，
         // release 包里的 GetMethodID 会返回 null（"数据来源接口不匹配"），而 debug 与 JVM 单测都测不出来。

@@ -79,6 +79,8 @@ import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.core.common.VlcCrashHeuristic
 import io.github.gua123.mediagate.media.engine.VlcProbeService
+import io.github.gua123.mediagate.media.enginenative.NativeEngine
+import io.github.gua123.mediagate.media.enginenative.NativeEngineProbeService
 import kotlinx.coroutines.delay
 import io.github.gua123.mediagate.feature.browser.EntrySort
 import io.github.gua123.mediagate.feature.browser.EntrySorter
@@ -788,6 +790,19 @@ class AppContainer(context: Context) :
         }
 
         /**
+         * 自研引擎在本机能不能跑（**必须写成 getter**，理由同 [vlcUsable]：
+         * 这两个 StateFlow 声明在容器后面，写成初始化器会在构造期读到 null）。
+         */
+        override val engineUsable: Boolean? get() = engineUsableState.value
+
+        override val engineProbeReason: String? get() = engineProbeReasonState.value
+
+        /** 自研引擎的「重新测试」。 */
+        override fun retestEngine() {
+            nativeEngineProbeNow()
+        }
+
+        /**
          * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
          *
          * 播放页一确定要播这个文件，就在后台把**开头两段**拉进分段缓存——
@@ -1048,6 +1063,90 @@ class AppContainer(context: Context) :
             .stateIn(ioScope, SharingStarted.Eagerly, false)
     }
 
+    // ------------------------------------------------------------ 自研引擎启动探针（2026-10-15）
+
+    /**
+     * 自研引擎在本机是否可用（null = 未知）。
+     *
+     * 与 LibVLC 那套**同一套思路**：探针跑在独立进程 `:engineprobe` 里，
+     * 把"在个别机器上可能直接把进程带走"的步骤（FFmpeg 解码器初始化、AAudio 开流）都放在那边；
+     * 主进程只看文件（start / ok / fail / done）→ 纯函数 [engineProbeVerdict] 判定 → 落 DataStore。
+     */
+    private val _engineUsable = MutableStateFlow<Boolean?>(null)
+    private val _engineProbeReason = MutableStateFlow<String?>(null)
+    private val _engineProbeReport = MutableStateFlow<String?>(null)
+
+    /** 给播放页观察的结论。 */
+    val engineUsableState: StateFlow<Boolean?> = _engineUsable.asStateFlow()
+
+    /** 自检没通过的原因（中文；界面直接显示）。 */
+    val engineProbeReasonState: StateFlow<String?> = _engineProbeReason.asStateFlow()
+
+    /**
+     * 诊断卡里那一行「自研引擎探针：…」（通过时带自检摘要、没通过时带原因）。
+     *
+     * 摆在诊断卡里是为了**让用户截图就能说清问题**：引擎活着吗、本机能不能跑、哪一步没通过。
+     */
+    val engineProbeLineState: StateFlow<String> =
+        combine(_engineUsable, _engineProbeReason, _engineProbeReport) { usable, reason, report ->
+            val verdict = when (usable) {
+                true -> EngineProbeVerdict.OK
+                false -> EngineProbeVerdict.FAILED
+                else -> EngineProbeVerdict.UNKNOWN
+            }
+            engineProbeLine(verdict, reason, report)
+        }.stateIn(ioScope, SharingStarted.Eagerly, engineProbeLine(EngineProbeVerdict.UNKNOWN))
+
+    /**
+     * 跑一次自研引擎探针（启动时自动跑；用户也能从提示里手动重测）。
+     *
+     * 自检本身要开一次 AAudio 流，比 LibVLC 那套慢一点，所以超时给宽些（[ENGINE_PROBE_TIMEOUT_MS]）。
+     */
+    fun nativeEngineProbeNow() {
+        ioScope.launch {
+            runCatching {
+                NativeEngineProbeService.reset(appContext)
+                NativeEngineProbeService.start(appContext)
+                val deadline = System.currentTimeMillis() + ENGINE_PROBE_TIMEOUT_MS
+                while (System.currentTimeMillis() < deadline &&
+                    !NativeEngineProbeService.succeeded(appContext) &&
+                    !NativeEngineProbeService.finished(appContext)
+                ) {
+                    delay(ENGINE_PROBE_POLL_MS)
+                }
+                val verdict = engineProbeVerdict(
+                    started = NativeEngineProbeService.started(appContext),
+                    succeeded = NativeEngineProbeService.succeeded(appContext),
+                    finished = NativeEngineProbeService.finished(appContext),
+                )
+                applyEngineVerdict(verdict)
+            }.onFailure { AppLog.w(TAG, "自研引擎探针执行失败", it) }
+        }
+    }
+
+    private suspend fun applyEngineVerdict(verdict: EngineProbeVerdict) {
+        when (verdict) {
+            EngineProbeVerdict.OK -> {
+                _engineUsable.value = true
+                _engineProbeReason.value = null
+                _engineProbeReport.value = NativeEngineProbeService.successReport(appContext)
+                settings.setEngineProbeVerdict("ok")
+            }
+
+            EngineProbeVerdict.FAILED -> {
+                _engineUsable.value = false
+                _engineProbeReport.value = null
+                _engineProbeReason.value = NativeEngineProbeService.failureReason(appContext)
+                    ?: "自检进程被系统带走了（没留下原因）"
+                settings.setEngineProbeVerdict("failed")
+                runCatching { Breadcrumbs.mark("自研引擎探针：没通过（本机先用 Media3）") }
+            }
+
+            // 结论未知（例如探针只是被系统回收）：保持原状态，下次启动再试
+            EngineProbeVerdict.UNKNOWN -> Unit
+        }
+    }
+
     // ------------------------------------------------------------ LibVLC 启动探针（2026-10-03）
 
     /**
@@ -1266,6 +1365,23 @@ class AppContainer(context: Context) :
     private fun parentOf(path: String): String = path.substringBeforeLast('/', "")
 
     init {
+        // 自研引擎探针：① 先把上次落盘的结论恢复出来（进播放页时探针可能还没跑完）；
+        // ② 再跑一次新的（它会覆盖结论）。与 LibVLC 探针一样，**独立进程**，崩了只带走它自己。
+        ioScope.launch {
+            runCatching {
+                settings.engineProbeVerdict.first()?.let { raw ->
+                    when (raw) {
+                        "ok" -> _engineUsable.value = true
+                        "failed" -> {
+                            _engineUsable.value = false
+                            _engineProbeReason.value = NativeEngineProbeService.failureReason(appContext)
+                                ?: "自检进程被系统带走了（没留下原因）"
+                        }
+                    }
+                }
+            }
+            runCatching { nativeEngineProbeNow() }
+        }
         // 冷启动先把"最后一次播放的文件"读进内存：浏览页高亮与"恢复上次文件夹"都要它
         ioScope.launch {
             runCatching { settings.lastPlayedPath.first() }.getOrNull()?.let { _lastPlayedPath.value = it }
@@ -1684,7 +1800,13 @@ class AppContainer(context: Context) :
 
 
         /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
-        const val VLC_PROBE_TIMEOUT_MS = 6_000L
+        /** 自研引擎探针的超时（自检里要开一次 AAudio 流，比 LibVLC 那套慢一点）。 */
+    const val ENGINE_PROBE_TIMEOUT_MS = 8_000L
+
+    /** 自研引擎探针的轮询间隔。 */
+    const val ENGINE_PROBE_POLL_MS = 200L
+
+    const val VLC_PROBE_TIMEOUT_MS = 6_000L
 
         /** 探针结果的轮询间隔。 */
         const val VLC_PROBE_POLL_MS = 200L
