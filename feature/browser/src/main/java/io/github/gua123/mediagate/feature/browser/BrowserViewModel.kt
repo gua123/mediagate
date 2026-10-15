@@ -232,6 +232,9 @@ class BrowserViewModel(
                 if (_state.value.path != path || _state.value.status != BrowserStatus.CONTENT) return@launch
                 batch.map { entry ->
                     async(io) {
+                        // 先把开头字节缓存下来（用户要求：打开文件夹就自动缓存），再出封面——
+                        // 这样封面抽帧直接命中缓存，不再为封面单独过一次网。
+                        runCatching { environment.warmUpFile(entry.path) }
                         runCatching { environment.thumbnails.thumbnail(entry, root.backend) }
                     }
                 }.awaitAll()
