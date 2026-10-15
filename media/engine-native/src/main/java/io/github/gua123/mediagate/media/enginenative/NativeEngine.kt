@@ -192,6 +192,37 @@ object NativeEngine {
 
     private external fun nativePlayerStatus(): String
 
+    // ---- M4：接进 PlayerEngine 契约要用到的四件事（音量 / 缩放 / 位置 / 时长） ----
+
+    /** 音量倍率（0..2；>1 是软件增益，超 1.0 会削波）。 */
+    fun setVolume(volume: Float) {
+        if (!isAvailable) return
+        runCatching { nativeSetVolume(volume) }
+    }
+
+    /**
+     * 画面缩放档位：传 ResizeMode 的 **ordinal**
+     * （0 适应屏幕 / 1 裁切填充 / 2 拉伸铺满 / 3 原始尺寸，与 native 的 ScaleMode 一一对应）。
+     */
+    fun setScaleMode(mode: Int) {
+        if (!isAvailable) return
+        runCatching { nativeSetScaleMode(mode) }
+    }
+
+    /** 当前位置（毫秒）。可以频繁调用：native 侧只读一个原子量，不建字符串、不加锁。 */
+    fun positionMs(): Long = if (!isAvailable) 0L else runCatching { nativePositionMs() }.getOrDefault(0L)
+
+    /** 媒体总时长（毫秒；未知为 0）。 */
+    fun durationMs(): Long = if (!isAvailable) 0L else runCatching { nativeDurationMs() }.getOrDefault(0L)
+
+    private external fun nativeSetVolume(volume: Float)
+
+    private external fun nativeSetScaleMode(mode: Int)
+
+    private external fun nativePositionMs(): Long
+
+    private external fun nativeDurationMs(): Long
+
     /** 自研 FFmpeg 的版本串（"未链接 FFmpeg" 表示引擎还没有解码能力）。 */
     fun ffmpegVersion(): String? = safe { nativeFfmpegVersion() }
 

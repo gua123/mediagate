@@ -19,6 +19,8 @@ enum class PlayerState {
     PAUSED = 2,
     STOPPED = 3,
     ERROR = 4,
+    /** 播到结尾（画面停在最后一帧；seek 会回到播放中）。 */
+    ENDED = 5,
 };
 
 /** 播放器自述（诊断卡 / 状态查询用）。 */
@@ -83,8 +85,26 @@ public:
     /** 跳到某个位置（毫秒）；内部按关键帧回退定位，然后接着播。 */
     bool seekTo(int64_t positionMs);
 
+    /**
+     * 画面缩放档位（0=适应屏幕 1=裁切填充 2=拉伸铺满 3=原始尺寸，见 av_sync.h 的 ScaleMode）。
+     * 只改"送屏缓冲算多大"，四个档位共用同一条送屏路径。
+     */
+    void setScaleMode(int mode);
+
+    /** 音量倍率（0..2；>1 是软件增益，会削波）。 */
+    void setVolume(float volume);
+
     /** 当前状态快照。 */
     PlayerStatus status() const;
+
+    /**
+     * 只读位置 / 时长（便宜版）。
+     *
+     * 界面每次刷新进度、字幕覆盖层每次都对位置 ⇒ 不能走 [status()]（它要拷贝解码器等字符串）。
+     */
+    int64_t positionMsFast() const { return positionMs_.load(); }
+
+    int64_t durationMsFast() const { return durationMsAtomic_.load(); }
 
 private:
     void threadLoop();
@@ -114,9 +134,12 @@ private:
     std::atomic<bool> hasSeek_{false};
     std::atomic<int64_t> seekTargetMs_{0};
     std::atomic<int64_t> positionMs_{0};
+    std::atomic<int64_t> durationMsAtomic_{0};
     std::atomic<int64_t> frames_{0};
     std::atomic<int64_t> droppedFrames_{0};
     std::atomic<int64_t> avOffsetMs_{0};
+    std::atomic<int> scaleMode_{0};
+    std::atomic<float> volume_{1.0f};
     std::thread worker_;
 };
 

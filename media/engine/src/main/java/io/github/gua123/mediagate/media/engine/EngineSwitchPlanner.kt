@@ -78,6 +78,8 @@ object EngineSelection {
     fun fallbackFrom(current: EngineKind): EngineKind? = when (current) {
         EngineKind.MEDIA3 -> EngineKind.VLC
         EngineKind.VLC -> null
+        // 自研引擎是"唯一的那一套"，过渡期它打不开就退到默认内核 Media3（不静默：界面要说明原因）
+        EngineKind.NATIVE -> EngineKind.MEDIA3
     }
 }
 

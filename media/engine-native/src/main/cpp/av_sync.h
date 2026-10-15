@@ -154,6 +154,63 @@ inline double audioClockMs(int64_t anchorMediaMs, int64_t anchorFrames,
                static_cast<double>(sampleRate);
 }
 
+// ------------------------------------------------------------ 画面缩放档位
+
+/**
+ * 画面缩放档位（与 Kotlin 侧 ResizeMode 的序号一一对应，改一处就要改另一处）。
+ *
+ * 0=FIT 适应屏幕（完整可见，可能留黑边）1=CROP 裁切填充 2=STRETCH 拉伸铺满 3=ORIGINAL 原始尺寸。
+ */
+enum class ScaleMode {
+    FIT = 0,
+    CROP = 1,
+    STRETCH = 2,
+    ORIGINAL = 3,
+};
+
+/**
+ * 算"送屏缓冲该多大"（纯函数）。
+ *
+ * 送屏那一步会**居中贴图并自动裁掉超出窗口的部分**，所以：
+ *  - CROP 只要算出**盖住**窗口的尺寸（比窗口大），超出的部分自然被裁掉；
+ *  - ORIGINAL 原样输出，窗口装不下就裁掉四周；
+ *  ⇒ 四个档位共用同一条送屏路径，不需要在渲染里写四份分支。
+ */
+inline void scaleTarget(int mode, int srcW, int srcH, int winW, int winH, int* dstW, int* dstH) {
+    if (dstW == nullptr || dstH == nullptr) return;
+    const int safeSrcW = srcW > 0 ? srcW : 1;
+    const int safeSrcH = srcH > 0 ? srcH : 1;
+    if (winW <= 0 || winH <= 0) {
+        *dstW = safeSrcW;
+        *dstH = safeSrcH;
+        return;
+    }
+    switch (mode) {
+        case static_cast<int>(ScaleMode::CROP): {
+            const double scale = std::max(static_cast<double>(winW) / safeSrcW,
+                                          static_cast<double>(winH) / safeSrcH);
+            *dstW = std::max(1, static_cast<int>(safeSrcW * scale));
+            *dstH = std::max(1, static_cast<int>(safeSrcH * scale));
+            return;
+        }
+        case static_cast<int>(ScaleMode::STRETCH):
+            *dstW = winW;
+            *dstH = winH;
+            return;
+        case static_cast<int>(ScaleMode::ORIGINAL):
+            *dstW = safeSrcW;
+            *dstH = safeSrcH;
+            return;
+        default: {
+            const double scale = std::min(static_cast<double>(winW) / safeSrcW,
+                                          static_cast<double>(winH) / safeSrcH);
+            *dstW = std::max(1, static_cast<int>(safeSrcW * scale));
+            *dstH = std::max(1, static_cast<int>(safeSrcH * scale));
+            return;
+        }
+    }
+}
+
 // -------------------------------------------------------------- PCM 环形缓冲
 
 /**

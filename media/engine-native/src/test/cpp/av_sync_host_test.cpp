@@ -151,6 +151,37 @@ void testSeekPosition() {
     CHECK_EQ(out, 99999);
 }
 
+void testScaleTarget() {
+    std::printf("- 画面缩放档位\n");
+    int w = 0;
+    int h = 0;
+    // 1920x1080 放进 1000x1000 的窗口
+    mediagate::scaleTarget(0, 1920, 1080, 1000, 1000, &w, &h);  // FIT：完整可见
+    CHECK_EQ(w, 1000);
+    CHECK_EQ(h, 562);
+    mediagate::scaleTarget(1, 1920, 1080, 1000, 1000, &w, &h);  // CROP：盖住窗口（超出部分由送屏裁掉）
+    CHECK_EQ(w, 1777);
+    CHECK_EQ(h, 1000);
+    mediagate::scaleTarget(2, 1920, 1080, 1000, 1000, &w, &h);  // STRETCH：不保持比例
+    CHECK_EQ(w, 1000);
+    CHECK_EQ(h, 1000);
+    mediagate::scaleTarget(3, 1920, 1080, 1000, 1000, &w, &h);  // ORIGINAL：原样
+    CHECK_EQ(w, 1920);
+    CHECK_EQ(h, 1080);
+    // 不认识的档位退回 FIT（不许算出 0 或负数）
+    mediagate::scaleTarget(9, 640, 480, 1280, 720, &w, &h);
+    CHECK_EQ(w, 960);
+    CHECK_EQ(h, 720);
+    // 窗口还没量出来（0）时按原尺寸走，别算出 0 让下游除零
+    mediagate::scaleTarget(0, 640, 480, 0, 0, &w, &h);
+    CHECK_EQ(w, 640);
+    CHECK_EQ(h, 480);
+    // 竖屏视频放进横屏窗口
+    mediagate::scaleTarget(0, 1080, 1920, 2000, 1000, &w, &h);
+    CHECK_EQ(w, 562);
+    CHECK_EQ(h, 1000);
+}
+
 void testRingBasics() {
     std::printf("- PCM 环形缓冲：基本读写\n");
     mediagate::PcmRing ring;
@@ -327,6 +358,7 @@ int main() {
     testSyncDecision();
     testAudioClock();
     testSeekPosition();
+    testScaleTarget();
     testRingBasics();
     testRingWrapAround();
     testRingFlush();

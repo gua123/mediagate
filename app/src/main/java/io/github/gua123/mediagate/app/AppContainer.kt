@@ -97,6 +97,7 @@ import io.github.gua123.mediagate.media.ffmpeg.TimestampRepair
 import io.github.gua123.mediagate.media.ffmpeg.TimestampRepairResult
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
+import io.github.gua123.mediagate.media.enginenative.NativeEnginePlayer
 import io.github.gua123.mediagate.media.engine.PlayerEngine
 import io.github.gua123.mediagate.media.engine.VlcEngine
 import io.github.gua123.mediagate.media.playback.BackendDataSourceFactory
@@ -873,6 +874,10 @@ class AppContainer(context: Context) :
                 Breadcrumbs.mark("VLC：实例建好了")
                 engine
             }
+
+            // 自研引擎（M4）：数据层直接交给它（本地 / SAF / WebDAV / SFTP / FTP 同一条路），
+            // 画面是它自己的 SurfaceView；能力差异见 NativeEngineCapabilities（界面据此提示）
+            EngineKind.NATIVE -> NativeEnginePlayer(appContext, { _root.value?.backend })
         }
 
         /**

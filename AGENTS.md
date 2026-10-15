@@ -275,6 +275,11 @@
   · **M3 已完整**：视频帧循环 + 音频/音画同步 + **接我们的数据层**（`NativeMediaSource` / `RandomAccessMediaSource`：
     FFmpeg 的读/seek 经 JNI 回调进 Kotlin，落回 `StorageBackend → RandomAccessSource` ⇒ 本地/SAF/WebDAV/SFTP/FTP 对引擎是同一条路，
     分段缓存与超时层也都在链路上）；`JNI_OnLoad` 存 `JavaVM`，native 播放线程按需 Attach/Detach；
-  · **下一步（M4）**：写 `NativeEnginePlayer` 实现 `PlayerEngine` 契约 → 播放页真正走自研引擎（那时才第一次有 UI 入口、才能真机验收）；
-    之后 M5 覆盖打满再删 Media3/LibVLC；
-  · **至今没有 UI 入口**，所以也**没有发版**（按发版纪律攒着）；全量单测 **1536 例 0 失败（31 模块）**。
+  · **M4 上半 ✅**：`NativeEnginePlayer` 实现 `PlayerEngine` 契约（只做翻译，播放逻辑仍在 C++）：数据层直给、
+    自己的 `SurfaceView`（数据源与画面都到齐才起播）、状态串→`EngineState` 轮询、位置/时长走便宜入口；
+    契约新增 **`EngineCapabilities` 能力矩阵**（自研引擎如实声明：倍速 ✗ / 解码档位 ✗ / 缩放四档 ✓ / 音量 >100% ✓，
+    旧内核默认全支持 ⇒ 不变行为）；缩放四档由 native 纯函数 `scaleTarget` 算；`EngineKind.NATIVE` 已进 `createEngine`；
+  · **下一步（M4 下半）**：播放页内核按钮从"两档互切"改成**三档轮转 + 能力提示**（倍速不支持要如实说），
+    真机验过再把默认内核切成自研引擎；之后 M5 覆盖打满再删 Media3/LibVLC；
+  · **至今没有 UI 入口**（引擎已能被容器造出来，但界面还点不到），所以也**没有发版**（按发版纪律攒着）；
+    全量单测 **1548 例 0 失败（31 模块）**。

@@ -15,4 +15,13 @@ enum class EngineKind(val label: String) {
 
     /** LibVLC（自带解码器，可强制软解）。 */
     VLC("LibVLC"),
+
+    /**
+     * **自研引擎**（`:media:engine-native`，C++17 + 自研 FFmpeg + AAudio）。
+     *
+     * 2026-10-06 用户拍板「视频引擎只采用一套，不要来回切换，自研一套视频播放引擎」⇒
+     * 这就是唯一的那一套；Media3 / LibVLC 是**过渡期的兜底**，M5 覆盖打满后整条删除。
+     * 能力差异见 [EngineCapabilities]（界面上要如实说明，不做静默降级）。
+     */
+    NATIVE("自研引擎"),
 }
