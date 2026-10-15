@@ -215,6 +215,17 @@ object NativeEngine {
     /** 媒体总时长（毫秒；未知为 0）。 */
     fun durationMs(): Long = if (!isAvailable) 0L else runCatching { nativeDurationMs() }.getOrDefault(0L)
 
+    /**
+     * 引擎自检（给**独立进程探针**用）：这台机器上各条链路能不能初始化起来。
+     * 通过时以 "ok|" 开头，否则以 "错误：" 开头（中文，可直接显示）。
+     */
+    fun selfCheck(): String {
+        if (!isAvailable) return "错误：native 库加载失败（" + (loadFailure ?: "未知") + "）"
+        return safe { nativeSelfCheck() } ?: "错误：自检调用异常（详见日志）"
+    }
+
+    private external fun nativeSelfCheck(): String
+
     private external fun nativeSetVolume(volume: Float)
 
     private external fun nativeSetScaleMode(mode: Int)

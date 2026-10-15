@@ -199,6 +199,8 @@ fun VideoPlayerScreen(
     // 切到**自研引擎**之前先说清能力差异（2026-10-15：它还没有倍速与硬解档位）——
     // 口径是"不做静默降级"：宁可多一次确认，也不让用户切过去发现"点了没反应"
     var nativeNoticeVisible by remember { mutableStateOf(false) }
+    // 自检没过（独立进程探针）：不让切，并给「重新测试」出口（与 LibVLC 那套一致）
+    var nativeUnavailableVisible by remember { mutableStateOf(false) }
     // **2026-10-03 用户要求**：「记住上一次播放时是横屏还是竖屏」
     //   ① 进播放页：有记录就直接套用（没有才跟随系统）；
     //   ② 点旋转按钮：切换并落盘；
@@ -442,8 +444,9 @@ fun VideoPlayerScreen(
                     onOpenPlaylist = { playlistVisible = true },
                     onRequestSwitchEngine = {
                         if (state.otherEngine == EngineKind.NATIVE) {
-                            // 自研引擎：先告知能力差异（还没有倍速/硬解档位），再切
-                            nativeNoticeVisible = true
+                            // 自研引擎：① 自检没过就**先拦住**（独立进程测出来的，别让用户踩坑）；
+                            // ② 自检过了也要先告知能力差异（还没有倍速/硬解档位），确认后再切。
+                            if (state.engineUsable == false) nativeUnavailableVisible = true else nativeNoticeVisible = true
                         } else {
                             // 判定收敛在纯函数里（VlcSwitchDecision，有单测）：
                             // 已验证可用 → 直接切；未知（含"上次崩过"）→ 弹窗，主按钮是「先测试再切换」；
@@ -488,6 +491,44 @@ fun VideoPlayerScreen(
 
             // 切 LibVLC 前的提示（2026-10-03 真机：点内核 → 切 LibVLC → 进程被带走）
             // 主按钮改成「先测试再切换」——用户反馈「我没找到测试内核的地方」，这里就是最自然的入口。
+            // 自研引擎自检没过：说明原因 + 给「重新测试」（**不让切**，免得进去就播不了）
+            if (nativeUnavailableVisible) {
+                AlertDialog(
+                    onDismissRequest = { nativeUnavailableVisible = false },
+                    title = { Text(stringResource(R.string.video_native_unavailable_title)) },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                stringResource(
+                                    R.string.video_native_unavailable_body,
+                                    state.engineProbeReason ?: stringResource(R.string.video_native_unavailable_unknown),
+                                ),
+                            )
+                            if (state.engineProbeRunning) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    Text(stringResource(R.string.video_native_probe_running))
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { viewModel.retestEngine() },
+                            enabled = !state.engineProbeRunning,
+                        ) { Text(stringResource(R.string.video_native_unavailable_retest)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { nativeUnavailableVisible = false }) {
+                            Text(stringResource(R.string.video_native_engine_cancel))
+                        }
+                    },
+                )
+            }
+
             // 自研引擎的能力告知（2026-10-15）：确认后按同一套切换流程换内核
             if (nativeNoticeVisible) {
                 AlertDialog(
@@ -1160,7 +1201,7 @@ private fun ChipsRow(
                 },
             )
         }
-        state.engineNotice?.let { notice ->
+        state.capsNotice?.let { notice ->
             Text(
                 text = notice,
                 color = Color.White,
@@ -1404,6 +1445,10 @@ private fun SubtitlePanel(
                 }
             }
 
+            // 自研引擎播不了 → 自动换回 Media3 的一句说明（不需要用户动手，但要知道为什么换了内核）
+            state.engineFallbackNotice?.let { notice ->
+                PlayerNoticeRow(text = notice, onDismiss = viewModel::clearEngineFallbackNotice)
+            }
             state.subtitleNotice?.let { notice ->
                 SubtitleNoticeRow(notice = notice, onDismiss = viewModel::clearSubtitleNotice)
             }
@@ -1564,6 +1609,27 @@ private fun SubtitleCandidateRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+/** 通用一行提示（自研引擎自动回退等）：样式与字幕提示行一致，带「知道了」。 */
+@Composable
+private fun PlayerNoticeRow(text: String, onDismiss: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(CONTROL_SCRIM)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDismiss) { Text(stringResource(R.string.video_subtitle_notice_dismiss)) }
     }
 }
 

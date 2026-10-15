@@ -91,6 +91,16 @@ class RootSettings(private val context: Context) {
         }
     }
 
+    /** 自研引擎探针的结论（2026-10-15；口径同上：null = 还没测过）。 */
+    val engineProbeVerdict: Flow<String?> = context.rootDataStore.data.map { it[KEY_ENGINE_VERDICT] }
+
+    /** 记下自研引擎探针结论（null = 清掉，视为未知）。 */
+    suspend fun setEngineProbeVerdict(verdict: String?) {
+        context.rootDataStore.edit { preferences ->
+            if (verdict == null) preferences.remove(KEY_ENGINE_VERDICT) else preferences[KEY_ENGINE_VERDICT] = verdict
+        }
+    }
+
     /** 保存排序设置。 */
     suspend fun setSort(sort: EntrySort) {
         context.rootDataStore.edit { preferences ->
@@ -144,6 +154,9 @@ class RootSettings(private val context: Context) {
 
         /** LibVLC 启动探针的结论（2026-10-03）。 */
         val KEY_VLC_VERDICT = stringPreferencesKey("vlc_probe_verdict")
+
+    /** 自研引擎探针的结论（2026-10-15）。 */
+    val KEY_ENGINE_VERDICT = stringPreferencesKey("engine_probe_verdict")
 
         /** 最后一次播放的文件路径（2026-10-03）：启动恢复目录 + 浏览页高亮共用。 */
         val KEY_LAST_PLAYED = stringPreferencesKey("last_played_path")

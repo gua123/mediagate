@@ -587,6 +587,8 @@ private fun SettingsRoute(
     // 没有崩溃报告时也要能说清"上次是怎么没的"（2026-10-03 用户反馈"没捕捉到崩溃日志"）
     var lastExit by remember { mutableStateOf(container.lastExitSummary()) }
     var breadcrumbs by remember { mutableStateOf(container.readBreadcrumbs()) }
+    // 自研引擎探针结论（2026-10-15）：独立进程测的"本机能不能跑"，摆在诊断卡里方便截图反馈
+    val engineProbeLine by container.engineProbeLineState.collectAsStateWithLifecycle()
 
     LaunchedEffect(updateState.notice) {
         val notice = updateState.notice ?: return@LaunchedEffect
@@ -661,7 +663,8 @@ private fun SettingsRoute(
                 lastExit = lastExit,
                 breadcrumbs = breadcrumbs,
                 // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
-                engineInfo = NativeEngine.describe(),
+                // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
+                engineInfo = NativeEngine.describe() + "\n" + engineProbeLine,
                 onClear = {
                     container.clearCrashes()
                     container.clearBreadcrumbs()

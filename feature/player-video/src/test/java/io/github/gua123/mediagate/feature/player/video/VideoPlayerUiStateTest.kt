@@ -299,7 +299,29 @@ class VideoPlayerUiStateTest {
         val native = VideoPlayerUiState(engineKind = EngineKind.NATIVE)
         assertFalse("倍速芯片不该出现（点了也没用）", native.canChangeSpeed)
         assertFalse("解码档位芯片不该出现", native.canChangeDecoder)
-        assertEquals("自研引擎暂无倍速与硬解档位", native.engineNotice)
+        assertEquals("自研引擎暂无倍速与硬解档位", native.capsNotice)
+    }
+
+    @Test
+    fun 自检没过时要能拦住_并且带上原因() {
+        val blocked = VideoPlayerUiState(engineKind = EngineKind.MEDIA3, engineUsable = false, engineProbeReason = "音频设备打不开")
+        assertFalse("自检没过就不能放行切换到自研引擎", blocked.engineUsable != false)
+        assertEquals("音频设备打不开", blocked.engineProbeReason)
+
+        // 还没测出结论（null）时不拦人：探针可能只是没跑完
+        val unknown = VideoPlayerUiState(engineKind = EngineKind.MEDIA3)
+        assertNull(unknown.engineUsable)
+    }
+
+    @Test
+    fun 自研引擎播不了时要有自动回退的一次性说明() {
+        val state = VideoPlayerUiState(engineKind = EngineKind.NATIVE).reduce(
+            VideoPlayerEvent.EngineFallbackNoticeRaised("自研引擎播不了这个文件（解码器打不开），已自动换回 Media3 继续"),
+        )
+        assertTrue(state.engineFallbackNotice!!.contains("已自动换回 Media3"))
+
+        val cleared = state.reduce(VideoPlayerEvent.EngineFallbackNoticeCleared)
+        assertNull(cleared.engineFallbackNotice)
     }
 
     @Test
@@ -308,7 +330,7 @@ class VideoPlayerUiStateTest {
             val state = VideoPlayerUiState(engineKind = kind)
             assertTrue(kind.label + " 应当能调倍速", state.canChangeSpeed)
             assertTrue(kind.label + " 应当能调解码档位", state.canChangeDecoder)
-            assertNull(kind.label + " 不该出现能力提示", state.engineNotice)
+            assertNull(kind.label + " 不该出现能力提示", state.capsNotice)
         }
     }
 }

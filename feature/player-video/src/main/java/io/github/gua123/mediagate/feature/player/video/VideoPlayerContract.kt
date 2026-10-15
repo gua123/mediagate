@@ -178,6 +178,19 @@ interface VideoPlayerEnvironment {
     fun retestVlc() = Unit
 
     /**
+     * **自研引擎**在本机能不能跑（2026-10-15；与 [vlcUsable] 同一套探针思路）。
+     *
+     * null = 还没结论；false = 独立进程的自检没通过（或进程被带走）→ 界面先拦住并说明原因。
+     */
+    val engineUsable: Boolean? get() = null
+
+    /** 自研引擎自检没通过的原因（中文，可直接显示）；null = 没有原因可展示。 */
+    val engineProbeReason: String? get() = null
+
+    /** 重新测一次自研引擎（拦下它的那个对话框里给出口）。 */
+    fun retestEngine() = Unit
+
+    /**
      * **打开即预取**（2026-10-03 用户反馈「新视频在内网第一次打开会缓存很久」）。
      *
      * 播放页一确定要播这个文件就调它：宿主在后台把**开头几段**先拉进分段缓存，

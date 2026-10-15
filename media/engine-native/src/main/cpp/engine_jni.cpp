@@ -10,6 +10,7 @@
 #include "first_frame.h"
 #include "native_player.h"
 #include "media_probe.h"
+#include "self_check.h"
 
 namespace {
 
@@ -221,6 +222,17 @@ Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSeekTo(
  *
  * 出错时返回 "错误：…"。字段只增不改序——M4 接进 PlayerEngine 契约之后界面也要读它。
  */
+/**
+ * 引擎自检（独立进程探针用）：返回 "ok|…" 或 "错误：…"（中文）。
+ *
+ * 为什么放在独立进程里调：自研引擎某些初始化（FFmpeg 解码器、AAudio 开流）在个别机器上
+ * 可能**直接把进程带走**，与当年 LibVLC 的情况一样 —— 探针进程崩了只带走它自己。
+ */
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSelfCheck(JNIEnv* env, jclass) {
+    return toJString(env, mediagate::selfCheck());
+}
+
 /** 音量倍率（0..2；>1 是软件增益，会削波）。 */
 extern "C" JNIEXPORT void JNICALL
 Java_io_github_gua123_mediagate_media_enginenative_NativeEngine_nativeSetVolume(

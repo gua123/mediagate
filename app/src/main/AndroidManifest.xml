@@ -130,5 +130,16 @@
             android:exported="false"
             android:process=":vlcprobe"
             android:stopWithTask="true" />
+
+        <!--
+          自研引擎探针：**必须跑在独立进程**（与 :vlcprobe 同一套思路）。
+          FFmpeg 解码器初始化 / AAudio 开流在个别机器上可能直接把进程带走，
+          放在这里崩的只是探针自己，主进程据此判断"本机能不能用自研引擎"。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.media.enginenative.NativeEngineProbeService"
+            android:exported="false"
+            android:process=":engineprobe"
+            android:stopWithTask="true" />
     </application>
 </manifest>

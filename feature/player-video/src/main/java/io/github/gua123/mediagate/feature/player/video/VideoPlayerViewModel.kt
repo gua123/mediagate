@@ -78,6 +78,8 @@ class VideoPlayerViewModel(
         VideoPlayerUiState(
             vlcSuspectCrash = environment.vlcPreviouslyCrashed,
             vlcUsable = environment.vlcUsable,
+            engineUsable = environment.engineUsable,
+            engineProbeReason = environment.engineProbeReason,
             // 极简模式是持久化偏好：进页面就按上次的选择显示
             simpleMode = environment.preferences.simpleMode,
             // 记住的音量/亮度（2026-10-03 用户要求）：进入播放页就按上次的值来
@@ -131,6 +133,14 @@ class VideoPlayerViewModel(
     private var hostJob: Job? = null
     private var msSinceSave: Long = 0L
     private var wasPlaying: Boolean = false
+
+    /**
+     * 「自研引擎播不了 → 自动换回 Media3」本轮打开是否已经做过。
+     *
+     * 只做一次：换回 Media3 之后再出错就是别的问题了（数据层、文件本身），
+     * 反复自动切换只会让用户看到画面来回跳。
+     */
+    private var autoFallbackDone: Boolean = false
     private var endedSaved: Boolean = false
 
     /** 平移结果的缓存键（cue 列表 + 偏移），避免 100 ms 一次的字幕刷新反复做 O(n) 平移。 */
@@ -273,6 +283,47 @@ class VideoPlayerViewModel(
      * （成功/失败都会很快有值，最长等 [VLC_RETEST_TIMEOUT_MS]）。
      */
     fun retestVlc() = runVlcProbe(switchWhenUsable = false)
+
+    /**
+     * 重测一次**自研引擎**（提示对话框里的「重新测试」）。
+     *
+     * 与 LibVLC 那套完全同源：探针在独立进程 `:engineprobe` 里跑（FFmpeg 解码器初始化 + AAudio 开流），
+     * 主进程只轮询结论，所以**测的时候不会把 App 弄崩**。
+     */
+    fun retestEngine() = runEngineProbe(switchWhenUsable = false)
+
+    /** 关掉「自研引擎播不了、已自动换回 Media3」那条提示。 */
+    fun clearEngineFallbackNotice() {
+        _state.update { it.reduce(VideoPlayerEvent.EngineFallbackNoticeCleared) }
+    }
+
+    /** 先测自研引擎、通过就切过去（与 [probeThenSwitch] 同一套体验）。 */
+    fun probeEngineThenSwitch() = runEngineProbe(switchWhenUsable = true)
+
+    private fun runEngineProbe(switchWhenUsable: Boolean) {
+        if (_state.value.engineProbeRunning) return
+        _state.update {
+            it.reduce(VideoPlayerEvent.EngineProbeChanged(running = true, usable = null, message = null))
+        }
+        viewModelScope.launch {
+            environment.retestEngine()
+            val deadline = System.currentTimeMillis() + ENGINE_RETEST_TIMEOUT_MS
+            var usable: Boolean? = environment.engineUsable
+            while (usable == null && System.currentTimeMillis() < deadline) {
+                delay(VLC_RETEST_POLL_MS)
+                usable = environment.engineUsable
+            }
+            val message = when (usable) {
+                true -> "测试通过：本机可以运行自研引擎"
+                false -> environment.engineProbeReason ?: "测试失败：自研引擎在本机起不来（已阻止切换）"
+                null -> "这次没得到结论（探针进程可能被系统回收了），可以稍后再试"
+            }
+            _state.update {
+                it.reduce(VideoPlayerEvent.EngineProbeChanged(running = false, usable = usable, message = message))
+            }
+            if (usable == true && switchWhenUsable) switchEngine()
+        }
+    }
 
     /**
      * **先测试再切换**（2026-10-03 用户反馈「我没找到测试内核的地方」）。
@@ -1005,6 +1056,8 @@ class VideoPlayerViewModel(
 
     /** 建内核 → 挂视图 → 装载媒体 → 准备 → 起播 → 读断点（R18）。 */
     private suspend fun open(path: String, backendId: String, kind: EngineKind, mode: DecoderMode) {
+        // 每打开一个新文件，允许再自动回退一次
+        autoFallbackDone = false
         val ref = MediaSourceRef(backendId = backendId, path = path, title = VideoPlayerMath.fileNameOf(path))
         source = ref
         val created = try {
@@ -1284,6 +1337,23 @@ class VideoPlayerViewModel(
                     _state.update {
                         it.reduce(VideoPlayerEvent.Failed(VideoErrorKind.PLAYBACK, engineState.message, fallback))
                     }
+                    // 自研引擎播不了这个文件（格式/编码不认、数据读不动…）⇒ **自动换回 Media3 接着播**，
+                    // 用户不用动手，但要知道为什么换了内核（口径：不硬切、不静默）。
+                    if (target.kind == EngineKind.NATIVE && !autoFallbackDone) {
+                        autoFallbackDone = true
+                        val dst = VideoEngineSwitch.fallbackTarget(EngineKind.NATIVE, proxyAvailable)
+                        if (dst != null) {
+                            _state.update {
+                                it.reduce(
+                                    VideoPlayerEvent.EngineFallbackNoticeRaised(
+                                        "自研引擎播不了这个文件（" + engineState.message + "），已自动换回 " + dst.label + " 继续",
+                                    ),
+                                )
+                            }
+                            Breadcrumbs.mark("自研引擎播不了 → 自动回退 " + dst.label)
+                            launchSwitch(target = dst, reason = SwitchReason.ERROR_FALLBACK)
+                        }
+                    }
                 }
             }
         }
@@ -1390,7 +1460,10 @@ class VideoPlayerViewModel(
     private companion object {
 
         /** LibVLC 重测：最长等结论多久（独立进程探针通常 1 秒内出结果）。 */
-        const val VLC_RETEST_TIMEOUT_MS = 8_000L
+        /** 自研引擎重测的超时（自检要开一次 AAudio 流，给宽些）。 */
+    const val ENGINE_RETEST_TIMEOUT_MS = 10_000L
+
+    const val VLC_RETEST_TIMEOUT_MS = 8_000L
 
         /** LibVLC 重测的轮询间隔。 */
         const val VLC_RETEST_POLL_MS = 400L
