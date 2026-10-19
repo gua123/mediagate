@@ -378,4 +378,4 @@
   EngineProbeVerdict / VlcCrashHeuristic）、AppContainer 里的探针与代理装配、RootSettings 的探针键、清单里的两个探针服务；
   EngineKind 保留历史枚举值（解析旧偏好用），播放页里不可达的引擎/探针分支暂留（编译依赖它，属纯代码瘦身）。
   ③ 启动护栏 AppStartupOrderTest 改成盯「AppContainer 自己恢复队列」+「已下线探针不许回来」（已实证能红）。
-  证据：全量 **1364 用例 0 失败**（较 0.1.73 少 91 例，全部是随模块/探针删除的测试）；release 包 0.1.74 / versionCode 75。
+  证据：全量 **1364 用例 0 失败**（较 0.1.73 少 91 例，全部是随模块/探针删除的测试）；release 包 0.1.74 / versionCode 75，**APK 87 MB → 24 MB**（12 个原生库全部 16 KB 对齐）。
