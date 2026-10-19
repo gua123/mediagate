@@ -1,9 +1,9 @@
-package io.github.gua123.mediagate.media.proxy
+package io.github.gua123.mediagate.media.engine
 
 /**
  * mediagate 伪 URI 的编解码（与 [io.github.gua123.mediagate.media.playback.MediaUri] **逐字兼容**）。
  *
- * 为什么这里要再写一份：模块依赖方向是 `:media:playback → :media:engine → :media:proxy`
+ * 为什么这里要再写一份：模块依赖方向是 `:media:playback → :media:engine`
  * （playback 已经依赖 engine，engine 的回环代理又依赖本模块），engine/proxy 都**不能**反向
  * 依赖 playback。而回环 HTTP 代理与 LibVLC 必须用同一套地址口径寻址（plan 4.6：让第二引擎
  * 复用同一数据层），所以把口径固化成本对象，KDoc 里的金标字符串与 playback 的 MediaUri

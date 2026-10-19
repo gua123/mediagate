@@ -369,3 +369,13 @@
     自研引擎的教训（真机不出画面这一环在开发机上无从验证）值得记住：**"能在开发机验证的部分"做得再全，也替代不了端到端那一环**。
   · 全量单测 **1580 例 0 失败（31 模块）**。
 - **字幕整条移除（2026-10-19，用户要求「将字幕部分删除吧,删除后直接发新版本」）**：删除 :media:subtitle 模块；播放页去掉字幕面板 / 覆盖层 / 字幕芯片与 subtitleCue 热流；契约层去掉 subtitles 宿主与字幕偏好（开关/样式/偏移）；撤销引擎侧字幕轨控制器（PlayerEngine.subtitles / ExoPlayerEngine 外挂轨装配 / VlcEngine slave 与 setSpuDelay / 切内核的快照与恢复）；删掉对应单测（字幕流程、引擎字幕控制器）并清理 strings 里 35 条字幕文案。**边界**：文件类型识别里的 SUBTITLE 类别保留（只给“不支持”提示）；数据库 schema 未动。全量 **1455 用例 0 失败**（比删除前少 154 例，全是字幕相关）。预览版 0.1.73 / versionCode 74。
+- **预约缓存加前台服务 + 已下线引擎全部清理（2026-10-19，用户要求「仍然待定的现在就做：1.需要加前台服务 2.全部清理掉」）**：
+  ① **前台服务** CacheDownloadService（dataSync 类型、START_NOT_STICKY、startForeground 失败即 stopSelf）：
+  通知栏显示「第 n/N 个 · pct% · 文件名」+ 暂停/继续，队列空了自动退场；队列**持久化**到 DataStore（只存待处理项），
+  启动时 restoreCacheQueue() 恢复，杀进程后能续下（已下好的段与 .pin 固定都还在）。新增 CacheQueueNotification（纯函数文案）
+  与 CacheQueueCodec（序列化），各有单测。 ② **清理**：删除 :media/engine-native（含 FFmpeg 原生库）、:media/proxy（回环代理，
+  MediaUriCodec 搬进 :media:engine）、VlcEngine / VlcProbeService / NativeEngineProbeService、探针结论判定与测试（VlcProbeVerdict /
+  EngineProbeVerdict / VlcCrashHeuristic）、AppContainer 里的探针与代理装配、RootSettings 的探针键、清单里的两个探针服务；
+  EngineKind 保留历史枚举值（解析旧偏好用），播放页里不可达的引擎/探针分支暂留（编译依赖它，属纯代码瘦身）。
+  ③ 启动护栏 AppStartupOrderTest 改成盯「AppContainer 自己恢复队列」+「已下线探针不许回来」（已实证能红）。
+  证据：全量 **1364 用例 0 失败**（较 0.1.73 少 91 例，全部是随模块/探针删除的测试）；release 包 0.1.74 / versionCode 75。

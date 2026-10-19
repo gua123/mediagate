@@ -35,8 +35,8 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.65：自研引擎第一次能在播放页点到（内核按钮三档轮转）。**尚未发布**——
         // 先出本机预览包给用户真机试播，试通再走一次正式发版。
-        versionCode = 74
-        versionName = "0.1.73"
+        versionCode = 75
+        versionName = "0.1.74"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -120,8 +120,6 @@ dependencies {
 
     implementation(project(":media:engine"))
     // 自研单内核（native）：先只把 .so 打进包并能在诊断里自述，播放逻辑随后长出来
-    implementation(project(":media:engine-native"))
-    implementation(project(":media:proxy"))
     implementation(project(":media:playback"))
     // M2-B：:app 是组合根，直接用 ExoPlayerEngine 的构造签名（DataSource.Factory 来自 media3-datasource，
     // :media:engine 把它声明为 implementation，不向上传递）

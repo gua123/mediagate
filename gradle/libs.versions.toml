@@ -23,7 +23,6 @@ work = "2.12.0"
 profileinstaller = "1.4.1"
 
 media3 = "1.11.1"
-libvlc = "3.7.6"
 ffmpegKit = "8.1.9"
 ndk = "30.0.16248370"
 
@@ -81,7 +80,6 @@ media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-ui-compose = { module = "androidx.media3:media3-ui-compose", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 media3-datasource-okhttp = { module = "androidx.media3:media3-datasource-okhttp", version.ref = "media3" }
-libvlc-all = { module = "org.videolan.android:libvlc-all", version.ref = "libvlc" }
 ffmpeg-kit-min = { module = "dev.ffmpegkit-maintained:ffmpeg-kit-min", version.ref = "ffmpegKit" }
 
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }

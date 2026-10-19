@@ -1,6 +1,5 @@
 package io.github.gua123.mediagate.media.engine
 
-import io.github.gua123.mediagate.media.proxy.MediaUriCodec
 
 /**
  * 播放源引用（plan 4.6 `setMedia(src: MediaSourceRef)`）。
