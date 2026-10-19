@@ -23,7 +23,6 @@ class EngineSwitchPlannerTest {
         decoderMode: DecoderMode = DecoderMode.AUTO_HW,
         resizeMode: ResizeMode = ResizeMode.CROP,
         playing: Boolean = true,
-        subtitles: SubtitleState = SubtitleState(enabled = true, offsetMs = 500L, uri = "mediagate://local-file%3A%2Fx/a.srt", label = "a.srt"),
     ) = EngineSnapshot(
         media = source,
         positionMs = positionMs,
@@ -32,7 +31,6 @@ class EngineSwitchPlannerTest {
         decoderMode = decoderMode,
         resizeMode = resizeMode,
         playWhenReady = playing,
-        subtitles = subtitles,
     )
 
     @Test
@@ -82,30 +80,6 @@ class EngineSwitchPlannerTest {
         assertEquals(DecoderMode.FORCE_HW, hard.restore.decoderMode)
     }
 
-    @Test
-    fun `切换方案保留字幕开关_外挂轨与偏移`() {
-        val plan = EngineSwitchPlanner.plan(EngineKind.MEDIA3, EngineKind.VLC, snapshot(), SwitchReason.USER_REQUEST)
-        val subtitles = plan.restore.subtitles
-        assertTrue(subtitles.enabled)
-        assertEquals("mediagate://local-file%3A%2Fx/a.srt", subtitles.uri)
-        assertEquals("a.srt", subtitles.label)
-        assertEquals(500L, subtitles.offsetMs)
-    }
-
-    @Test
-    fun `字幕偏移越界时被夹到允许区间`() {
-        val tooLate = EngineSwitchPlanner.plan(
-            EngineKind.MEDIA3, EngineKind.VLC,
-            snapshot(subtitles = SubtitleState(offsetMs = 999_000L)), SwitchReason.USER_REQUEST,
-        )
-        assertEquals(SubtitleState.MAX_OFFSET_MS, tooLate.restore.subtitles.offsetMs)
-
-        val tooEarly = EngineSwitchPlanner.plan(
-            EngineKind.MEDIA3, EngineKind.VLC,
-            snapshot(subtitles = SubtitleState(offsetMs = -999_000L)), SwitchReason.USER_REQUEST,
-        )
-        assertEquals(SubtitleState.MIN_OFFSET_MS, tooEarly.restore.subtitles.offsetMs)
-    }
 
     @Test
     fun `切换方案保留画面模式_播放状态与媒体`() {
@@ -179,7 +153,6 @@ class EngineSwitchPlannerTest {
         assertTrue(text, text.contains("Media3 → LibVLC"))
         assertTrue(text, text.contains("位置 12.3s"))
         assertTrue(text, text.contains("倍速 1.25x"))
-        assertTrue(text, text.contains("保留外挂字幕"))
 
         val rebuilding = EngineSwitchPlanner.plan(
             EngineKind.MEDIA3, EngineKind.MEDIA3,

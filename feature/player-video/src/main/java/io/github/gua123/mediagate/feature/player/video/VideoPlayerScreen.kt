@@ -61,7 +61,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -117,24 +116,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import java.util.Locale
 import io.github.gua123.mediagate.media.engine.EngineKind
-import io.github.gua123.mediagate.media.subtitle.SubtitleAlignment
-import io.github.gua123.mediagate.media.subtitle.SubtitleCandidate
-import io.github.gua123.mediagate.media.subtitle.SubtitleCue
-import io.github.gua123.mediagate.media.subtitle.SubtitleFormat
-import io.github.gua123.mediagate.media.subtitle.SubtitleSource
-import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 
 /** 控制层自动隐藏的等待时长（播放中才计时）。 */
 // 控制层自动隐藏的秒数改成用户可配置（见 ControlsAutoHide 与设置 → 播放）
-
-/** 时间轴步进按钮：长按多久开始连续微调。 */
-private const val SUBTITLE_LONG_PRESS_DELAY_MS = 400L
-
-/** 时间轴步进按钮：长按连续微调的重复间隔。 */
-private const val SUBTITLE_REPEAT_INTERVAL_MS = 200L
-
-/** 字幕覆盖层的水平内边距（避免长行顶到屏幕边缘）。 */
-private val SUBTITLE_HORIZONTAL_PADDING = 24.dp
 
 /** 控制层压在画面上的深色底（半透明，保证白色文字在任何画面上都可读）。 */
 private val CONTROL_SCRIM = Color.Black.copy(alpha = 0.45f)
@@ -176,7 +160,6 @@ fun VideoPlayerScreen(
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val output by viewModel.videoOutput.collectAsStateWithLifecycle()
-    val subtitleCue by viewModel.subtitleCue.collectAsStateWithLifecycle()
 
     /** 记忆操作（旋转方向之类）用；不涉及界面状态，失败也只记日志。 */
     val scope = rememberCoroutineScope()
@@ -188,8 +171,6 @@ fun VideoPlayerScreen(
     val inPip by environment.pip.isInPip.collectAsStateWithLifecycle()
     var controlsVisible by remember { mutableStateOf(true) }
 
-    /** 字幕面板是否展开（界面本地状态：不进 ViewModel 状态机，R14 面板纯展示）。 */
-    var subtitlePanelVisible by remember { mutableStateOf(false) }
     // 同文件夹列表（2026-10-03 用户要求）：面板里直接跳到别的文件
     var playlistVisible by remember { mutableStateOf(false) }
     // LibVLC 上次把进程带走过 → 再切之前先弹一句（不是禁止，是告知）
@@ -214,7 +195,6 @@ fun VideoPlayerScreen(
     LaunchedEffect(inPip) {
         if (inPip) {
             controlsVisible = false
-            subtitlePanelVisible = false
         }
     }
 
@@ -222,7 +202,7 @@ fun VideoPlayerScreen(
     // 做法两条：① interactionTick 每次触摸/操作都自增 ⇒ 计时重新开始（手指还按着就一直不会隐藏）；
     // ② 有没有面板开着、是不是在拖、是不是暂停，全部交给纯函数 ControlsAutoHide 判定。
     var interactionTick by remember { mutableIntStateOf(0) }
-    val interacting = state.dragging || subtitlePanelVisible || playlistVisible ||
+    val interacting = state.dragging || playlistVisible ||
         vlcWarningVisible || vlcUnavailableVisible
     val hideTimeoutMs = ControlsAutoHide.timeoutMs(state.controlsHideSeconds)
 
@@ -417,13 +397,6 @@ fun VideoPlayerScreen(
             SwitchOverlay(state = state, modifier = Modifier.align(Alignment.Center))
         }
 
-        // 3) 字幕覆盖层（R14）：自己渲染 cue，见文件末尾「字幕渲染路径」说明
-        SubtitleOverlay(
-            cue = subtitleCue,
-            style = state.subtitleStyle,
-            modifier = Modifier.matchParentSize(),
-        )
-
         // R13：PIP 里不显示控制层（系统只给一个"展开"按钮，控制交给 PIP 动作按钮）
         if (!inPip) {
             AnimatedVisibility(
@@ -436,11 +409,6 @@ fun VideoPlayerScreen(
                     state = state,
                     viewModel = viewModel,
                     onBack = onBack,
-                    onToggleSubtitlePanel = {
-                        subtitlePanelVisible = !subtitlePanelVisible
-                        // 打开面板时按需匹配同目录候选（含远端；R14）
-                        if (subtitlePanelVisible) viewModel.openSubtitlePanel()
-                    },
                     onOpenPlaylist = { playlistVisible = true },
                     onRequestSwitchEngine = {
                         if (state.otherEngine == EngineKind.NATIVE) {
@@ -605,15 +573,6 @@ fun VideoPlayerScreen(
                 )
             }
 
-            // 5) 字幕面板（R14：轨道列表 + 样式 + 时间轴微调 + 写回）
-            if (subtitlePanelVisible) {
-                SubtitlePanel(
-                    state = state,
-                    viewModel = viewModel,
-                    onDismiss = { subtitlePanelVisible = false },
-                    modifier = Modifier.align(Alignment.BottomCenter),
-                )
-            }
         } else {
             PipBadge(modifier = Modifier.align(Alignment.TopStart))
         }
@@ -709,7 +668,6 @@ private fun Controls(
     state: VideoPlayerUiState,
     viewModel: VideoPlayerViewModel,
     onBack: () -> Unit,
-    onToggleSubtitlePanel: () -> Unit,
     onOpenPlaylist: () -> Unit,
     /** 请求切内核（是否要先弹 LibVLC 风险提示由上层决定，它才拿得到那个状态）。 */
     onRequestSwitchEngine: () -> Unit,
@@ -837,7 +795,6 @@ private fun Controls(
             ChipsRow(
                 state = state,
                 viewModel = viewModel,
-                onToggleSubtitlePanel = onToggleSubtitlePanel,
                 onOpenPlaylist = onOpenPlaylist,
             )
 
@@ -1099,21 +1056,11 @@ private fun PlaybackRow(state: VideoPlayerUiState, viewModel: VideoPlayerViewMod
     }
 }
 
-/** 字幕按钮文案（R14：关 / 加载中 / 当前轨道名 / 无字幕）。 */
-@Composable
-private fun subtitleChipLabel(state: VideoPlayerUiState): String = when (state.subtitleStatus) {
-    SubtitleStatus.OFF -> stringResource(R.string.video_subtitle_status_off)
-    SubtitleStatus.LOADING -> stringResource(R.string.video_subtitle_status_loading)
-    SubtitleStatus.EMPTY -> stringResource(R.string.video_subtitle_status_empty)
-    SubtitleStatus.READY -> state.subtitleLabel ?: stringResource(R.string.video_subtitle_status_empty)
-}
-
 /** 倍速 / 解码档位 / 缩放 / 字幕 / 集数（点一下换一档）。 */
 @Composable
 private fun ChipsRow(
     state: VideoPlayerUiState,
     viewModel: VideoPlayerViewModel,
-    onToggleSubtitlePanel: () -> Unit,
     onOpenPlaylist: () -> Unit,
 ) {
     Row(
@@ -1147,19 +1094,6 @@ private fun ChipsRow(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.List,
                     contentDescription = stringResource(R.string.video_playlist_title, state.count),
-                    modifier = Modifier.size(18.dp),
-                )
-            },
-        )
-        AssistChip(
-            onClick = onToggleSubtitlePanel,
-            label = { Text(stringResource(R.string.video_subtitle, subtitleChipLabel(state))) },
-            colors = playerChipColors(),
-            border = playerChipBorder(),
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Subtitles,
-                    contentDescription = stringResource(R.string.video_subtitle_open),
                     modifier = Modifier.size(18.dp),
                 )
             },
@@ -1331,453 +1265,6 @@ private fun errorMessage(kind: VideoErrorKind?): String = stringResource(
         else -> R.string.video_error_unknown
     },
 )
-
-// ---------------------------------------------------------------------------- 字幕（R14）
-
-/**
- * 字幕渲染走的是**覆盖层**（R14；两条路径说明如下）。
- *
- * 1. **引擎自带渲染**：Media3 把外挂轨做成 `MediaItem.SubtitleConfiguration` 交给 PlayerView 里的
- *    SubtitleView；LibVLC 用 `addSlave(Subtitle, …)` + `setSpuDelay`。:media:engine 两条都已实现，
- *    但 Media3 1.11 **没有字幕延迟 API**（用户 ±0.5 s 的微调落不到引擎上），两个内核能表达的样式
- *    （字号 / 描边 / 底部边距）也完全不统一 —— 同一个设置换个内核就变样，违反 R9 的「字幕保持」。
- * 2. **Compose 覆盖层**（本页采用）：ViewModel 为了候选列表与时间轴微调**已经把字幕解析成**
- *    `SubtitleCue`，这里直接按「播放位置 + 偏移」挑出当前 cue 画在画面上，样式字字可控，
- *    两个内核表现完全一致，挑 cue 的逻辑还是纯函数（可 JVM 单测）。
- *
- * 所以本页**不把外挂轨交给引擎渲染**（否则同一条字幕会显示两遍）；引擎侧的
- * `SubtitleTrackController` 保持原样，留给内嵌字幕轨与 M8（画中画里显示引擎字幕）使用。
- */
-@Composable
-private fun SubtitleOverlay(
-    cue: SubtitleCue?,
-    style: SubtitleStyle,
-    modifier: Modifier = Modifier,
-) {
-    val text = cue?.text ?: return
-    val alignment = cue.style?.alignment ?: SubtitleAlignment.UNKNOWN
-    val boxAlignment = when {
-        alignment.isTop -> Alignment.TopCenter
-        alignment.isMiddle -> Alignment.Center
-        else -> Alignment.BottomCenter
-    }
-    // ASS 的位置提示：贴顶/居中的字幕不套底部边距，贴底的才套（R14「位置提示」）
-    val margin = when {
-        alignment.isTop -> Modifier.padding(top = style.bottomMarginDp.dp)
-        alignment.isMiddle -> Modifier
-        else -> Modifier.padding(bottom = style.bottomMarginDp.dp)
-    }
-    val density = LocalDensity.current
-    val baseStyle = TextStyle(
-        color = Color(style.textColorArgb),
-        fontSize = style.fontSizeSp.sp,
-        fontWeight = if (style.bold) FontWeight.Bold else FontWeight.Normal,
-        fontStyle = if (style.italic) FontStyle.Italic else FontStyle.Normal,
-        textAlign = TextAlign.Center,
-    )
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = SUBTITLE_HORIZONTAL_PADDING),
-        contentAlignment = boxAlignment,
-    ) {
-        Box(modifier = margin) {
-            // 描边 = 先用描边色画一遍同样文字的轮廓，再把实心文字叠在上面
-            if (style.outlineWidthDp > 0f) {
-                Text(
-                    text = text,
-                    style = baseStyle.copy(
-                        color = Color(style.outlineColorArgb),
-                        drawStyle = Stroke(
-                            width = with(density) { style.outlineWidthDp.dp.toPx() },
-                            join = StrokeJoin.Round,
-                        ),
-                    ),
-                    textAlign = TextAlign.Center,
-                )
-            }
-            Text(text = text, style = baseStyle, textAlign = TextAlign.Center)
-        }
-    }
-}
-
-/**
- * 字幕面板（R14）：轨道候选（单轨，选了就换）＋ 样式（字号/颜色/描边/边距/字形）
- * ＋ 时间轴 ±0.5 秒微调（可长按连续）＋ 写回/另存。
- *
- * 纯展示：所有动作都转给 [VideoPlayerViewModel]，面板自身不碰 IO、不认识播放器（组合函数零 IO）。
- */
-@Composable
-private fun SubtitlePanel(
-    state: VideoPlayerUiState,
-    viewModel: VideoPlayerViewModel,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(max = 420.dp),
-        color = Color.Black.copy(alpha = 0.92f),
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stringResource(R.string.video_subtitle_title),
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = stringResource(
-                        if (state.subtitleEnabled) R.string.video_subtitle_on else R.string.video_subtitle_off,
-                    ),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Switch(checked = state.subtitleEnabled, onCheckedChange = viewModel::setSubtitleEnabled)
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.video_subtitle_close))
-                }
-            }
-
-            // 自研引擎播不了 → 自动换回 Media3 的一句说明（不需要用户动手，但要知道为什么换了内核）
-            state.engineFallbackNotice?.let { notice ->
-                PlayerNoticeRow(text = notice, onDismiss = viewModel::clearEngineFallbackNotice)
-            }
-            state.subtitleNotice?.let { notice ->
-                SubtitleNoticeRow(notice = notice, onDismiss = viewModel::clearSubtitleNotice)
-            }
-
-            if (state.subtitleLoading) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.video_subtitle_loading),
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-
-            Text(
-                text = stringResource(R.string.video_subtitle_candidates),
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-            )
-            if (state.subtitleCandidates.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.video_subtitle_no_candidate),
-                    color = Color.White.copy(alpha = 0.7f),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            } else {
-                state.subtitleCandidates.forEach { candidate ->
-                    SubtitleCandidateRow(
-                        candidate = candidate,
-                        selected = candidate.path == state.subtitlePath,
-                        onClick = { viewModel.selectSubtitle(candidate) },
-                    )
-                }
-            }
-
-            HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
-
-            Text(
-                text = stringResource(R.string.video_subtitle_style),
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-            )
-            LabeledSlider(
-                label = stringResource(R.string.video_subtitle_font_size),
-                value = state.subtitleStyle.fontSizeSp,
-                range = SubtitleStyle.MIN_FONT_SIZE_SP..SubtitleStyle.MAX_FONT_SIZE_SP,
-                onValueChange = viewModel::setSubtitleFontSize,
-            )
-            ColorPaletteRow(
-                label = stringResource(R.string.video_subtitle_color),
-                colors = SubtitleStyle.TEXT_COLORS,
-                selected = state.subtitleStyle.textColorArgb,
-                onPick = viewModel::setSubtitleTextColor,
-            )
-            LabeledSlider(
-                label = stringResource(R.string.video_subtitle_outline),
-                value = state.subtitleStyle.outlineWidthDp,
-                range = SubtitleStyle.MIN_OUTLINE_WIDTH_DP..SubtitleStyle.MAX_OUTLINE_WIDTH_DP,
-                onValueChange = viewModel::setSubtitleOutlineWidth,
-            )
-            ColorPaletteRow(
-                label = stringResource(R.string.video_subtitle_outline_color),
-                colors = SubtitleStyle.OUTLINE_COLORS,
-                selected = state.subtitleStyle.outlineColorArgb,
-                onPick = viewModel::setSubtitleOutlineColor,
-            )
-            LabeledSlider(
-                label = stringResource(R.string.video_subtitle_bottom_margin),
-                value = state.subtitleStyle.bottomMarginDp,
-                range = SubtitleStyle.MIN_BOTTOM_MARGIN_DP..SubtitleStyle.MAX_BOTTOM_MARGIN_DP,
-                onValueChange = viewModel::setSubtitleBottomMargin,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = state.subtitleStyle.bold,
-                    onClick = viewModel::toggleSubtitleBold,
-                    label = { Text(stringResource(R.string.video_subtitle_bold)) },
-                )
-                FilterChip(
-                    selected = state.subtitleStyle.italic,
-                    onClick = viewModel::toggleSubtitleItalic,
-                    label = { Text(stringResource(R.string.video_subtitle_italic)) },
-                )
-            }
-
-            HorizontalDivider(color = Color.White.copy(alpha = 0.2f))
-
-            SubtitleOffsetRow(state = state, viewModel = viewModel)
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(
-                    onClick = { viewModel.writeBackSubtitle() },
-                    enabled = state.canWriteBackSubtitle,
-                ) {
-                    Text(stringResource(R.string.video_subtitle_write_back, state.subtitleWriteFormat.label))
-                }
-                if (state.subtitleWriteFormat != SubtitleFormat.VTT) {
-                    TextButton(
-                        onClick = { viewModel.writeBackSubtitle(SubtitleFormat.VTT) },
-                        enabled = state.canWriteBackSubtitle,
-                    ) {
-                        Text(stringResource(R.string.video_subtitle_save_as_vtt))
-                    }
-                }
-                // 纯文本稿（R14：只导出台词，没有时间轴）
-                TextButton(
-                    onClick = { viewModel.writeBackSubtitle(SubtitleFormat.TXT) },
-                    enabled = state.canWriteBackSubtitle,
-                ) {
-                    Text(stringResource(R.string.video_subtitle_save_as_txt))
-                }
-            }
-        }
-    }
-}
-
-/** 候选行（R14：自动匹配与手动候选共用一行，标签里区分来源）。 */
-@Composable
-private fun SubtitleCandidateRow(
-    candidate: SubtitleCandidate,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = selected, onClick = onClick)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = candidate.displayName,
-                color = Color.White,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = stringResource(
-                    if (candidate.source == SubtitleSource.AUTO) {
-                        R.string.video_subtitle_source_auto
-                    } else {
-                        R.string.video_subtitle_source_manual
-                    },
-                    candidate.name,
-                ),
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-/** 通用一行提示（自研引擎自动回退等）：样式与字幕提示行一致，带「知道了」。 */
-@Composable
-private fun PlayerNoticeRow(text: String, onDismiss: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(CONTROL_SCRIM)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = text,
-            color = Color.White,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = onDismiss) { Text(stringResource(R.string.video_subtitle_notice_dismiss)) }
-    }
-}
-
-/** 字幕提示行（R14：加载失败 / 坏数据 / 写回结果都要看得见，不静默）。 */
-@Composable
-private fun SubtitleNoticeRow(notice: SubtitleNotice, onDismiss: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = subtitleNoticeText(notice),
-            color = Color.White,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = onDismiss) {
-            Text(stringResource(R.string.video_subtitle_notice_dismiss))
-        }
-    }
-}
-
-/** 提示分类 → 中文文案（R16）。 */
-@Composable
-private fun subtitleNoticeText(notice: SubtitleNotice): String {
-    val detail = notice.detail.orEmpty()
-    return when (notice.kind) {
-        SubtitleNoticeKind.LOAD_FAILED ->
-            if (detail.isEmpty()) {
-                stringResource(R.string.video_subtitle_notice_load_failed_brief)
-            } else {
-                stringResource(R.string.video_subtitle_notice_load_failed, detail)
-            }
-
-        SubtitleNoticeKind.NO_CANDIDATE -> stringResource(R.string.video_subtitle_notice_no_candidate)
-        SubtitleNoticeKind.PARSE_DAMAGED -> stringResource(R.string.video_subtitle_notice_damaged, detail)
-        SubtitleNoticeKind.WRITE_OK -> stringResource(R.string.video_subtitle_notice_write_ok, detail)
-        SubtitleNoticeKind.WRITE_LOCAL -> stringResource(R.string.video_subtitle_notice_write_local, detail)
-        SubtitleNoticeKind.WRITE_FAILED -> stringResource(R.string.video_subtitle_notice_write_failed, detail)
-    }
-}
-
-/** 带标签的滑块（样式调整用；纯展示）。 */
-@Composable
-private fun LabeledSlider(
-    label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onValueChange: (Float) -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = label, color = Color.White, style = MaterialTheme.typography.bodySmall)
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = String.format(Locale.US, "%.1f", value),
-                color = Color.White.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.labelSmall,
-            )
-        }
-        Slider(
-            value = value.coerceIn(range.start, range.endInclusive),
-            onValueChange = onValueChange,
-            valueRange = range,
-        )
-    }
-}
-
-/** 色板（R14：文字色 / 描边色可调）。 */
-@Composable
-private fun ColorPaletteRow(
-    label: String,
-    colors: List<Int>,
-    selected: Int,
-    onPick: (Int) -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = label, color = Color.White, style = MaterialTheme.typography.bodySmall)
-        Spacer(modifier = Modifier.width(12.dp))
-        colors.forEach { argb ->
-            val isSelected = argb == selected
-            Box(
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .size(if (isSelected) 28.dp else 22.dp)
-                    .clip(CircleShape)
-                    .background(Color(argb))
-                    .clickable { onPick(argb) },
-            )
-        }
-    }
-}
-
-/** 时间轴微调行（R14：±0.5 秒步进；长按按钮连续微调）。 */
-@Composable
-private fun SubtitleOffsetRow(state: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = stringResource(R.string.video_subtitle_offset),
-            color = Color.White,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        SubtitleStepButton(text = "-0.5", onStep = { viewModel.nudgeSubtitle(-1) })
-        Text(
-            text = stringResource(R.string.video_subtitle_offset_value, state.subtitleOffsetText),
-            color = Color.White,
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        SubtitleStepButton(text = "+0.5", onStep = { viewModel.nudgeSubtitle(1) })
-    }
-}
-
-/**
- * 时间轴步进按钮：按下立即走一步，按住 [SUBTITLE_LONG_PRESS_DELAY_MS] 后每
- * [SUBTITLE_REPEAT_INTERVAL_MS] 再走一步（R14 的「长按连续微调」）。
- */
-@Composable
-private fun SubtitleStepButton(text: String, onStep: () -> Unit) {
-    var pressed by remember { mutableStateOf(false) }
-    LaunchedEffect(pressed) {
-        if (!pressed) return@LaunchedEffect
-        delay(SUBTITLE_LONG_PRESS_DELAY_MS)
-        while (true) {
-            onStep()
-            delay(SUBTITLE_REPEAT_INTERVAL_MS)
-        }
-    }
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.White.copy(alpha = 0.16f))
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        onStep()
-                        pressed = true
-                        tryAwaitRelease()
-                        pressed = false
-                    },
-                )
-            }
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text(text = text, color = Color.White, style = MaterialTheme.typography.labelLarge)
-    }
-}
 
 /**
  * 把引擎给的画面挂进 Compose。

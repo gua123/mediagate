@@ -42,7 +42,6 @@ class PlayerEngineSwitcher(
         decoderMode = source.decoderMode,
         resizeMode = source.resizeMode,
         playWhenReady = source.isPlaying,
-        subtitles = source.subtitles().state.value,
     )
 
     /**
@@ -104,14 +103,7 @@ class PlayerEngineSwitcher(
         target.prepare()
         if (restore.positionMs > 0) target.seekTo(restore.positionMs)
         target.setSpeed(restore.speed)
-        restoreSubtitle(target.subtitles(), restore.subtitles)
         if (restore.playWhenReady) target.play()
-    }
-
-    private fun restoreSubtitle(controller: SubtitleTrackController, state: SubtitleState) {
-        controller.selectTrack(state.uri)
-        controller.setOffsetMs(state.offsetMs)
-        controller.setEnabled(state.enabled)
     }
 
     /** 按解码模式切换内核（R10 入口）：必要时空操作（已经是目标内核且档位相同）。 */

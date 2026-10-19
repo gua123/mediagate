@@ -10,7 +10,6 @@ import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.MediaSourceRef
 import io.github.gua123.mediagate.media.engine.ResizeMode
 import io.github.gua123.mediagate.media.engine.RestoreSpec
-import io.github.gua123.mediagate.media.engine.SubtitleState
 import io.github.gua123.mediagate.media.engine.SwitchReason
 
 /**
@@ -24,7 +23,7 @@ class VideoPlayerSwitchTest {
     private val media = MediaSourceRef(backendId = "fake:video", path = "Movies/a.mp4", title = "a.mp4")
 
     @Test
-    fun planForKeepsPositionSpeedPlayStateAndSubtitles() {
+    fun planForKeepsPositionSpeedAndPlayState() {
         val engine = FakePlayerEngine(EngineKind.MEDIA3).apply {
             currentMedia = media
             position = 30_000L
@@ -32,9 +31,6 @@ class VideoPlayerSwitchTest {
             isPlaying = true
             speedValue = 1.5f
         }
-        engine.subtitles().selectTrack("mediagate://fake:video/Movies/a.srt")
-        engine.subtitles().setOffsetMs(700L)
-        engine.subtitles().setEnabled(true)
 
         val plan = VideoEngineSwitch.planFor(engine, EngineKind.VLC, SwitchReason.USER_REQUEST)
 
@@ -45,9 +41,6 @@ class VideoPlayerSwitchTest {
         assertEquals(1.5f, plan.restore.speed, 0.0001f)
         assertTrue(plan.restore.playWhenReady)
         assertEquals(media.path, plan.restore.media?.path)
-        assertEquals("mediagate://fake:video/Movies/a.srt", plan.restore.subtitles.uri)
-        assertEquals(700L, plan.restore.subtitles.offsetMs)
-        assertTrue(plan.restore.subtitles.enabled)
         assertEquals(SwitchReason.USER_REQUEST, plan.reason)
         assertFalse(plan.rebuildOnly)
     }
@@ -90,12 +83,6 @@ class VideoPlayerSwitchTest {
             speed = 1.5f,
             decoderMode = DecoderMode.FORCE_SW,
             resizeMode = ResizeMode.CROP,
-            subtitles = SubtitleState(
-                enabled = true,
-                offsetMs = 500L,
-                uri = "mediagate://fake:video/Movies/a.srt",
-                label = "a.srt",
-            ),
             playWhenReady = true,
         )
 
@@ -117,9 +104,6 @@ class VideoPlayerSwitchTest {
         assertEquals(1.5f, engine.speed, 0.0001f)
         assertEquals(ResizeMode.CROP, engine.resizeMode)
         assertEquals(DecoderMode.FORCE_SW, engine.decoderMode)
-        assertEquals("mediagate://fake:video/Movies/a.srt", engine.subtitles().state.value.uri)
-        assertEquals(500L, engine.subtitles().state.value.offsetMs)
-        assertTrue(engine.subtitles().state.value.enabled)
         assertTrue(engine.isPlaying)
     }
 
@@ -134,7 +118,6 @@ class VideoPlayerSwitchTest {
                 speed = 1f,
                 decoderMode = DecoderMode.AUTO_HW,
                 resizeMode = ResizeMode.FIT,
-                subtitles = SubtitleState(),
                 playWhenReady = true,
             ),
         )

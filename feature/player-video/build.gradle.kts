@@ -43,7 +43,6 @@ dependencies {
     // PlaybackProgressStore 出现在 VideoPlayerEnvironment.progress 的公开签名（R18 断点续播）
     api(project(":media:playback"))
     // SubtitleHost / VideoPlayerPreferences 的字幕类型出现在本模块公开签名（R14），故用 api 传递
-    api(project(":media:subtitle"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

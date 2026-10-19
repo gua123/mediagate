@@ -8,7 +8,6 @@ import android.view.View
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -27,7 +26,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import io.github.gua123.mediagate.core.common.AppLog
-import io.github.gua123.mediagate.media.proxy.MediaUriCodec
 
 /**
  * Media3（ExoPlayer 1.11.1）内核——默认档，plan 4.6 引擎对照表第一行（R9/R10/R4/HLS）。
@@ -68,8 +66,6 @@ class ExoPlayerEngine(
 
     override val kind: EngineKind = EngineKind.MEDIA3
 
-    private val subtitles = DefaultSubtitleTrackController { applySubtitleState(it) }
-
     private var mode: DecoderMode = DecoderMode.AUTO_HW
 
     override val decoderMode: DecoderMode get() = mode
@@ -95,9 +91,6 @@ class ExoPlayerEngine(
     override val currentMedia: MediaSourceRef? get() = media
 
     override val isPlaying: Boolean get() = player.isPlaying
-
-    /** 已经写进当前 MediaItem 的外挂字幕地址（避免重复 setMediaItem 把位置冲掉）。 */
-    private var appliedSubtitleUri: String? = null
 
     /**
      * 最近一次解码落地报告（R10「做不到就记录并回报」）。
@@ -135,8 +128,7 @@ class ExoPlayerEngine(
 
     override fun setMedia(src: MediaSourceRef) {
         media = src
-        appliedSubtitleUri = subtitles.state.value.uri
-        player.setMediaItem(buildMediaItem(src, subtitles.state.value))
+        player.setMediaItem(buildMediaItem(src))
         // 视频源始终走注入的数据源工厂（本地/远端同一套，R4 拖拽 seek 依赖它做 Range 重开）
         player.setPlaybackParameters(PlaybackParameters(playbackSpeed))
         decoderReport = defaultDecoderReport(mode)
@@ -214,8 +206,6 @@ class ExoPlayerEngine(
         rebuildPlayer()
     }
 
-    override fun subtitles(): SubtitleTrackController = subtitles
-
     override fun videoView(): View {
         val existing = playerView ?: PlayerView(appContext).apply {
             setUseController(false)
@@ -236,7 +226,6 @@ class ExoPlayerEngine(
 
     override fun release() {
         media = null
-        appliedSubtitleUri = null
         try {
             loudness?.release()
         } catch (t: RuntimeException) {
@@ -327,8 +316,7 @@ class ExoPlayerEngine(
             _state.value = EngineState.Idle
             return
         }
-        appliedSubtitleUri = subtitles.state.value.uri
-        player.setMediaItem(buildMediaItem(current, subtitles.state.value))
+        player.setMediaItem(buildMediaItem(current))
         player.setPlaybackParameters(PlaybackParameters(playbackSpeed))
         player.prepare()
         if (position > 0L) player.seekTo(position)
@@ -336,7 +324,7 @@ class ExoPlayerEngine(
         _state.value = EngineState.Preparing
     }
 
-    private fun buildMediaItem(src: MediaSourceRef, subtitle: SubtitleState): MediaItem {
+    private fun buildMediaItem(src: MediaSourceRef): MediaItem {
         val builder = MediaItem.Builder()
             .setUri(src.uri)
             .setMediaId(src.path)
@@ -347,54 +335,7 @@ class ExoPlayerEngine(
                     .setIsPlayable(true)
                     .build(),
             )
-        val subtitleUri = subtitle.uri
-        if (subtitleUri != null) {
-            // 外挂字幕（R14）：Media3 把它当成 MediaItem 的一部分，所以换字幕要重装 MediaItem
-            builder.setSubtitleConfigurations(
-                listOf(
-                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUri))
-                        .setMimeType(subtitleMimeType(subtitleUri))
-                        .setLabel(subtitle.label ?: "外挂字幕")
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                        .build(),
-                ),
-            )
-        }
         return builder.build()
-    }
-
-    /** 把字幕状态应用到 Media3。 */
-    private fun applySubtitleState(state: SubtitleState) {
-        val current = media
-        if (current != null && state.uri != appliedSubtitleUri) {
-            // 只有外挂轨真的换了才重装 MediaItem（重装会丢位置，这里自己恢复）
-            val position = player.currentPosition.coerceAtLeast(0L)
-            val playWhenReady = player.playWhenReady
-            appliedSubtitleUri = state.uri
-            player.setMediaItem(buildMediaItem(current, state))
-            player.prepare()
-            if (position > 0L) player.seekTo(position)
-            player.playWhenReady = playWhenReady
-        }
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !state.enabled)
-            .build()
-        // 时间轴微调：Media3 1.11 没有字幕延迟 API（Cue 时间轴不可平移）。偏移量保留在
-        // SubtitleTrackController 里，由播放页在渲染 Cue 时应用（R14 的 ±0.5 s 步进），
-        // 换内核时也靠它保持（R9）。这里只提示一次，避免真机验收时以为开关没生效。
-        if (state.offsetMs != 0L) {
-            AppLog.i(TAG, "字幕偏移 " + state.offsetMs + "ms 由 UI 渲染 Cue 时应用（Media3 无字幕延迟 API）")
-        }
-    }
-
-    /** 字幕文件 → Media3 的 mime（决定用哪个解析器）。 */
-    private fun subtitleMimeType(uri: String): String {
-        val path = MediaUriCodec.parse(uri)?.path ?: uri
-        return when (path.substringAfterLast('.', "").lowercase()) {
-            "vtt", "webvtt" -> MimeTypes.TEXT_VTT
-            "ass", "ssa" -> MimeTypes.TEXT_SSA
-            else -> MimeTypes.APPLICATION_SUBRIP
-        }
     }
 
     private fun clampPosition(positionMs: Long): Long {

@@ -18,7 +18,6 @@ import io.github.gua123.mediagate.feature.player.video.VideoLoopMode
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
-import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 
 /** 视频播放页偏好的 DataStore（App 私有；进程内单例由 [preferencesDataStore] 委托保证）。 */
 private val Context.videoPlayerDataStore by preferencesDataStore(name = "video_player_settings")
@@ -157,54 +156,6 @@ class VideoPlayerPreferencesSettings(
         context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SCREEN_BRIGHTNESS] = brightness }
     }
 
-    // ------------------------------------------------------------ 字幕（M7-A，R14）
-
-    /** 字幕总开关（R14）；没有记录时为关。 */
-    override val subtitleEnabled: StateFlow<Boolean> = context.videoPlayerDataStore.data
-        .map { preferences -> preferences[KEY_SUBTITLE_ENABLED] ?: false }
-        .stateIn(scope, SharingStarted.Eagerly, false)
-
-    /** 字幕样式（R14）；没有记录时给默认值，读出来一律 [SubtitleStyle.clamped]。 */
-    override val subtitleStyle: StateFlow<SubtitleStyle> = context.videoPlayerDataStore.data
-        .map { preferences ->
-            SubtitleStyle(
-                fontSizeSp = preferences[KEY_SUBTITLE_FONT_SIZE] ?: SubtitleStyle.DEFAULT_FONT_SIZE_SP,
-                textColorArgb = preferences[KEY_SUBTITLE_TEXT_COLOR] ?: SubtitleStyle.DEFAULT_TEXT_COLOR,
-                outlineWidthDp = preferences[KEY_SUBTITLE_OUTLINE_WIDTH] ?: SubtitleStyle.DEFAULT_OUTLINE_WIDTH_DP,
-                outlineColorArgb = preferences[KEY_SUBTITLE_OUTLINE_COLOR] ?: SubtitleStyle.DEFAULT_OUTLINE_COLOR,
-                bottomMarginDp = preferences[KEY_SUBTITLE_BOTTOM_MARGIN] ?: SubtitleStyle.DEFAULT_BOTTOM_MARGIN_DP,
-                bold = preferences[KEY_SUBTITLE_BOLD] ?: false,
-                italic = preferences[KEY_SUBTITLE_ITALIC] ?: false,
-            ).clamped()
-        }
-        .stateIn(scope, SharingStarted.Eagerly, SubtitleStyle.DEFAULT)
-
-    /** 字幕时间轴微调（R14）；没有记录时为 0。 */
-    override val subtitleOffsetMs: StateFlow<Long> = context.videoPlayerDataStore.data
-        .map { preferences -> preferences[KEY_SUBTITLE_OFFSET_MS] ?: 0L }
-        .stateIn(scope, SharingStarted.Eagerly, 0L)
-
-    override suspend fun setSubtitleEnabled(enabled: Boolean) {
-        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SUBTITLE_ENABLED] = enabled }
-    }
-
-    override suspend fun setSubtitleStyle(style: SubtitleStyle) {
-        val value = style.clamped()
-        context.videoPlayerDataStore.edit { preferences ->
-            preferences[KEY_SUBTITLE_FONT_SIZE] = value.fontSizeSp
-            preferences[KEY_SUBTITLE_TEXT_COLOR] = value.textColorArgb
-            preferences[KEY_SUBTITLE_OUTLINE_WIDTH] = value.outlineWidthDp
-            preferences[KEY_SUBTITLE_OUTLINE_COLOR] = value.outlineColorArgb
-            preferences[KEY_SUBTITLE_BOTTOM_MARGIN] = value.bottomMarginDp
-            preferences[KEY_SUBTITLE_BOLD] = value.bold
-            preferences[KEY_SUBTITLE_ITALIC] = value.italic
-        }
-    }
-
-    override suspend fun setSubtitleOffsetMs(offsetMs: Long) {
-        context.videoPlayerDataStore.edit { preferences -> preferences[KEY_SUBTITLE_OFFSET_MS] = offsetMs }
-    }
-
     private companion object {
         val KEY_ENGINE = stringPreferencesKey("engine_kind")
         val KEY_DECODER = stringPreferencesKey("decoder_mode")
@@ -231,16 +182,7 @@ class VideoPlayerPreferencesSettings(
         val KEY_LAST_ORIENTATION = stringPreferencesKey("last_player_orientation")
 
         // ---- 字幕（M7-A，R14）：新增键，动不到上面的老键位 ----
-        val KEY_SUBTITLE_ENABLED = booleanPreferencesKey("subtitle_enabled")
-        val KEY_SUBTITLE_FONT_SIZE = floatPreferencesKey("subtitle_font_size_sp")
-        val KEY_SUBTITLE_TEXT_COLOR = intPreferencesKey("subtitle_text_color")
-        val KEY_SUBTITLE_OUTLINE_WIDTH = floatPreferencesKey("subtitle_outline_width_dp")
-        val KEY_SUBTITLE_OUTLINE_COLOR = intPreferencesKey("subtitle_outline_color")
-        val KEY_SUBTITLE_BOTTOM_MARGIN = floatPreferencesKey("subtitle_bottom_margin_dp")
-        val KEY_SUBTITLE_BOLD = booleanPreferencesKey("subtitle_bold")
-        val KEY_SUBTITLE_ITALIC = booleanPreferencesKey("subtitle_italic")
-        val KEY_SUBTITLE_OFFSET_MS = longPreferencesKey("subtitle_offset_ms")
-    }
+                                        }
 }
 
 /** 文本 → 内核（无法识别时回到默认 Media3，不抛异常）。 */
