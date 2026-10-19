@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -38,9 +39,16 @@ class AppStartupOrderTest {
 
     @Test
     fun `容器自启动动作必须写在 AppContainer 的 init 里`() {
-        // 探针这类"建好之后自己跑"的动作必须留在容器内部，Application 里就不需要（也不能）调它
+        // "建好之后自己跑"的动作（恢复缓存队列 / 订阅设置）必须留在容器内部，
+        // Application 里就不需要（也不能）在构造前后手动调它们。
+        // 2026-10-19：探针（vlcProbeNow / nativeEngineProbeNow）随引擎下线一起删除，
+        // 这里改成盯"必须有的自启动动作"+ "已下线的东西不许回来"。
         val container = File("src/main/java/io/github/gua123/mediagate/app/AppContainer.kt")
         assertTrue(container.exists())
-        assertTrue("AppContainer 应自己调度启动探针", container.readText().contains("vlcProbeNow()"))
+        val source = container.readText()
+        assertTrue("AppContainer 应自己恢复缓存队列", source.contains("restoreCacheQueue()"))
+        assertTrue("AppContainer 应自己订阅队列持久化", source.contains("observeCacheQueueForPersistence()"))
+        assertFalse("LibVLC 探针已随引擎删除，不许回来", source.contains("vlcProbeNow"))
+        assertFalse("自研引擎探针已随引擎删除，不许回来", source.contains("nativeEngineProbeNow"))
     }
 }

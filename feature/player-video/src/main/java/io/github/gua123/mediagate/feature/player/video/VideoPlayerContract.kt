@@ -135,41 +135,29 @@ interface VideoPlayerEnvironment {
     suspend fun createEngine(kind: EngineKind): PlayerEngine
 
     /**
-     * 回环代理基址（http://127.0.0.1:端口）；null = 代理不可用。
+     * 回环代理基址（历史接口）。
      *
-     * 播放在 Media3 出错时要不要给出「一键切 LibVLC」动作取决于它（LibVLC 只能吃 URL）。
+     * ⚠️ 2026-10-19 清理：回环代理只服务已删除的 LibVLC 引擎，:media:proxy 模块已删除，
+     * 这里保留默认实现只是为了让播放页的不可达分支仍然编译；**实际永远返回 null**。
      */
-    val proxyBaseUrl: String?
+    val proxyBaseUrl: String? get() = null
 
-    /**
-     * 上次切到 LibVLC 是不是把进程带走过（**2026-10-03 真机**：面包屑停在"切换内核：→ LibVLC"）。
-     *
-     * 为 true 时，界面在"再切一次 LibVLC"之前先解释一句——那条路已知会把 App 弄死时，
-     * 不该让用户闷头再踩一次。默认 false（JVM 单测与没有诊断数据时行为不变）。
-     */
+    /** 上次切 LibVLC 崩溃过（历史接口；LibVLC 已删除，恒 false）。 */
     val vlcPreviouslyCrashed: Boolean get() = false
 
-    /**
-     * LibVLC 在本机能不能跑（**2026-10-03 用户建议**：启动时先测，不能跑就不让切）。
-     *
-     * null = 还没结论；false = 探针被原生崩溃带走 → 界面**不让切**到 LibVLC 并说明原因。
-     */
+    /** LibVLC 在本机能不能跑（历史接口；引擎已删除，恒 null = 未知）。 */
     val vlcUsable: Boolean? get() = null
 
-    /** 重新测一次（提示对话框里的「重新测试」）。默认什么都不做。 */
+    /** 重新测 LibVLC（历史接口；空实现）。 */
     fun retestVlc() = Unit
 
-    /**
-     * **自研引擎**在本机能不能跑（2026-10-15；与 [vlcUsable] 同一套探针思路）。
-     *
-     * null = 还没结论；false = 独立进程的自检没通过（或进程被带走）→ 界面先拦住并说明原因。
-     */
+    /** 自研引擎在本机能不能跑（历史接口；引擎已删除，恒 null）。 */
     val engineUsable: Boolean? get() = null
 
-    /** 自研引擎自检没通过的原因（中文，可直接显示）；null = 没有原因可展示。 */
+    /** 自研引擎自检没通过的原因（历史接口；恒 null）。 */
     val engineProbeReason: String? get() = null
 
-    /** 重新测一次自研引擎（拦下它的那个对话框里给出口）。 */
+    /** 重新测自研引擎（历史接口；空实现）。 */
     fun retestEngine() = Unit
 
     /**

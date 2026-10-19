@@ -47,35 +47,6 @@ class RootSettings(private val context: Context) {
         EntrySort(mode = mode, ascending = preferences[KEY_SORT_ASC] ?: true)
     }
 
-    /**
-     * LibVLC 启动探针的结论（**2026-10-03**）：null = 还没测过 / 测了但结论未知。
-     *
-     * 存字符串而不是布尔：将来加"未知/待重测"这类状态不用改数据类型。
-     */
-    val vlcProbeVerdict: Flow<String?> = context.rootDataStore.data.map { it[KEY_VLC_VERDICT] }
-
-    /**
-     * **最后一次播放的文件路径**（2026-10-03 用户要求：「在重新打开软件时，如果网络通畅，
-     * 自动打开到最后一次播放的文件夹」+「最后一次播放的视频和文件夹变一个颜色」）。
-     *
-     * 两个用途共用一条记录：① 启动时取它的父目录当浏览页初始目录；② 浏览页高亮"上次播放"的路径链。
-     */
-    val lastPlayedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_PLAYED] }
-
-    /**
-     * **最后一次浏览的目录**（2026-10-03 真机修复配套）：没有播放记录时的兜底，
-     * 也用于"退出重开还在原来那个文件夹"。
-     */
-    val lastBrowsedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_BROWSED] }
-
-    /** 记下当前浏览的目录（空串 = 清掉）。 */
-    suspend fun setLastBrowsedPath(path: String?) {
-        context.rootDataStore.edit { preferences ->
-            if (path.isNullOrBlank()) preferences.remove(KEY_LAST_BROWSED)
-            else preferences[KEY_LAST_BROWSED] = path
-        }
-    }
-
     /** 记下最后一次播放的文件（空串 = 清掉）。 */
     suspend fun setLastPlayedPath(path: String?) {
         context.rootDataStore.edit { preferences ->
@@ -84,22 +55,19 @@ class RootSettings(private val context: Context) {
         }
     }
 
-    /** 记下探针结论（null = 清掉，视为未知）。 */
-    suspend fun setVlcProbeVerdict(verdict: String?) {
+    /** 记下最后一次浏览的目录（空串 = 清掉）。 */
+    suspend fun setLastBrowsedPath(path: String?) {
         context.rootDataStore.edit { preferences ->
-            if (verdict == null) preferences.remove(KEY_VLC_VERDICT) else preferences[KEY_VLC_VERDICT] = verdict
+            if (path.isNullOrBlank()) preferences.remove(KEY_LAST_BROWSED)
+            else preferences[KEY_LAST_BROWSED] = path
         }
     }
 
-    /** 自研引擎探针的结论（2026-10-15；口径同上：null = 还没测过）。 */
-    val engineProbeVerdict: Flow<String?> = context.rootDataStore.data.map { it[KEY_ENGINE_VERDICT] }
+    /** 最后一次播放的文件（冷启动先读进内存：浏览页高亮与「恢复上次文件夹」都要它）。 */
+    val lastPlayedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_PLAYED] }
 
-    /** 记下自研引擎探针结论（null = 清掉，视为未知）。 */
-    suspend fun setEngineProbeVerdict(verdict: String?) {
-        context.rootDataStore.edit { preferences ->
-            if (verdict == null) preferences.remove(KEY_ENGINE_VERDICT) else preferences[KEY_ENGINE_VERDICT] = verdict
-        }
-    }
+    /** 最后一次浏览的目录（重开 App 回到这里）。 */
+    val lastBrowsedPath: Flow<String?> = context.rootDataStore.data.map { it[KEY_LAST_BROWSED] }
 
     /** 保存排序设置。 */
     suspend fun setSort(sort: EntrySort) {
@@ -151,12 +119,6 @@ class RootSettings(private val context: Context) {
         val KEY_MODE = stringPreferencesKey("root_mode")
         val KEY_VALUE = stringPreferencesKey("root_value")
         val KEY_DISPLAY = stringPreferencesKey("root_display")
-
-        /** LibVLC 启动探针的结论（2026-10-03）。 */
-        val KEY_VLC_VERDICT = stringPreferencesKey("vlc_probe_verdict")
-
-    /** 自研引擎探针的结论（2026-10-15）。 */
-    val KEY_ENGINE_VERDICT = stringPreferencesKey("engine_probe_verdict")
 
         /** 最后一次播放的文件路径（2026-10-03）：启动恢复目录 + 浏览页高亮共用。 */
         val KEY_LAST_PLAYED = stringPreferencesKey("last_played_path")

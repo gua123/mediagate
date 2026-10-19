@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <!-- 预约缓存的后台下载（2026-10-19 用户要求「需要加前台服务」）：dataSync 类型 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 澎湃 OS 保活引导（R18）：申请「省电策略无限制」需要用系统弹窗（设置页里也提供跳转入口） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -122,37 +124,5 @@
              模块 :media:asr / :feature:tasks / :feature:asr-model 已删除，前台服务随之取消，
              顺带省下 27 MB 的 whisper native 库。外挂字幕（srt/vtt/ass）不受影响。 -->
 
-        <!--
-          LibVLC 启动探针（2026-10-03 用户建议）：**必须跑在独立进程里**。
-          libvlc.so 在真机上初始化时可能直接把进程带走（已有面包屑证据：切 LibVLC 后没有"新内核已创建"），
-          放这里崩的只是探针自己，主进程据此不让用户切过去。
-        -->
-        <!--
-          出错时把原因摆到屏幕上的页面（2026-10-03 P0）。**必须独立进程**：主进程崩掉/被杀，
-          这个页面照样留得住，用户能截图/复制；否则"打不开"就真的什么都没留下。
-        -->
-        <activity
-            android:name=".CrashActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:process=":crash"
-            android:theme="@style/Theme.MediaGate" />
-
-        <service
-            android:name="io.github.gua123.mediagate.media.engine.VlcProbeService"
-            android:exported="false"
-            android:process=":vlcprobe"
-            android:stopWithTask="true" />
-
-        <!--
-          自研引擎探针：**必须跑在独立进程**（与 :vlcprobe 同一套思路）。
-          FFmpeg 解码器初始化 / AAudio 开流在个别机器上可能直接把进程带走，
-          放在这里崩的只是探针自己，主进程据此判断"本机能不能用自研引擎"。
-        -->
-        <service
-            android:name="io.github.gua123.mediagate.media.enginenative.NativeEngineProbeService"
-            android:exported="false"
-            android:process=":engineprobe"
-            android:stopWithTask="true" />
     </application>
 </manifest>

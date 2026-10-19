@@ -41,8 +41,6 @@ include(
 include(
     ":media:engine",
     // 自研视频播放引擎的 native 内核（**2026-10-06 用户拍板：视频引擎只采用一套，不要来回切换**）
-    ":media:engine-native",
-    ":media:proxy",
     ":media:playback",
     ":media:thumbnail",
     ":media:tsext",

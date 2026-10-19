@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -78,10 +80,6 @@ import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
 import io.github.gua123.mediagate.core.common.Breadcrumbs
-import io.github.gua123.mediagate.core.common.VlcCrashHeuristic
-import io.github.gua123.mediagate.media.engine.VlcProbeService
-import io.github.gua123.mediagate.media.enginenative.NativeEngine
-import io.github.gua123.mediagate.media.enginenative.NativeEngineProbeService
 import kotlinx.coroutines.delay
 import io.github.gua123.mediagate.feature.browser.EntrySort
 import io.github.gua123.mediagate.feature.browser.EntrySorter
@@ -100,11 +98,8 @@ import io.github.gua123.mediagate.media.ffmpeg.TimestampRepair
 import io.github.gua123.mediagate.media.ffmpeg.TimestampRepairResult
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
-import io.github.gua123.mediagate.media.enginenative.NativeEnginePlayer
 import io.github.gua123.mediagate.media.engine.PlayerEngine
-import io.github.gua123.mediagate.media.engine.VlcEngine
 import io.github.gua123.mediagate.media.playback.BackendDataSourceFactory
-import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.thumbnail.EmbeddedArtworkExtractor
 import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
 import io.github.gua123.mediagate.media.thumbnail.FrameExtractor
@@ -657,9 +652,44 @@ class AppContainer(context: Context) :
         )
     }
 
+    /** 缓存队列的持久化（进程被杀后要能续上，2026-10-19 用户要求「需要加前台服务」）。 */
+    private val cacheQueueStore: CacheQueueStore by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CacheQueueStore(appContext)
+    }
+
     /** 把一批文件加入缓存队列（浏览页长按选中的那些）。 */
     fun enqueueCache(entries: List<Pair<String, String>>) {
+        if (entries.isEmpty()) return
         cacheQueue.enqueue(entries)
+        // 用户此刻在前台：这是拉起 dataSync 前台服务的唯一合法时机（Android 14+ 不允许后台拉起）
+        CacheDownloadService.start(appContext)
+    }
+
+    /**
+     * 启动时恢复上次没下完的队列（进程被杀之后**接着下**，已下好的段与 .pin 固定都还在）。
+     *
+     * 放在 init 之后由 [restoreCacheQueue] 调用（容器构造不碰 IO）。
+     */
+    fun restoreCacheQueue() {
+        ioScope.launch {
+            val restored = runCatching { cacheQueueStore.load() }.getOrElse { emptyList() }
+            if (restored.isEmpty()) return@launch
+            AppLog.i(TAG, "恢复缓存队列：" + restored.size + " 项")
+            cacheQueue.enqueue(restored)
+            CacheDownloadService.start(appContext)
+        }
+    }
+
+    /** 队列变化时把待处理项落盘（节流交给 take(2) 之后的分支：状态频繁变化不值得每次都写）。 */
+    private fun observeCacheQueueForPersistence() {
+        ioScope.launch {
+            cacheQueue.state
+                .map { state -> state.tasks.filter { it.status == CacheTaskStatus.QUEUED || it.status == CacheTaskStatus.RUNNING } }
+                .distinctUntilChanged { a, b -> a.map { it.path } == b.map { it.path } }
+                .collect { tasks ->
+                    runCatching { cacheQueueStore.save(tasks.map { it.path to it.name }) }
+                }
+        }
     }
 
     /**
@@ -739,10 +769,6 @@ class AppContainer(context: Context) :
 
     private val videoPreferences: VideoPlayerPreferencesSettings =
         VideoPlayerPreferencesSettings(appContext, ioScope)
-
-    /** 回环代理（plan 4.6）；懒建 + 关闭后可按需重建，见 [requireVideoProxy]。 */
-    @Volatile
-    private var videoProxy: LoopbackHttpProxy? = null
 
     /**
      * 视频播放页的宿主能力（M2-B）：由 MediaGateApp 注入 LocalVideoPlayerEnvironment。
@@ -885,46 +911,7 @@ class AppContainer(context: Context) :
             cache.prefetch(path, offset, PREFETCH_BYTES)
         }
 
-            /**
-         * 上次切到 LibVLC 是不是把进程带走了（**2026-10-03 真机**：面包屑停在"切换内核：→ LibVLC"）。
-         *
-         * 界面据此在"再切一次"之前给出提示——那条路已知会把 App 弄死时，别让用户闷头再踩。
-         */
-        override val vlcPreviouslyCrashed: Boolean =
-            VlcCrashHeuristic.vlcSwitchLooksCrashed(CrashReporter.readBreadcrumbs(appContext, limit = 40))
-
-        /**
-         * LibVLC 在本机到底能不能跑（**2026-10-03 用户建议**：启动时先测，不能跑就不让切）。
-         *
-         * false = 独立进程的探针被带走（原生崩溃）→ 播放页不再让切到 LibVLC，并说明原因。
-         */
-        /**
-         * **必须写成 getter**（2026-10-03 P0 真凶）：`vlcUsableState` 声明在本类**后面**，
-         * 而本宿主是容器里较早构造的属性——写成初始化器会在构造期读到 null，
-         * R8 混淆后的报错长这样：`Attempt to read from field ... on a null object reference`，
-         * 表现就是**每次启动即崩**（0.1.22–0.1.27 的"打不开"）。
-         */
-        override val vlcUsable: Boolean? get() = vlcUsableState.value
-
-        /** 让用户能主动重测（提示对话框里的「重新测试」）。 */
-        override fun retestVlc() {
-            vlcProbeNow()
-        }
-
-        /**
-         * 自研引擎在本机能不能跑（**必须写成 getter**，理由同 [vlcUsable]：
-         * 这两个 StateFlow 声明在容器后面，写成初始化器会在构造期读到 null）。
-         */
-        override val engineUsable: Boolean? get() = engineUsableState.value
-
-        override val engineProbeReason: String? get() = engineProbeReasonState.value
-
-        /** 自研引擎的「重新测试」。 */
-        override fun retestEngine() {
-            nativeEngineProbeNow()
-        }
-
-        /** 播放页每次打开文件后上报一行指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。 */
+            /** 播放页每次打开文件后上报一行指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。 */
         override fun reportPlaybackMetrics(line: String) {
             recordPlaybackMetrics(line)
         }
@@ -1022,17 +1009,8 @@ class AppContainer(context: Context) :
             runCatching { previous.backend.close() }
         }
 
-        /** 字幕能力（M7-A，R14）：同目录匹配 / 读取解析 / 写回与本地兜底。 */
         /** 断点续播存储（R18）：与音频后台播放共用同一份 DataStore 实现。 */
         override val progress: PlaybackProgressStore get() = playbackProgress
-
-        /**
-         * 回环代理基址（给 LibVLC 与将来的"分享播放地址"复用）；起不来时返回 null。
-         *
-         * 播放页据此判断能不能给出"一键切 LibVLC 续播"（LibVLC 只会吃 URL）。
-         */
-        override val proxyBaseUrl: String?
-            get() = runCatching { requireVideoProxy().baseUrl }.getOrNull()
 
         /**
          * 按内核种类造内核（R9）：Media3 注入 [BackendDataSourceFactory]（本地/远端同一套数据源，
@@ -1162,31 +1140,8 @@ class AppContainer(context: Context) :
         _pipVisible.value = visible
     }
 
-    /**
-     * 取回环代理（懒建）。
-     *
-     * 代理已经在 [close] 里关掉、进程又被系统拉回前台时重建一个：
-     * 否则手里会拿着一个已经死掉的端口，LibVLC 会一直打不开。
-     */
-    private fun requireVideoProxy(): LoopbackHttpProxy {
-        val existing = videoProxy
-        if (existing != null && existing.isRunning) return existing
-        return synchronized(this) {
-            val current = videoProxy
-            if (current != null && current.isRunning) {
-                current
-            } else {
-                LoopbackHttpProxy { _root.value?.backend }.also { videoProxy = it }
-            }
-        }
-    }
-
     /** 关闭回环代理、远端后端与网络监听（应用退出时由 MainActivity 调用）；幂等。 */
     fun close() {
-        videoProxy?.let { proxy ->
-            videoProxy = null
-            runCatching { proxy.close() }
-        }
         remoteRoot?.let { state ->
             remoteRoot = null
             remoteSignature = null
@@ -1242,151 +1197,6 @@ class AppContainer(context: Context) :
         // kotlinx.coroutines.flow.update 在这个文件里没导入：直接用 value 赋值（单线程写入点，够用）
         _playbackMetrics.value = (listOf(stamp + "  " + line) + _playbackMetrics.value).take(PLAYBACK_METRICS_KEEP)
     }
-
-    // ------------------------------------------------------------ 自研引擎启动探针（2026-10-15）
-
-    /**
-     * 自研引擎在本机是否可用（null = 未知）。
-     *
-     * 与 LibVLC 那套**同一套思路**：探针跑在独立进程 `:engineprobe` 里，
-     * 把"在个别机器上可能直接把进程带走"的步骤（FFmpeg 解码器初始化、AAudio 开流）都放在那边；
-     * 主进程只看文件（start / ok / fail / done）→ 纯函数 [engineProbeVerdict] 判定 → 落 DataStore。
-     */
-    private val _engineUsable = MutableStateFlow<Boolean?>(null)
-    private val _engineProbeReason = MutableStateFlow<String?>(null)
-    private val _engineProbeReport = MutableStateFlow<String?>(null)
-
-    /** 给播放页观察的结论。 */
-    val engineUsableState: StateFlow<Boolean?> = _engineUsable.asStateFlow()
-
-    /** 自检没通过的原因（中文；界面直接显示）。 */
-    val engineProbeReasonState: StateFlow<String?> = _engineProbeReason.asStateFlow()
-
-    /**
-     * 诊断卡里那一行「自研引擎探针：…」（通过时带自检摘要、没通过时带原因）。
-     *
-     * 摆在诊断卡里是为了**让用户截图就能说清问题**：引擎活着吗、本机能不能跑、哪一步没通过。
-     */
-    val engineProbeLineState: StateFlow<String> =
-        combine(_engineUsable, _engineProbeReason, _engineProbeReport) { usable, reason, report ->
-            val verdict = when (usable) {
-                true -> EngineProbeVerdict.OK
-                false -> EngineProbeVerdict.FAILED
-                else -> EngineProbeVerdict.UNKNOWN
-            }
-            engineProbeLine(verdict, reason, report)
-        }.stateIn(ioScope, SharingStarted.Eagerly, engineProbeLine(EngineProbeVerdict.UNKNOWN))
-
-    /**
-     * 跑一次自研引擎探针（启动时自动跑；用户也能从提示里手动重测）。
-     *
-     * 自检本身要开一次 AAudio 流，比 LibVLC 那套慢一点，所以超时给宽些（[ENGINE_PROBE_TIMEOUT_MS]）。
-     */
-    fun nativeEngineProbeNow() {
-        ioScope.launch {
-            runCatching {
-                NativeEngineProbeService.reset(appContext)
-                NativeEngineProbeService.start(appContext)
-                val deadline = System.currentTimeMillis() + ENGINE_PROBE_TIMEOUT_MS
-                while (System.currentTimeMillis() < deadline &&
-                    !NativeEngineProbeService.succeeded(appContext) &&
-                    !NativeEngineProbeService.finished(appContext)
-                ) {
-                    delay(ENGINE_PROBE_POLL_MS)
-                }
-                val verdict = engineProbeVerdict(
-                    started = NativeEngineProbeService.started(appContext),
-                    succeeded = NativeEngineProbeService.succeeded(appContext),
-                    finished = NativeEngineProbeService.finished(appContext),
-                )
-                applyEngineVerdict(verdict)
-            }.onFailure { AppLog.w(TAG, "自研引擎探针执行失败", it) }
-        }
-    }
-
-    private suspend fun applyEngineVerdict(verdict: EngineProbeVerdict) {
-        when (verdict) {
-            EngineProbeVerdict.OK -> {
-                _engineUsable.value = true
-                _engineProbeReason.value = null
-                _engineProbeReport.value = NativeEngineProbeService.successReport(appContext)
-                settings.setEngineProbeVerdict("ok")
-            }
-
-            EngineProbeVerdict.FAILED -> {
-                _engineUsable.value = false
-                _engineProbeReport.value = null
-                _engineProbeReason.value = NativeEngineProbeService.failureReason(appContext)
-                    ?: "自检进程被系统带走了（没留下原因）"
-                settings.setEngineProbeVerdict("failed")
-                runCatching { Breadcrumbs.mark("自研引擎探针：没通过（本机先用 Media3）") }
-            }
-
-            // 结论未知（例如探针只是被系统回收）：保持原状态，下次启动再试
-            EngineProbeVerdict.UNKNOWN -> Unit
-        }
-    }
-
-    // ------------------------------------------------------------ LibVLC 启动探针（2026-10-03）
-
-    /**
-     * 本机 LibVLC 是否可用（null = 未知）。
-     *
-     * 数据来源：探针服务跑在**独立进程**里留下的三个证据（start / ok / 探针进程退出原因）
-     * → 纯函数 [vlcProbeVerdict] 判定 → 落 DataStore。**探针崩了只会带走它自己**。
-     */
-    private val _vlcUsable = MutableStateFlow<Boolean?>(null)
-
-    /** 给播放页观察的结论。 */
-    val vlcUsableState: StateFlow<Boolean?> = _vlcUsable.asStateFlow()
-
-    /**
-     * 跑一次探针（启动时自动跑一次；用户也能从提示里手动重测）。
-     *
-     * 流程：清证据 → 拉起独立进程 → 轮询等 ok（最多 [VLC_PROBE_TIMEOUT_MS]）→ 判结论 → 落盘 + 广播。
-     * **主进程全程只是"看文件"、不碰 LibVLC**，所以不可能被它带崩。
-     */
-    fun vlcProbeNow() {
-        ioScope.launch {
-            runCatching {
-                VlcProbeService.reset(appContext)
-                VlcProbeService.start(appContext)
-                // 等它"跑完"（写 ok 或写 done），最多等 VLC_PROBE_TIMEOUT_MS；
-                // 两者都没等到 ⇒ 进程在初始化中途被带走了（判据见 vlcProbeVerdict）。
-                val deadline = System.currentTimeMillis() + VLC_PROBE_TIMEOUT_MS
-                while (System.currentTimeMillis() < deadline &&
-                    !VlcProbeService.succeeded(appContext) && !VlcProbeService.finished(appContext)
-                ) {
-                    delay(VLC_PROBE_POLL_MS)
-                }
-                val verdict = vlcProbeVerdict(
-                    started = VlcProbeService.started(appContext),
-                    succeeded = VlcProbeService.succeeded(appContext),
-                    finished = VlcProbeService.finished(appContext),
-                )
-                applyVlcVerdict(verdict)
-            }.onFailure { AppLog.w(TAG, "LibVLC 启动探针执行失败", it) }
-        }
-    }
-
-    private suspend fun applyVlcVerdict(verdict: VlcProbeVerdict) {
-        when (verdict) {
-            VlcProbeVerdict.OK -> {
-                _vlcUsable.value = true
-                settings.setVlcProbeVerdict("ok")
-            }
-
-            VlcProbeVerdict.FAILED -> {
-                _vlcUsable.value = false
-                settings.setVlcProbeVerdict("failed")
-                runCatching { Breadcrumbs.mark("VLC 启动探针：失败（本机不可用）") }
-            }
-
-            // 结论未知（例如探针只是被系统回收）：保持原状态，下次启动再试
-            VlcProbeVerdict.UNKNOWN -> Unit
-        }
-    }
-
 
     /** 当前生效的远端连接记录（给任务页取"根路径"用）；[closeRemoteRoot] 置空。 */
     private var currentRemoteRecord: ConnectionRecord? = null
@@ -1545,24 +1355,6 @@ class AppContainer(context: Context) :
     private fun parentOf(path: String): String = path.substringBeforeLast('/', "")
 
     init {
-        // 自研引擎探针：① 先把上次落盘的结论恢复出来（进播放页时探针可能还没跑完）；
-        // ② 再跑一次新的（它会覆盖结论）。与 LibVLC 探针一样，**独立进程**，崩了只带走它自己。
-        ioScope.launch {
-            runCatching {
-                settings.engineProbeVerdict.first()?.let { raw ->
-                    when (raw) {
-                        "ok" -> _engineUsable.value = true
-                        "failed" -> {
-                            _engineUsable.value = false
-                            _engineProbeReason.value = NativeEngineProbeService.failureReason(appContext)
-                                ?: "自检进程被系统带走了（没留下原因）"
-                        }
-                    }
-                }
-            }
-            // 自研引擎已下线（2026-10-15）：不再在启动时跑它的探针——没必要为下线的内核拉一个独立进程
-            // runCatching { nativeEngineProbeNow() }
-        }
         // 冷启动先把"最后一次播放的文件"读进内存：浏览页高亮与"恢复上次文件夹"都要它
         ioScope.launch {
             runCatching { settings.lastPlayedPath.first() }.getOrNull()?.let { _lastPlayedPath.value = it }
@@ -1971,7 +1763,6 @@ class AppContainer(context: Context) :
     // **2026-10-03 第二版教训**：LibVLC 探针**不再在启动时自动跑**。
     // 它跑在独立进程里，但"启动瞬间就拉一个会原生崩溃的进程"这件事本身在真机上会表现成
     // "打开 App 就看到崩溃提示"（用户报的就是"更新后打不开"）。现在改成**按需**：
-    // 用户在播放页点内核/点「重新测试」时才跑（`VlcProbeService` 与 `vlcProbeNow()` 都留着）。
 
     private companion object {
         const val TAG = "app-container"
@@ -1980,28 +1771,14 @@ class AppContainer(context: Context) :
 
 
 
-        /** LibVLC 启动探针：最长等多久（毫秒）——正常几百毫秒就写 ok，等不到基本就是崩了。 */
+
         /** 一次最多预约多少个文件（防止误点一个大目录）。 */
     const val CACHE_PICK_MAX_FILES = 300
 
     /** 播放指标留几条（诊断卡里够看清最近几次就够）。 */
     const val PLAYBACK_METRICS_KEEP = 5
 
-    /** 自研引擎探针的超时（自检里要开一次 AAudio 流，比 LibVLC 那套慢一点）。 */
-    const val ENGINE_PROBE_TIMEOUT_MS = 8_000L
-
-    /** 自研引擎探针的轮询间隔。 */
-    const val ENGINE_PROBE_POLL_MS = 200L
-
-    const val VLC_PROBE_TIMEOUT_MS = 6_000L
-
-        /** 探针结果的轮询间隔。 */
-        const val VLC_PROBE_POLL_MS = 200L
-
-        /** 崩掉之后，留给系统记录退出原因的时间。 */
-        const val VLC_PROBE_SETTLE_MS = 800L
-
-        /** 缩略图两级缓存的磁盘根（App 缓存目录下）。 */
+    /** 缩略图两级缓存的磁盘根（App 缓存目录下）。 */
         const val THUMBNAIL_CACHE_DIR = "thumbnails"
 
         /** FFmpeg 兜底抽帧的临时文件目录。 */

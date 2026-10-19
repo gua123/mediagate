@@ -348,7 +348,7 @@ class ExoPlayerEngine(
         PlaybackException.ERROR_CODE_DECODING_FAILED,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        -> "本机解码器无法解码该媒体（" + error.errorCodeName + "），可在播放页切到 LibVLC 内核重试"
+        -> "本机解码器无法解码该媒体（" + error.errorCodeName + "），可在播放页切到强制软解重试"
 
         PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND -> "文件不存在或已被移走（" + error.errorCodeName + "）"
         PlaybackException.ERROR_CODE_IO_NO_PERMISSION -> "没有读取权限（" + error.errorCodeName + "）"

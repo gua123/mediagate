@@ -34,12 +34,10 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":data:storage-api"))
     // LoopbackHttpProxy 出现在 VlcEngine 的公开构造签名（App 层创建并注入），故用 api 暴露
-    api(project(":media:proxy"))
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     // LibVLC 兜底内核（M2 接 PlayerEngine）
-    implementation(libs.libvlc.all)
     // 引擎切换是挂起过程（Dispatchers.Main.immediate），StateFlow 也在主线程收敛
     implementation(libs.kotlinx.coroutines.android)
 
