@@ -19,6 +19,14 @@ object PrefetchWindow {
     /** 预取"当前位置往后再 30 秒"那一段（比"当前位置"更值：向前拖一点就在本地了）。 */
     const val AHEAD_MS: Long = 30_000L
 
+    /**
+     * 一次滑窗预取**抓几段**（2026-10-20 用户反馈「nPlayer 加载快一倍」后加大）。
+     *
+     * 原来只抓 1 段（4 MB），在高码率视频里连 20 秒都撑不满；现在一次排 4 段（16 MB）**并发**拉，
+     * 把"每 20 秒才补一段"的涓流改成"追到前面去"。
+     */
+    const val AHEAD_SEGMENTS: Int = 4
+
     /** 距文件末尾不足这么多毫秒时不再向后预取（末尾那一段已由打开时的尾段预取覆盖）。 */
     const val NEAR_END_MS: Long = 10_000L
 
@@ -52,7 +60,8 @@ object PrefetchWindow {
         val targetMs = positionMs + AHEAD_MS
         val offset = PrefetchTargets.offsetForPosition(targetMs, durationMs, size) ?: return null
         if (offset <= 0L || offset >= size) return null
-        return Window(offset = offset, length = segmentBytes.coerceAtMost(size - offset))
+        val want = (segmentBytes.coerceAtLeast(1L) * AHEAD_SEGMENTS).coerceAtMost(size - offset)
+        return Window(offset = offset, length = want.coerceAtLeast(segmentBytes.coerceAtMost(size - offset)))
     }
 
     /**

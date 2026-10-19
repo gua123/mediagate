@@ -900,14 +900,14 @@ class AppContainer(context: Context) :
             tsIndexPreparer.indexOf(path)?.let { index ->
                 val offset = index.seekTarget(positionMs)
                 if (offset >= 0L) {
-                    cache.prefetch(path, offset, PREFETCH_BYTES)
+                    cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = 2)
                     return
                 }
             }
             val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return
             // 没有索引时的兜底换算由纯函数负责（参数不可用 ⇒ null ⇒ 不动，宁可不动也不瞎猜）
             val offset = PrefetchTargets.offsetForPosition(positionMs, durationMs, size) ?: return
-            cache.prefetch(path, offset, PREFETCH_BYTES)
+            cache.prefetchParallel(path, offset, PREFETCH_BYTES, concurrency = 2)
         }
 
             /** 播放页每次打开文件后上报一行指标（起播 / seek 等待 / 丢帧 / 欠载 / 音画偏差）。 */
@@ -973,7 +973,8 @@ class AppContainer(context: Context) :
                     if (window != null) {
                         lastWindowPositionMs = positionMs
                         AppLog.i(TAG, "滑窗预取 @" + (positionMs / 1000) + "s：" + path)
-                        cache.prefetch(path, offset = window.offset, length = window.length)
+                        // 一次 4 段、两个连接并发拉：高延迟链路上把往返藏起来（2026-10-20）
+                        cache.prefetchParallel(path, offset = window.offset, length = window.length, concurrency = 2)
                     }
                     // 下一集预热（P1.7）：播到 80% 时只抓下一集的头尾——连播切集几乎瞬时
                     if (PrefetchWindow.shouldWarmNextEpisode(

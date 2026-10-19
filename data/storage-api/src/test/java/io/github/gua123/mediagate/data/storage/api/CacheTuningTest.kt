@@ -15,7 +15,7 @@ class CacheTuningTest {
     fun 默认值就是现在的生产口径() {
         val t = CacheTuning()
         assertEquals(4L * 1024 * 1024, t.segmentBytes)
-        assertEquals(2, t.readAheadSegments)
+        assertEquals(4, t.readAheadSegments)
     }
 
     @Test

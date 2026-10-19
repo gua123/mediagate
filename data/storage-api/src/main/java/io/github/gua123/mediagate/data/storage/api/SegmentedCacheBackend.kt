@@ -72,7 +72,56 @@ class SegmentedCacheBackend(
     }
 
     /** 正在下载的段（单飞：同一段不会被下两次，不同段可以同时下——预读才有意义）。 */
-    private val inFlight = mutableMapOf<String, Deferred<File>>()
+    /**
+     * 正在下载的段（同一段只下一次；读协程**边下边读**）。
+     *
+     * 2026-10-20 用户反馈「nPlayer 加载快一倍、已看过的部分拖动不卡」之后改：
+     * 以前是「整段 4 MB 下完才可见」，现在**每写一块读者就能读一块**——
+     * 拖动落点只等第一块（64 KiB）而不是整段，这是"拖动后不卡"的关键。
+     */
+    private val inFlight = mutableMapOf<String, SegmentJob>()
+
+    /** 一段正在下载的临时文件；[tempFile] 里的字节对读者可见（[onBytes] 累计已写入量）。 */
+    private class SegmentJob(val finalFile: File) {
+        val tempFile: File = File(finalFile.parentFile, finalFile.name + TMP_SUFFIX)
+
+        private val lock = Object()
+        private var written: Long = 0L
+        private var finished: Boolean = false
+        private var failure: Throwable? = null
+
+        fun onBytes(total: Long) {
+            synchronized(lock) {
+                written = total
+                lock.notifyAll()
+            }
+        }
+
+        fun finish(error: Throwable?) {
+            synchronized(lock) {
+                failure = error
+                finished = true
+                lock.notifyAll()
+            }
+        }
+
+        /** 等到至少 [target] 字节写好（或结束/出错）。 */
+        fun awaitBytes(target: Long) {
+            synchronized(lock) {
+                while (!finished && failure == null && written < target) lock.wait(50)
+            }
+        }
+
+        /** 等整段下完；返回失败原因（成功为 null）。 */
+        fun awaitDone(): Throwable? {
+            synchronized(lock) {
+                while (!finished) lock.wait(50)
+                return failure
+            }
+        }
+
+        fun failureOrNull(): Throwable? = synchronized(lock) { failure }
+    }
 
     /** 保护 [inFlight] 的锁（只在取放 map 时持有，**不覆盖下载过程**）。 */
     private val inFlightLock = Mutex()
@@ -402,30 +451,94 @@ class SegmentedCacheBackend(
             .filter { it.isFile && it.name.endsWith(SEGMENT_SUFFIX) }
 
     /**
-     * 确保第 [index] 段在本地（有就直接返回）。
+     * 确保第 [index] 段**整段**在本地（预取 / 手动缓存用；播放路径不调它）。
      *
-     * 并发：同一条视频可能有好几个读协程（Media3 的探测 + 播放），用互斥锁串行化段写入，
-     * 避免同一段被下两次、也避免 LRU 淘汰与写入打架。
+     * 播放路径走 [CachedStream] 的 readChunk：它不等整段，边下边读。
      */
     private suspend fun ensureSegment(path: String, index: Long): File {
         val file = segmentFile(path, index)
         if (file.isFile && file.length() > 0L) {
             file.setLastModified(System.currentTimeMillis())
-            scheduleReadAhead(path, index)
             return file
         }
-        // 单飞：同一段只下一次（不同段可并行 → 预读才有意义）
+        val job = ensureJob(path, index) ?: return file
+        val error = withContext(io) { job.awaitDone() }
+        if (error != null) throw error
+        return file
+    }
+
+    /**
+     * 拿到（必要时启动）第 [index] 段的下载任务；该段已经在本地时返回 null。
+     *
+     * 单飞：同一段只启动一个任务，播放、预取、多个读协程共享同一个 [SegmentJob]。
+     */
+    private suspend fun ensureJob(path: String, index: Long): SegmentJob? {
+        val file = segmentFile(path, index)
+        if (file.isFile && file.length() > 0L) return null
         val key = path + "#" + index
         val existing = inFlightLock.withLock { inFlight[key] }
-        if (existing != null) return existing.await()
-        val job = scopeForDownload().async { downloadSegment(path, index, file) }
-        inFlightLock.withLock { inFlight[key] = job }
+        if (existing != null) return existing
+        val created = SegmentJob(file)
+        val winner = inFlightLock.withLock {
+            val current = inFlight[key]
+            if (current != null) {
+                current
+            } else {
+                inFlight[key] = created
+                created
+            }
+        }
+        if (winner === created) {
+            scopeForDownload().launch { runDownloadJob(path, index, key, created) }
+        }
+        return winner
+    }
+
+    /**
+     * 下载一段：**一块一块写临时文件、写一块通知读者一块**，下完再原子改名成正式段文件。
+     *
+     * 失败时删临时文件、把异常交给所有等待者；LRU 淘汰只打扫正式段文件，不会碰正在写的临时文件。
+     */
+    private suspend fun runDownloadJob(path: String, index: Long, key: String, job: SegmentJob) {
+        var failure: Throwable? = null
         try {
-            val result = job.await()
-            scheduleReadAhead(path, index)
-            return result
+            job.finalFile.parentFile?.mkdirs()
+            withContext(io) {
+                val start = index * segmentBytes
+                val length = segmentBytes.coerceAtLeast(1L)
+                delegate.openRead(path, start, length).use { stream ->
+                    job.tempFile.outputStream().use { output ->
+                        val buffer = ByteArray(COPY_BUFFER_BYTES)
+                        var total = 0L
+                        while (total < length) {
+                            val want = minOf(buffer.size.toLong(), length - total).toInt()
+                            val read = stream.read(buffer, 0, want)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            output.flush()
+                            total += read
+                            job.onBytes(total)
+                        }
+                        if (total <= 0L) throw StorageException.Unknown("分段下载为空：" + path + " @" + start)
+                    }
+                }
+                if (!job.tempFile.renameTo(job.finalFile)) {
+                    job.tempFile.copyTo(job.finalFile, overwrite = true)
+                    job.tempFile.delete()
+                }
+                job.finalFile.setLastModified(System.currentTimeMillis())
+                evictIfNeeded()
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            job.tempFile.delete()
+            failure = e
+            throw e
+        } catch (t: Throwable) {
+            job.tempFile.delete()
+            failure = t
         } finally {
-            inFlightLock.withLock { inFlight.remove(key) }
+            inFlightLock.withLock { if (inFlight[key] === job) inFlight.remove(key) }
+            job.finish(failure)
         }
     }
 
@@ -448,59 +561,6 @@ class SegmentedCacheBackend(
      * 反过来（用固定容量信号量直接当限制用）会导致"一个块抢走全部许可、其余块排队"，
      * 也就是并发退化成串行——那是错的（已在单测里暴露过）。
      */
-    /**
-     * 下载一个段：**一个请求、顺序写完**（2026-10-03 用户要求「把并发也去掉」）。
-     *
-     * 原来的"段内拆块并发"在高延迟链路上收益有限（瓶颈是往返次数而不是连接数），
-     * 却引入了并发限制、许可池、随机写入这一堆复杂度——现在回到单请求顺序下载，
-     * 行为更好预测，也少一层出错的可能。
-     */
-    private suspend fun downloadSegment(path: String, index: Long, file: File): File {
-        if (file.isFile && file.length() > 0L) {
-            file.setLastModified(System.currentTimeMillis())
-            return file
-        }
-            val start = index * segmentBytes
-            val length = segmentBytes.coerceAtLeast(1L)
-            file.parentFile?.mkdirs()
-            val temporary = File(file.parentFile, file.name + TMP_SUFFIX)
-            try {
-                val written = withContext(io) {
-                    delegate.openRead(path, start, length).use { stream ->
-                        temporary.outputStream().use { output ->
-                            val buffer = ByteArray(COPY_BUFFER_BYTES)
-                            var total = 0L
-                            while (total < length) {
-                                val want = minOf(buffer.size.toLong(), length - total).toInt()
-                                val read = stream.read(buffer, 0, want)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                total += read
-                            }
-                            output.flush()
-                            total
-                        }
-                    }
-                }
-                if (written <= 0L) throw StorageException.Unknown("分段下载为空：$path @$start")
-                withContext(io) {
-                    if (!temporary.renameTo(file)) {
-                        temporary.copyTo(file, overwrite = true)
-                        temporary.delete()
-                    }
-                    file.setLastModified(System.currentTimeMillis())
-                    evictIfNeeded()
-                }
-            } catch (e: CancellationException) {
-                temporary.delete()
-                throw e
-            } catch (t: Throwable) {
-                temporary.delete()
-                throw t
-            }
-        return file
-    }
-
     /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
     private fun scheduleReadAhead(path: String, index: Long) {
         val scope = readAheadScope ?: return
@@ -638,6 +698,10 @@ class SegmentedCacheBackend(
         @Volatile
         private var closed = false
 
+        /** 复用的文件句柄（不要每次 read 都 open/seek/close：那是顺序读与拖动的固定开销）。 */
+        private var reader: java.io.RandomAccessFile? = null
+        private var readerFile: File? = null
+
         override val length: Long =
             if (size < 0L) -1L
             else if (requestedLength < 0L) (size - start).coerceAtLeast(0L)
@@ -651,26 +715,63 @@ class SegmentedCacheBackend(
             val remaining = if (length >= 0L) length - current else Long.MAX_VALUE
             val want = minOf(len.toLong(), remaining).toInt()
             var written = 0
-            // 跨段补齐：一次 read 可能横跨两个段，按段循环填满缓冲区（与文件流的行为一致，
-            // 免得调用方拿到一堆 8 字节的短读）
+            // 跨段补齐：一次 read 可能横跨两个段，按段循环填满缓冲区
             while (written < want) {
                 val absolute = start + current + written
                 val index = absolute / segmentBytes
                 val inSegment = (absolute % segmentBytes).toInt()
-                val file = ensureSegment(path, index)
                 val chunk = minOf((want - written).toLong(), segmentBytes - inSegment).toInt()
-                val read = withContext(io) {
-                    java.io.RandomAccessFile(file, "r").use { raf ->
-                        raf.seek(inSegment.toLong())
-                        raf.read(buf, off + written, chunk)
-                    }
-                }
+                val read = readChunk(index, inSegment, chunk, buf, off + written)
                 if (read <= 0) break
                 written += read
             }
             if (written <= 0) return -1
             mutex.withLock { cursor += written }
+            // 读完这一段就顺便把后面几段拉起来（后台，失败只记日志）
+            scheduleReadAhead(path, (start + cursor - 1L).coerceAtLeast(0L) / segmentBytes)
             return written
+        }
+
+        /**
+         * 读第 [index] 段里的 [chunk] 字节（段内偏移 [inSegment]）。
+         *
+         * 已缓存的段直接读磁盘；没缓存的段**不等整段**，等"要读到的那个位置已经写出来"就返回
+         * （nPlayer 那套块级可见的等价做法）。
+         */
+        private suspend fun readChunk(
+            index: Long,
+            inSegment: Int,
+            chunk: Int,
+            buf: ByteArray,
+            off: Int,
+        ): Int {
+            val file = segmentFile(path, index)
+            if (file.isFile && file.length() > 0L) {
+                return readFrom(file, inSegment, chunk, buf, off)
+            }
+            val job = ensureJob(path, index)
+            if (job == null) return readFrom(file, inSegment, chunk, buf, off)
+            withContext(io) { job.awaitBytes(inSegment.toLong() + chunk) }
+            job.failureOrNull()?.let { throw it }
+            val readable = if (file.isFile && file.length() > 0L) file else job.tempFile
+            val available = withContext(io) { readable.length() } - inSegment
+            if (available <= 0L) return 0
+            val toRead = minOf(chunk.toLong(), available).toInt()
+            return readFrom(readable, inSegment, toRead, buf, off)
+        }
+
+        private suspend fun readFrom(file: File, position: Int, len: Int, buf: ByteArray, off: Int): Int {
+            return withContext(io) {
+                var current = reader
+                if (current == null || readerFile != file) {
+                    runCatching { current?.close() }
+                    current = java.io.RandomAccessFile(file, "r")
+                    reader = current
+                    readerFile = file
+                }
+                current.seek(position.toLong())
+                current.read(buf, off, len)
+            }
         }
 
         override suspend fun seek(position: Long) {
@@ -680,10 +781,12 @@ class SegmentedCacheBackend(
         override fun position(): Long = cursor
 
         override fun close() {
+            runCatching { reader?.close() }
+            reader = null
+            readerFile = null
             closed = true
         }
     }
-
 
     companion object {
 
@@ -693,7 +796,7 @@ class SegmentedCacheBackend(
         const val DEFAULT_SEGMENT_BYTES: Long = 4L * 1024 * 1024
 
         /** 默认预读段数（读到某段后顺手拉后面几段）。 */
-        const val DEFAULT_READ_AHEAD_SEGMENTS: Int = 2
+        const val DEFAULT_READ_AHEAD_SEGMENTS: Int = 4
 
         /** 记录"首次见到这个路径时的文件大小"的边车文件名（用于发现文件被换掉）。 */
         private const val SIZE_STAMP = ".size"

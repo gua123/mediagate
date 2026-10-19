@@ -383,3 +383,8 @@
   新增纯函数 CacheHeadPlan（目标＝min(文件大小, 12 MB)，小文件整份；大小未知时目标固定 12 MB）；CacheQueueController 只下到目标字节即完成，
   **不再逐个固定**（开头缓存按普通 LRU 管理）；CacheTask 新增 targetBytes，进度/通知/队列页都改为相对「要缓存的那一段」；队列页加一句说明。
   测试：CacheHeadPlanTest 4 例 ＋ 队列「大文件只下开头」1 例，全量 **1369 用例 0 失败**。release 包 0.1.75 / versionCode 76。
+- **网络加载提速：块级可见 + 并行预读（2026-10-20，用户反馈「nPlayer 加载快一倍、已看过的部分回拖不卡」）**：
+  ① SegmentedCacheBackend 的段下载改成**边下边读**（SegmentJob + onBytes/awaitBytes：写一块、读者就能读一块，
+  下完再原子改名），拖动落点只等 64 KiB 而不是整段 4 MB；② 预读 2→4 段、CachedStream 常驻 RandomAccessFile；
+  ③ 滑窗预取一次 4 段（PrefetchWindow.AHEAD_SEGMENTS）且 prefetchParallel 2 连接并发，落点预取同样并发。
+  测试：新增「整段还没下完就能读到已到达字节」用例；全量 **1370 用例 0 失败**。release 包 0.1.76 / versionCode 77。
