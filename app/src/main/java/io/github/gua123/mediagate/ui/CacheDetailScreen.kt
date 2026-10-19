@@ -122,6 +122,11 @@ fun CacheDetailScreen(
                     ) {
                         Text(stringResource(R.string.cache_queue_title), style = MaterialTheme.typography.titleMedium)
                         Text(
+                            text = stringResource(R.string.cache_queue_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
                             text = cacheQueueSummary(queue.pending, queue.done, queue.failed, queue.paused),
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -182,7 +187,7 @@ fun CacheDetailScreen(
 /** 一条队列任务的状态文案（纯展示，不拼业务逻辑）。 */
 @Composable
 private fun cacheTaskStatusText(task: CacheTask): String {
-    val progress = cacheTaskLine(task.totalBytes, task.cachedBytes, task.progress)
+    val progress = cacheTaskLine(task.targetBytes, task.cachedBytes, task.progress)
     return when (task.status) {
         CacheTaskStatus.QUEUED -> "排队中"
         CacheTaskStatus.RUNNING -> "正在缓存 · " + progress

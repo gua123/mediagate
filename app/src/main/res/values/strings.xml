@@ -64,6 +64,7 @@
     <string name="cache_pick_enqueued">已加入缓存队列</string>
     <string name="cache_queue_title">缓存队列</string>
     <string name="cache_queue_pause">暂停</string>
+    <string name="cache_queue_hint">预约缓存只缓存文件开头一段（约 12 MB），不做整份下载。</string>
     <string name="cache_queue_resume">继续</string>
     <string name="cache_queue_cancel">取消</string>
     <string name="cache_queue_clear">清掉已结束</string>

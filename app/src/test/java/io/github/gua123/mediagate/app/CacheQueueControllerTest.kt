@@ -20,7 +20,7 @@ import org.junit.Test
  * 可以让我不打开对应文件夹就可以缓存视频」）。
  *
  * 这里全部用注入的假实现（已知大小 / 假下载），所以**不需要网络也不需要真缓存**：
- * 验证的是队列自己的契约——顺序、去重、暂停、取消、失败继续、让路、固定。
+ * 验证的是队列自己的契约——顺序、去重、暂停、取消、失败继续、让路，以及**只温开头**（2026-10-20 用户要求）。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CacheQueueControllerTest {
@@ -33,7 +33,6 @@ class CacheQueueControllerTest {
         segments: Int = 3,
         segmentBytes: Long = 100L,
         failOn: String? = null,
-        pinned: MutableList<String> = mutableListOf(),
         downloads: MutableList<String> = mutableListOf(),
     ): CacheQueueController {
         val total = segments * segmentBytes
@@ -42,7 +41,6 @@ class CacheQueueControllerTest {
             segmentBytes = { segmentBytes },
             knownSize = { total },
             cachedBytesOf = { path -> downloads.count { it == path } * segmentBytes },
-            setPinned = { path, isPinned -> if (isPinned) pinned += path else pinned.remove(path) },
             downloadSegment = { path, _, _ ->
                 if (path == failOn) throw IllegalStateException("网络断了")
                 downloads += path
@@ -52,17 +50,36 @@ class CacheQueueControllerTest {
     }
 
     @Test
-    fun 批量入队后按顺序下完并固定() = runTest {
+    fun 批量入队后按顺序下完() = runTest {
         val downloads = mutableListOf<String>()
-        val pinned = mutableListOf<String>()
-        val queue = controller(this, pinned = pinned, downloads = downloads)
+        val queue = controller(this, downloads = downloads)
         queue.enqueue(listOf("a.mp4" to "A", "b.mp4" to "B"))
         advanceUntilIdle()
-        assertEquals("按顺序下完两个文件", 6, downloads.size)
+        assertEquals("小文件按整份下（3 段）", 6, downloads.size)
         assertEquals(listOf("a.mp4", "a.mp4", "a.mp4", "b.mp4", "b.mp4", "b.mp4"), downloads)
-        assertEquals(listOf("a.mp4", "b.mp4"), pinned)
         assertEquals(2, queue.state.value.done)
         assertEquals(0, queue.state.value.pending)
+    }
+
+    @Test
+    fun 大文件只下开头_不整份下载() = runTest {
+        val downloads = mutableListOf<String>()
+        val segment = 4L * 1024 * 1024
+        val queue = CacheQueueController(
+            scope = this,
+            segmentBytes = { segment },
+            knownSize = { 100L * 1024 * 1024 },
+            cachedBytesOf = { path -> downloads.count { it == path } * segment },
+            downloadSegment = { path, _, _ -> downloads += path },
+            playbackActive = playback,
+        )
+        queue.enqueue(listOf("movie.mp4" to "电影"))
+        advanceUntilIdle()
+        val task = queue.state.value.tasks.single()
+        assertEquals("要缓存的目标＝12 MB", CacheHeadPlan.HEAD_BYTES, task.targetBytes)
+        assertEquals("只下 12 MB / 4 MB ＝ 3 段", 3, downloads.size)
+        assertEquals("整个文件 100 MB 不该下", false, task.cachedBytes >= task.totalBytes!!)
+        assertEquals(CacheTaskStatus.DONE, task.status)
     }
 
     @Test
@@ -137,20 +154,19 @@ class CacheQueueControllerTest {
     }
 
     @Test
-    fun 已整份缓存过的直接算完成() = runTest {
+    fun 开头已缓存过的直接算完成() = runTest {
         val downloads = mutableListOf<String>()
         val queue = CacheQueueController(
             scope = this,
             segmentBytes = { 100L },
             knownSize = { 300L },
             cachedBytesOf = { 300L },
-            setPinned = { _, _ -> },
             downloadSegment = { path, _, _ -> downloads += path },
             playbackActive = playback,
         )
         queue.enqueue(listOf("a.mp4" to "A"))
         advanceUntilIdle()
-        assertTrue("已经全在本地，不该再下", downloads.isEmpty())
+        assertTrue("开头那段已经全在本地，不该再下", downloads.isEmpty())
         assertEquals(CacheTaskStatus.DONE, queue.state.value.tasks.single().status)
     }
 
@@ -170,11 +186,12 @@ class CacheQueueControllerTest {
             name = "A",
             status = CacheTaskStatus.RUNNING,
             totalBytes = 100L * 1024 * 1024,
-            cachedBytes = 25L * 1024 * 1024,
+            targetBytes = CacheHeadPlan.HEAD_BYTES,
+            cachedBytes = CacheHeadPlan.HEAD_BYTES / 4,
         )
         assertEquals(0.25f, task.progress!!, 0.001f)
-        assertTrue(cacheTaskLine(task.totalBytes, task.cachedBytes, task.progress).contains("25%"))
-        assertNull("总大小未知时不给百分比", CacheTask(path = "b", name = "B", totalBytes = null).progress)
+        assertTrue(cacheTaskLine(task.targetBytes, task.cachedBytes, task.progress).contains("25%"))
+        assertNull("目标未知时不给百分比", CacheTask(path = "b", name = "B").progress)
         assertEquals("缓存队列是空的", cacheQueueSummary(0, 0, 0, paused = false))
         val summary = cacheQueueSummary(pending = 2, done = 1, failed = 1, paused = true)
         assertTrue(summary, summary.contains("已暂停") && summary.contains("失败 1"))

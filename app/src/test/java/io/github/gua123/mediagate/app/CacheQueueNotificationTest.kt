@@ -19,28 +19,37 @@ class CacheQueueNotificationTest {
         status: CacheTaskStatus = CacheTaskStatus.QUEUED,
         total: Long? = 100L * 1024 * 1024,
         cached: Long = 0L,
-    ) = CacheTask(path = path, name = path.substringAfterLast('/'), status = status, totalBytes = total, cachedBytes = cached)
+    ) = CacheTask(
+        path = path,
+        name = path.substringAfterLast('/'),
+        status = status,
+        totalBytes = total,
+        // 预约缓存只温开头：目标＝min(文件, 12 MB)，与 CacheHeadPlan 同一口径
+        targetBytes = CacheHeadPlan.targetBytes(total),
+        cachedBytes = cached,
+    )
 
     @Test
     fun 进行中要显示第几个_百分比与文件名() {
         val state = CacheQueueState(
             tasks = listOf(
                 task("a.mp4", CacheTaskStatus.DONE, cached = 100L * 1024 * 1024),
-                task("b.mp4", CacheTaskStatus.RUNNING, cached = 45L * 1024 * 1024),
+                task("b.mp4", CacheTaskStatus.RUNNING, cached = 3L * 1024 * 1024),
                 task("c.mp4"),
             ),
         )
         assertEquals("正在缓存视频", CacheQueueNotification.title(state))
-        assertEquals("第 2/3 个 · 45% · b.mp4", CacheQueueNotification.text(state))
-        assertEquals(45, CacheQueueNotification.progress(state))
+        assertEquals("第 2/3 个 · 25% · b.mp4", CacheQueueNotification.text(state))
+        assertEquals(25, CacheQueueNotification.progress(state))
         assertTrue(CacheQueueNotification.isBusy(state))
     }
 
     @Test
-    fun 总大小未知时不给百分比也不编数() {
+    fun 总大小未知时按固定目标算进度() {
+        // 大小未知 ⇒ 目标固定为开头 12 MB（CacheHeadPlan 的口径），所以进度仍可算
         val state = CacheQueueState(tasks = listOf(task("a.mp4", CacheTaskStatus.RUNNING, total = null, cached = 3L * 1024 * 1024)))
-        assertEquals("第 1/1 个 · a.mp4", CacheQueueNotification.text(state))
-        assertNull("没有总大小就用不确定进度条", CacheQueueNotification.progress(state))
+        assertEquals("第 1/1 个 · 25% · a.mp4", CacheQueueNotification.text(state))
+        assertEquals(25, CacheQueueNotification.progress(state))
     }
 
     @Test
