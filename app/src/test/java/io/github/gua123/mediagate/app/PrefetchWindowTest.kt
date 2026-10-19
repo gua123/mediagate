@@ -28,7 +28,7 @@ class PrefetchWindowTest {
             lastWindowPositionMs = 0L,
         )
         assertTrue("第一次就该发", first != null)
-        assertEquals("抓一段", segment, first!!.length)
+        assertEquals("一次抓 4 段（16 MB）", segment * PrefetchWindow.AHEAD_SEGMENTS, first!!.length)
 
         val tooSoon = PrefetchWindow.decide(
             positionMs = 70_000L,

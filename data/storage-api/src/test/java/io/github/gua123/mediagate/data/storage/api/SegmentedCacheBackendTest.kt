@@ -3,9 +3,13 @@ package io.github.gua123.mediagate.data.storage.api
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -365,6 +369,84 @@ class SegmentedCacheBackendTest {
     }
 
     /** 只会顺序读的假后端：`openRead` 记下每次请求的 (offset, length)。 */
+    @Test
+    fun 整段还没下完就能读到已经到达的字节_块级可见() = runBlocking {
+        // 2026-10-20 用户反馈「nPlayer 拖动不卡」：关键是块级可见——
+        // 读者只等自己要读的那一段字节，而不是整段 4 MB。
+        val block = 64 * 1024
+        val segmentSize = 256 * 1024
+        val payload = ByteArray(segmentSize) { (it % 251).toByte() }
+        val gate = CompletableDeferred<Unit>()
+        val backend = object : StorageBackend {
+            override val id: String = "fake-gated:/root"
+            override val caps: Caps = Caps(randomAccess = false, maxParallelReads = 1)
+            override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+            override suspend fun stat(path: String): RemoteEntry =
+                RemoteEntry(name = path.substringAfterLast('/'), path = path, size = payload.size.toLong(), mtime = 1L)
+
+            override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+                var cursor = offset.toInt()
+                var sentFirstBlock = false
+                return object : RangeStream {
+                    override val length: Long = payload.size - offset
+                    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int {
+                        if (!sentFirstBlock) {
+                            sentFirstBlock = true
+                            val count = minOf(block, len, payload.size - cursor)
+                            System.arraycopy(payload, cursor, buf, off, count)
+                            cursor += count
+                            return count
+                        }
+                        // 第一块之后挂起：模拟慢链路，让读者证明"已经到达的能读"
+                        gate.await()
+                        if (cursor >= payload.size) return -1
+                        val count = minOf(len, payload.size - cursor)
+                        System.arraycopy(payload, cursor, buf, off, count)
+                        cursor += count
+                        return count
+                    }
+
+                    override suspend fun seek(position: Long) {
+                        cursor = offset.toInt() + position.toInt()
+                    }
+
+                    override fun position(): Long = (cursor - offset).toLong()
+                    override fun close() = Unit
+                }
+            }
+
+            override suspend fun write(path: String, data: InputStream) = Unit
+            override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+            override fun close() = Unit
+        }
+        val cache = SegmentedCacheBackend(
+            delegate = backend,
+            rootDir = tmp.newFolder(),
+            segmentBytes = segmentSize.toLong(),
+            maxBytes = 4L * segmentSize,
+            io = Dispatchers.IO,
+        )
+        val stream = cache.openRead("/gated.mp4", offset = 0L, length = segmentSize.toLong())
+        val first = ByteArray(block)
+        val readFirst = async(Dispatchers.IO) { stream.read(first, 0, block) }
+        val n = withTimeout(3_000) { readFirst.await() }
+        assertEquals("第一块到了就该返回，不等整段", block, n)
+        assertFalse("整段还没下完", gate.isCompleted)
+        assertEquals("读到的就是第一块内容", payload[0], first[0])
+
+        gate.complete(Unit)
+        var total = n
+        val rest = ByteArray(segmentSize)
+        while (total < segmentSize) {
+            val m = withTimeout(3_000) { stream.read(rest, 0, segmentSize - total) }
+            if (m <= 0) break
+            total += m
+        }
+        assertEquals("最终能读到整段", segmentSize, total)
+        assertEquals("读完接 EOF", -1, withTimeout(3_000) { stream.read(ByteArray(16), 0, 16) })
+        stream.close()
+    }
+
     private class FakeSequentialBackend(
         private val payload: ByteArray,
         private val fetches: MutableList<Pair<Long, Long>>,
