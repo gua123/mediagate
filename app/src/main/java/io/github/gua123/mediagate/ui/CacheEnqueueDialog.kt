@@ -137,13 +137,16 @@ internal fun cacheQueueSummary(pending: Int, done: Int, failed: Int, paused: Boo
     }
 }
 
-/** 一条任务的进度文案（总大小未知时只说"已缓存多少"）。 */
-internal fun cacheTaskLine(totalBytes: Long?, cachedBytes: Long, progress: Float?): String {
+/**
+ * 一条任务的进度文案：**相对"要缓存的那一段"**（预约缓存只温开头，不是整份），
+ * 目标未知时只说"已缓存多少"（不编百分比）。
+ */
+internal fun cacheTaskLine(targetBytes: Long?, cachedBytes: Long, progress: Float?): String {
     val cached = cacheMegabytes(cachedBytes)
     return when {
-        totalBytes != null && totalBytes > 0L -> {
+        targetBytes != null && targetBytes > 0L -> {
             val percent = ((progress ?: 0f) * 100).toInt().coerceIn(0, 100)
-            cached + " / " + cacheMegabytes(totalBytes) + "（" + percent + "%）"
+            cached + " / " + cacheMegabytes(targetBytes) + "（" + percent + "%）"
         }
 
         else -> "已缓存 " + cached

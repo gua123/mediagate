@@ -16,29 +16,31 @@ import kotlinx.coroutines.sync.withLock
 enum class CacheTaskStatus { QUEUED, RUNNING, DONE, FAILED, CANCELLED }
 
 /**
- * 一条**手动缓存**任务（2026-10-15 用户要求：「增加手动批量多个文件的缓存方式，
- * 可以让我不打开对应文件夹就可以缓存视频」）。
+ * 一条**预约缓存**任务（2026-10-15 用户要求「手动批量缓存」→ 2026-10-20 改成只温开头）。
  *
- * 与"打开即预取"的区别：那是顺手的（首段/尾段/落点），这是**用户点名要的整份下载**——
- * 所以下完会**固定住**（不被 LRU 淘汰），并且一条条排队、看得见进度、随时可取消。
+ * 与"打开即预取"的区别：那是顺手的（首段/尾段/落点），这是**用户点名、排队、看得见进度**的；
+ * 但两者目标一致——把**开头那一段**先拿到本地，让初次打开快起来，而不是整份囤下来。
+ * 目标字节数由 [CacheHeadPlan] 算（大文件 12 MB，小文件整份）。
  */
 data class CacheTask(
     val path: String,
     val name: String,
     val status: CacheTaskStatus = CacheTaskStatus.QUEUED,
-    /** 文件总大小；未知（stat 没拿到）时为 null。 */
+    /** 文件总大小（界面显示用）；未知（stat 没拿到）时为 null。 */
     val totalBytes: Long? = null,
+    /** 这条任务要缓存的字节数（**只温开头**；小文件＝整份）；还没开始算时为 null。 */
+    val targetBytes: Long? = null,
     /** 已下载字节（含之前已经缓存过的段）。 */
     val cachedBytes: Long = 0L,
     val error: String? = null,
 ) {
 
-    /** 进度 0..1；总大小未知时为 null（界面显示"进行中"而不是编一个百分比）。 */
+    /** 进度 0..1（相对"要缓存的那一段"，不是整个文件）；目标未知时为 null（不编百分比）。 */
     val progress: Float?
         get() {
-            val total = totalBytes ?: return null
-            if (total <= 0L) return null
-            return (cachedBytes.toDouble() / total.toDouble()).coerceIn(0.0, 1.0).toFloat()
+            val target = targetBytes ?: return null
+            if (target <= 0L) return null
+            return (cachedBytes.toDouble() / target.toDouble()).coerceIn(0.0, 1.0).toFloat()
         }
 
     val finished: Boolean get() = status == CacheTaskStatus.DONE
@@ -79,8 +81,6 @@ class CacheQueueController(
     private val knownSize: suspend (String) -> Long?,
     /** 已缓存字节（用于进度与"跳过已缓存部分"）。 */
     private val cachedBytesOf: suspend (String) -> Long,
-    /** 固定/取消固定（手动缓存不被自动淘汰）。 */
-    private val setPinned: suspend (String, Boolean) -> Unit,
     /** 下一段（失败请抛异常，队列会记下来并继续下一个任务）。 */
     private val downloadSegment: suspend (path: String, offset: Long, length: Long) -> Unit,
     /** 是否正在播放（播放时让路：不下新段）。 */
@@ -159,22 +159,17 @@ class CacheQueueController(
     private suspend fun runTask(task: CacheTask) {
         update(task.path) { it.copy(status = CacheTaskStatus.RUNNING, error = null) }
         val total = runCatching { knownSize(task.path) }.getOrNull()
+        val target = CacheHeadPlan.targetBytes(total)
         val already = runCatching { cachedBytesOf(task.path) }.getOrDefault(0L)
-        update(task.path) { it.copy(totalBytes = total, cachedBytes = already) }
-        if (total != null && already >= total) {
-            // 之前就整份缓存过：直接算完成（仍然固定它，免得被淘汰）
-            runCatching { setPinned(task.path, true) }
-            update(task.path) { it.copy(status = CacheTaskStatus.DONE, cachedBytes = total) }
+        update(task.path) { it.copy(totalBytes = total, targetBytes = target, cachedBytes = already) }
+        if (already >= target) {
+            // 开头那几段已经在缓存里（可能来自播放/预取）：直接算完成，不重复下载
+            update(task.path) { it.copy(status = CacheTaskStatus.DONE) }
             return
         }
-        // 固定在前：即使中途失败/取消，已经下下来的部分也不会被自动清掉
-        runCatching { setPinned(task.path, true) }
-            .onFailure { AppLog.w(TAG, "固定缓存失败（不影响下载）：" + task.path, it) }
-
         val segment = segmentBytes().coerceAtLeast(1L)
         var offset = already
-        val deadline = total ?: Long.MAX_VALUE
-        while (offset < deadline) {
+        while (offset < target) {
             val current = _state.value.tasks.firstOrNull { it.path == task.path }
             if (current == null || current.status == CacheTaskStatus.CANCELLED) return
             if (_state.value.paused) {
@@ -191,11 +186,11 @@ class CacheQueueController(
                 }
                 continue
             }
-            val length = minOf(segment, (deadline - offset).coerceAtLeast(1L))
+            val length = minOf(segment, target - offset)
             val ok = runCatching { downloadSegment(task.path, offset, length) }
             if (ok.isFailure) {
                 val error = ok.exceptionOrNull()
-                AppLog.w(TAG, "缓存失败：" + task.path, error)
+                AppLog.w(TAG, "缓存开头失败：" + task.path, error)
                 update(task.path) {
                     it.copy(
                         status = CacheTaskStatus.FAILED,
@@ -208,7 +203,7 @@ class CacheQueueController(
             val done = runCatching { cachedBytesOf(task.path) }.getOrDefault(offset)
             update(task.path) { it.copy(cachedBytes = done) }
         }
-        update(task.path) { it.copy(status = CacheTaskStatus.DONE, cachedBytes = total ?: it.cachedBytes) }
+        update(task.path) { it.copy(status = CacheTaskStatus.DONE) }
     }
 
     private fun update(path: String, transform: (CacheTask) -> CacheTask) {

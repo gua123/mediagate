@@ -644,7 +644,6 @@ class AppContainer(context: Context) :
             segmentBytes = { networkTuning.tuning.value.segmentBytes },
             knownSize = { path -> remoteCache?.knownSizeOf(path) },
             cachedBytesOf = { path -> remoteCache?.cachedBytesOf(path) ?: 0L },
-            setPinned = { path, pinned -> remoteCache?.setPinned(path, pinned) },
             downloadSegment = { path, offset, length ->
                 remoteCache?.downloadSegmentStrict(path, offset, length)
             },
