@@ -28,7 +28,6 @@ data class EngineSnapshot(
     val decoderMode: DecoderMode = DecoderMode.AUTO_HW,
     val resizeMode: ResizeMode = ResizeMode.FIT,
     val playWhenReady: Boolean = false,
-    val subtitles: SubtitleState = SubtitleState(),
 )
 
 /** 新引擎起来后要恢复什么（[SwitchPlan] 的后半段）。 */
@@ -38,7 +37,6 @@ data class RestoreSpec(
     val speed: Float,
     val decoderMode: DecoderMode,
     val resizeMode: ResizeMode,
-    val subtitles: SubtitleState,
     val playWhenReady: Boolean,
 )
 
@@ -169,7 +167,6 @@ object EngineSwitchPlanner {
                 speed = sanitizeSpeed(snapshot.speed),
                 decoderMode = snapshot.decoderMode,
                 resizeMode = snapshot.resizeMode,
-                subtitles = snapshot.subtitles.copy(offsetMs = SubtitleState.clampOffset(snapshot.subtitles.offsetMs)),
                 playWhenReady = snapshot.playWhenReady,
             ),
             reason = reason,
@@ -204,12 +201,6 @@ object EngineSwitchPlanner {
         append(String.format(Locale.ROOT, "%.2fx", plan.restore.speed))
         append("，")
         append(plan.restore.decoderMode.label)
-        if (plan.restore.subtitles.uri != null) append("，保留外挂字幕")
-        if (plan.restore.subtitles.offsetMs != 0L) {
-            append("（偏移 ")
-            append(formatSeconds(plan.restore.subtitles.offsetMs))
-            append("）")
-        }
     }
 
     /** 毫秒 → 「12.3s」/「1:02:03」之类的简短展示。 */

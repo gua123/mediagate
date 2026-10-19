@@ -8,7 +8,6 @@ import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.PlayerEngine
 import io.github.gua123.mediagate.media.playback.PlaybackProgressStore
-import io.github.gua123.mediagate.media.subtitle.SubtitleStyle
 
 /**
  * 视频播放页的持久化偏好（R9 内核 / R10 解码模式 / R14 字幕）。
@@ -104,23 +103,6 @@ interface VideoPlayerPreferences {
     /** 记住这次的方向（点旋转按钮时写）。 */
     suspend fun setLastOrientation(orientation: PlayerOrientation?) = Unit
 
-    /** 字幕总开关（R14）；默认关。 */
-    val subtitleEnabled: StateFlow<Boolean>
-
-    /** 字幕显示样式（R14：字号 / 颜色 / 描边 / 底部边距 / 加粗 / 斜体）。 */
-    val subtitleStyle: StateFlow<SubtitleStyle>
-
-    /** 字幕时间轴微调（R14），毫秒；正数 = 字幕延后，默认 0。 */
-    val subtitleOffsetMs: StateFlow<Long>
-
-    /** 记住字幕开关（R14）。 */
-    suspend fun setSubtitleEnabled(enabled: Boolean)
-
-    /** 记住字幕样式（R14：字号/颜色/描边/边距等改动都会写一次）。 */
-    suspend fun setSubtitleStyle(style: SubtitleStyle)
-
-    /** 记住字幕时间轴微调（R14：±0.5 s 步进的结果要能跨会话保留）。 */
-    suspend fun setSubtitleOffsetMs(offsetMs: Long)
 }
 
 /**
@@ -238,13 +220,6 @@ interface VideoPlayerEnvironment {
      * 默认 [NoopVideoPlaybackHost]（JVM 单测）：不建 MediaSession、不参与让路。
      */
     val playback: VideoPlaybackHost get() = NoopVideoPlaybackHost
-
-    /**
-     * 字幕能力（R14）：:app 用 :media:subtitle 装配（定位器 / 解析器 / 写回 + 本地兜底）。
-     *
-     * 本模块只发命令：列同目录、读解析、写回；远端与本地由同一个 StorageBackend 承担。
-     */
-    val subtitles: SubtitleHost
 
     /**
      * 列出 [path] 所在目录里的**视频与音频**（R1 上下集队列）。

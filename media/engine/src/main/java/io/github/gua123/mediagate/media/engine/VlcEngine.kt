@@ -55,8 +55,6 @@ class VlcEngine(
 
     override val kind: EngineKind = EngineKind.VLC
 
-    private val subtitles = DefaultSubtitleTrackController { applySubtitleState(it) }
-
     private var mode: DecoderMode = initialDecoderMode
 
     override val decoderMode: DecoderMode get() = mode
@@ -141,8 +139,6 @@ class VlcEngine(
         // MediaPlayer 已经持有 Media 的引用，这里释放本地引用（libvlc-android 的既定用法）
         vlcMedia.release()
         _state.value = EngineState.Preparing
-        // 字幕设置要跟着新媒体走（slave 是媒体级的）
-        applySubtitleState(subtitles.state.value)
     }
 
     /** 造一个带解码与缓存选项的 VLC 媒体。 */
@@ -203,8 +199,6 @@ class VlcEngine(
         AppLog.i(TAG, "LibVLC 解码模式切换为「" + mode.label + "」：avcodec-hw 是实例级选项，重建 LibVLC 管线")
         rebuildPipeline()
     }
-
-    override fun subtitles(): SubtitleTrackController = subtitles
 
     override fun positionMs(): Long = player.time.coerceAtLeast(0L)
 
@@ -293,29 +287,6 @@ class VlcEngine(
 
             else -> Unit
         }
-    }
-
-    /** 把字幕状态应用到 LibVLC（R14；这里的时间轴微调是真生效的）。 */
-    private fun applySubtitleState(state: SubtitleState) {
-        // 外挂字幕：作为 slave 挂到当前媒体（地址同样经回环代理，VLC 自己按 Range 拉取）
-        val uri = state.uri
-        if (uri != null) {
-            val parsed = MediaUriCodec.parse(uri)
-            val url = parsed?.let { proxy.playUrl(it.backendId, it.path) }
-            if (url == null) {
-                AppLog.w(TAG, "外挂字幕地址无法识别：" + uri)
-            } else {
-                try {
-                    player.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(url), true)
-                } catch (t: RuntimeException) {
-                    AppLog.w(TAG, "挂载外挂字幕失败：" + uri, t)
-                }
-            }
-        }
-        // 开关：-1 = 关字幕，0 = 自动选轨（VLC 的既定语义）
-        player.setSpuTrack(if (state.enabled) 0 else -1)
-        // 时间轴微调：LibVLC 的单位是微秒，正数 = 字幕延后，与 SubtitleState.offsetMs 同向
-        player.setSpuDelay(state.offsetMs * 1000L)
     }
 
     /** [ResizeMode] → LibVLC 的画面缩放档位。 */

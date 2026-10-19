@@ -68,7 +68,6 @@ import io.github.gua123.mediagate.feature.player.audio.AudioRepeatMode
 import io.github.gua123.mediagate.feature.viewer.image.ImageTooLargeException
 import io.github.gua123.mediagate.feature.viewer.image.ImageViewerEnvironment
 import io.github.gua123.mediagate.feature.viewer.image.MAX_VIEWER_IMAGE_BYTES
-import io.github.gua123.mediagate.feature.player.video.SubtitleHost
 import io.github.gua123.mediagate.feature.player.video.VideoPipActionSink
 import io.github.gua123.mediagate.feature.player.video.VideoPipHost
 import io.github.gua123.mediagate.feature.player.video.VideoPlaybackHost
@@ -741,20 +740,6 @@ class AppContainer(context: Context) :
     private val videoPreferences: VideoPlayerPreferencesSettings =
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
-    /**
-     * 字幕宿主（M7-A，R14）：定位器 / 读取解析 / 写回都在 :media:subtitle 里，这里只把它接到
-     * **当前后端**上（懒加载：只有真的进播放页选字幕才建）。
-     *
-     * 后端用 lambda 传（换根目录 / 换连接自动跟随）；无写权限时字幕落到 filesDir/subtitles
-     * （App 私有目录，系统不会像 cache 那样清理），播放页提示「已保存到本地，可分享/稍后重试」。
-     */
-    private val subtitleHost: SubtitleHost by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        AppSubtitleHost(
-            backend = { _root.value?.backend },
-            fallbackDir = File(appContext.filesDir, SUBTITLE_FALLBACK_DIR),
-        )
-    }
-
     /** 回环代理（plan 4.6）；懒建 + 关闭后可按需重建，见 [requireVideoProxy]。 */
     @Volatile
     private var videoProxy: LoopbackHttpProxy? = null
@@ -1038,8 +1023,6 @@ class AppContainer(context: Context) :
         }
 
         /** 字幕能力（M7-A，R14）：同目录匹配 / 读取解析 / 写回与本地兜底。 */
-        override val subtitles: SubtitleHost get() = subtitleHost
-
         /** 断点续播存储（R18）：与音频后台播放共用同一份 DataStore 实现。 */
         override val progress: PlaybackProgressStore get() = playbackProgress
 
@@ -2028,7 +2011,6 @@ class AppContainer(context: Context) :
         private const val READ_BUFFER_BYTES = 256 * 1024
 
         /** 无写权限时字幕的落地目录（R14：App 私有目录，可分享/稍后重试）。 */
-        const val SUBTITLE_FALLBACK_DIR = "subtitles"
 
 
         /** 时间戳重建（R3/R11）产物目录（cacheDir 下）与 ffmpeg 中间文件目录。 */

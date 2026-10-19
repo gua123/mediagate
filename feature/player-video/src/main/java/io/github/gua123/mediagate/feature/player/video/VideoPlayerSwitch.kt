@@ -53,7 +53,6 @@ object VideoEngineSwitch {
         decoderMode = engine.decoderMode,
         resizeMode = engine.resizeMode,
         playWhenReady = playWhenReady,
-        subtitles = engine.subtitles().state.value,
     )
 
     /**
@@ -95,10 +94,6 @@ object VideoEngineSwitch {
         engine.prepare()
         if (restore.positionMs > 0L) engine.seekTo(restore.positionMs)
         engine.setSpeed(restore.speed)
-        val subtitles = engine.subtitles()
-        subtitles.selectTrack(restore.subtitles.uri)
-        subtitles.setOffsetMs(restore.subtitles.offsetMs)
-        subtitles.setEnabled(restore.subtitles.enabled)
         if (restore.playWhenReady) engine.play()
     }
 

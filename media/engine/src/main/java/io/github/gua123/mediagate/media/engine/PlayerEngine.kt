@@ -74,9 +74,6 @@ interface PlayerEngine {
     /** 设置解码模式（R10；可触发内核内部重建，见各实现注释）。 */
     fun setDecoderMode(mode: DecoderMode)
 
-    /** 字幕控制器（R14 / R9）。 */
-    fun subtitles(): SubtitleTrackController
-
     /**
      * 视频输出挂载点（Compose 里用 AndroidView 挂上去）。
      *

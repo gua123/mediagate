@@ -47,7 +47,6 @@ include(
     ":media:thumbnail",
     ":media:tsext",
     ":media:ffmpeg",
-    ":media:subtitle",
 )
 
 // 功能层

@@ -9,7 +9,6 @@ import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
 import io.github.gua123.mediagate.media.engine.DecoderMode
-import io.github.gua123.mediagate.media.engine.DefaultSubtitleTrackController
 import io.github.gua123.mediagate.media.engine.EngineCapabilities
 import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
@@ -17,7 +16,6 @@ import io.github.gua123.mediagate.media.engine.EngineState
 import io.github.gua123.mediagate.media.engine.MediaSourceRef
 import io.github.gua123.mediagate.media.engine.PlayerEngine
 import io.github.gua123.mediagate.media.engine.ResizeMode
-import io.github.gua123.mediagate.media.engine.SubtitleTrackController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -71,9 +69,6 @@ class NativeEnginePlayer(
     override var currentMedia: MediaSourceRef? = null
         private set
 
-    /** 字幕状态：字幕由 App 的 Compose 覆盖层渲染（读 [positionMs]），这里只保留状态本身。 */
-    private val subtitles = DefaultSubtitleTrackController()
-
     private var resize = ResizeMode.FIT
     override val resizeMode: ResizeMode get() = resize
 
@@ -123,8 +118,6 @@ class NativeEnginePlayer(
     }
 
     override fun videoView(): View = surfaceView
-
-    override fun subtitles(): SubtitleTrackController = subtitles
 
     override val isPlaying: Boolean
         get() = lastStatus?.state == NativeEngineStateMapper.STATE_PLAYING
