@@ -797,11 +797,14 @@ private fun SettingsRoute(
             playback = {
                 val pipAutoEnterNow by container.pipAutoEnterSetting.collectAsStateWithLifecycle()
                 val controlsHideNow by container.controlsHideSeconds.collectAsStateWithLifecycle()
+                val bufferSecondsNow by container.bufferSeconds.collectAsStateWithLifecycle()
                 PlaybackSection(
                     pipAutoEnter = pipAutoEnterNow,
                     onPipAutoEnter = { enabled -> scope.launch { container.updatePipAutoEnter(enabled) } },
                     controlsHideSeconds = controlsHideNow,
                     onControlsHideSeconds = { seconds -> scope.launch { container.updateControlsHideSeconds(seconds) } },
+                    bufferSeconds = bufferSecondsNow,
+                    onBufferSeconds = { seconds -> scope.launch { container.updateBufferSeconds(seconds) } },
                 )
             },
             // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调

@@ -7,6 +7,7 @@ import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSourceException
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
+import io.github.gua123.mediagate.media.engine.NetworkStatsProvider
 
 /**
  * [BackendDataSource] 的工厂（Media3 的 DataSource.Factory 约定：每次 open 都要一个新实例）。
@@ -22,14 +23,21 @@ import io.github.gua123.mediagate.data.storage.api.StorageBackend
 @UnstableApi
 class BackendDataSourceFactory(
     private val backendProvider: () -> StorageBackend?,
-) : DataSource.Factory {
+) : DataSource.Factory, NetworkStatsProvider {
+
+    /** 本次播放的网络计数（每次 createDataSource 共用一份）。 */
+    private val meter = NetworkMeter()
+
+    override fun networkStatsLine(): String? = meter.line()
+
+    override fun resetNetworkStats() = meter.reset()
 
     /** 固定后端的便捷构造。 */
     constructor(backend: StorageBackend) : this({ backend })
 
     override fun createDataSource(): DataSource {
         val backend = backendProvider() ?: return MissingBackendDataSource()
-        return BackendDataSource(backend)
+        return BackendDataSource(backend, meter)
     }
 }
 

@@ -34,7 +34,11 @@ import java.io.IOException
  * 一个实例同一时刻只被一条加载线程使用（Media3 的约定），本类不做额外加锁。
  */
 @UnstableApi
-class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/* isNetwork = */ false) {
+class BackendDataSource(
+    private val backend: StorageBackend,
+    /** 网络计数（诊断用；可为 null，JVM 单测与无统计场景行为不变）。 */
+    private val meter: NetworkMeter? = null,
+) : BaseDataSource(/* isNetwork = */ false) {
 
     /** 当前打开的区间流（null = 未打开或已关闭）。 */
     private var stream: RangeStream? = null
@@ -116,6 +120,7 @@ class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/*
             )
         }
         releaseStream()
+        val openStart = System.nanoTime()
         val opened = try {
             runBlocking { backend.openRead(path, position, length) }
         } catch (e: StorageException) {
@@ -124,6 +129,8 @@ class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/*
             throw DataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
         } catch (e: RuntimeException) {
             throw DataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
+        } finally {
+            meter?.record(0, System.nanoTime() - openStart)
         }
         stream = opened
         this.path = path
@@ -150,6 +157,7 @@ class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/*
         } else {
             minOf(bytesRemaining, length.toLong()).toInt()
         }
+        val readStart = System.nanoTime()
         val read = try {
             runBlocking { current.read(buffer, offset, toRead) }
         } catch (e: StorageException) {
@@ -159,6 +167,7 @@ class BackendDataSource(private val backend: StorageBackend) : BaseDataSource(/*
         } catch (e: RuntimeException) {
             throw DataSourceException(e, PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
         }
+        meter?.record(read.coerceAtLeast(0), System.nanoTime() - readStart)
         when {
             read > 0 -> {
                 bytesTransferred(read)

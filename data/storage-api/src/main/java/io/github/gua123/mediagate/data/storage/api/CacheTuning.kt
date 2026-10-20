@@ -31,9 +31,14 @@ data class CacheTuning(
      */
     fun normalized(): CacheTuning {
         val segment = segmentBytes.takeIf { it in SEGMENT_CHOICES } ?: SegmentedCacheBackend.DEFAULT_SEGMENT_BYTES
-        val total = maxBytes.coerceIn(MIN_CACHE_BYTES, MAX_CACHE_BYTES)
-            // 总上限不能小于一个段（否则一段都存不下，缓存直接失效）
-            .coerceAtLeast(segment)
+        // **0 = 关闭缓存**（2026-10-20：补上「关闭」档，小存储设备可以完全不写缓存）
+        val total = if (maxBytes <= 0L) {
+            0L
+        } else {
+            maxBytes.coerceIn(MIN_CACHE_BYTES, MAX_CACHE_BYTES)
+                // 总上限不能小于一个段（否则一段都存不下，缓存直接失效）
+                .coerceAtLeast(segment)
+        }
         return CacheTuning(
             segmentBytes = segment,
             maxBytes = total,
@@ -54,14 +59,17 @@ data class CacheTuning(
             8L * 1024 * 1024,
         )
 
-        /** 缓存总上限下限：512 MB（再小基本等于没有缓存）。 */
-        const val MIN_CACHE_BYTES: Long = 512L * 1024 * 1024
+        /** 缓存总上限下限：128 MB（2026-10-20 起给「小存储/只想预热」的用户留小档；0 = 关闭见 [normalized]）。 */
+        const val MIN_CACHE_BYTES: Long = 128L * 1024 * 1024
 
         /** 缓存总上限上限：64 GB（别把手机存储塞满）。 */
         const val MAX_CACHE_BYTES: Long = 64L * 1024 * 1024 * 1024
 
         /** 缓存总上限的**快捷档位**（用户仍可直接输入任意值，见 [normalized]）。 */
         val CACHE_CHOICES: List<Long> = listOf(
+            0L,
+            128L * 1024 * 1024,
+            256L * 1024 * 1024,
             1L * 1024 * 1024 * 1024,
             2L * 1024 * 1024 * 1024,
             4L * 1024 * 1024 * 1024,

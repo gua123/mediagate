@@ -28,6 +28,9 @@ fun PlaybackSection(
     /** 控制层无操作多少秒后隐藏（2026-10-03 用户要求）；0 = 永不自动隐藏。 */
     controlsHideSeconds: Int,
     onControlsHideSeconds: (Int) -> Unit,
+    /** 播放缓冲时间（秒，2026-10-20）：起播前攒够多少再播，弱网时调大有帮助。 */
+    bufferSeconds: Int,
+    onBufferSeconds: (Int) -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -57,6 +60,21 @@ fun PlaybackSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(text = "播放缓冲", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = "起播前先攒够这么久的视频再播；调大更抗卡顿（起播会多等一点），调小起播更快。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                io.github.gua123.mediagate.media.engine.PlaybackBufferPolicy.SECONDS_CHOICES.forEach { seconds ->
+                    FilterChip(
+                        selected = bufferSeconds == seconds,
+                        onClick = { onBufferSeconds(seconds) },
+                        label = { Text(seconds.toString() + " 秒") },
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ControlsAutoHide.SECONDS_CHOICES.forEach { seconds ->
                     FilterChip(

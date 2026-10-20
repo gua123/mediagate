@@ -388,3 +388,11 @@
   下完再原子改名），拖动落点只等 64 KiB 而不是整段 4 MB；② 预读 2→4 段、CachedStream 常驻 RandomAccessFile；
   ③ 滑窗预取一次 4 段（PrefetchWindow.AHEAD_SEGMENTS）且 prefetchParallel 2 连接并发，落点预取同样并发。
   测试：新增「整段还没下完就能读到已到达字节」用例；全量 **1370 用例 0 失败**。release 包 0.1.76 / versionCode 77。
+- **播放缓冲时间 / 网络统计 / 缓存关闭与磁盘余量（2026-10-20，0.1.77；用户「将后续都做完」）**：
+  ① 新增 PlaybackBufferPolicy（纯函数：3/5/10/20/30 秒、默认 5 秒）→ ExoPlayerEngine 用 DefaultLoadControl 的
+  setBufferDurationsMs（最小=目标一半、最大=目标 8 倍且 60–300 秒、起播/恢复=目标）；偏好存 buffer_seconds，设置页「播放」区块可改。
+  ② 网络统计：:media:engine 的 NetworkStatsProvider 接口 + :media:playback 的 NetworkMeter（字节/阻塞耗时），
+  BackendDataSource 在 open/read 计数，ExoPlayerEngine.metricsLine() 输出「网络 X MB · Y s（Z MB/s）」，进诊断卡。
+  ③ 缓存上限补 0（关闭）/128 MB/256 MB 档；CacheBudget 纯函数按磁盘剩余留 25%（不足一个段则关闭），
+  AppContainer 建远端缓存前用 StatFs 计算，0 时不套缓存层。测试：PlaybackBufferPolicyTest / NetworkMeterTest / CacheBudgetTest，
+  全量 **1381 用例 0 失败**。release 包 0.1.77 / versionCode 78。

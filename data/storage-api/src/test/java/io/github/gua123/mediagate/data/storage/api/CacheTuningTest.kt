@@ -19,6 +19,12 @@ class CacheTuningTest {
     }
 
     @Test
+    fun 上限为零表示关闭缓存() {
+        assertEquals(0L, CacheTuning(maxBytes = 0L).normalized().maxBytes)
+        assertTrue("快捷档位里要有「关闭」", CacheTuning.CACHE_CHOICES.contains(0L))
+    }
+
+    @Test
     fun 预读段数越界会被夹回() {
         assertEquals(4, CacheTuning(readAheadSegments = 99).normalized().readAheadSegments)
         assertEquals(0, CacheTuning(readAheadSegments = -1).normalized().readAheadSegments)
