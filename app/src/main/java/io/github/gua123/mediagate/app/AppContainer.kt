@@ -41,6 +41,7 @@ import io.github.gua123.mediagate.core.network.NetworkContext
 import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.core.network.SelectableAddress
 import io.github.gua123.mediagate.data.storage.api.PrefetchTargets
+import io.github.gua123.mediagate.data.storage.api.CacheBudget
 import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.TimeoutStorageBackend
@@ -629,6 +630,14 @@ class AppContainer(context: Context) :
         videoPreferences.setControlsHideSeconds(ControlsAutoHide.normalizeSeconds(seconds))
     }
 
+    /** 播放缓冲时间（2026-10-20，设置页绑它；引擎构造时读当前值）。 */
+    val bufferSeconds: kotlinx.coroutines.flow.StateFlow<Int> get() = videoPreferences.bufferSeconds
+
+    /** 改播放缓冲时间（落盘；越界值由偏好层夹回）。 */
+    suspend fun updateBufferSeconds(seconds: Int) {
+        videoPreferences.setBufferSeconds(seconds)
+    }
+
     suspend fun remoteCacheBytes(): Long = remoteCache?.cachedBytes() ?: 0L
 
     /**
@@ -1027,7 +1036,11 @@ class AppContainer(context: Context) :
                 AppLog.w(TAG, "请求的内核已下线（" + kind.label + "），改用原有引擎")
                 Breadcrumbs.mark("内核已下线：" + kind.label + " → Media3")
             }
-            return ExoPlayerEngine(appContext, BackendDataSourceFactory { _root.value?.backend })
+            return ExoPlayerEngine(
+                appContext,
+                BackendDataSourceFactory { _root.value?.backend },
+                bufferSeconds = { videoPreferences.bufferSeconds.value },
+            )
         }
 
         // VLC 与自研引擎的构造代码已在 2026-10-15 随用户拍板删除（见上面的 createEngine）。
@@ -1547,20 +1560,37 @@ class AppContainer(context: Context) :
                 // **超时保险**（2026-10-03 真机"放后台再回来像卡住"）：
                 // 网络层的阻塞实现在链路悄悄断掉后可能一直等——那会让界面永远停在"刷新中"。
                 // 先给原始后端套一层超时（任何操作超过上限就抛中文超时错误），再套分段缓存。
-                backend = SegmentedCacheBackend(
-                    delegate = TimeoutStorageBackend(build()),
-                    rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
-                    readAheadScope = ioScope,
-                    // 段大小与缓存总上限在构造时定（改它等于缓存作废，所以"下次连接生效"）…
-                    segmentBytes = networkTuning.tuning.value.segmentBytes,
-                    maxBytes = networkTuning.tuning.value.maxBytes,
-                    // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
-                    readAheadSegments = networkTuning.tuning.value.readAheadSegments,
-                    // **按"连接"而不是"地址"分缓存**（2026-10-03 用户提问「局域网留了缓存，
-                    // 切公网还要重新缓存吗？」）：同一连接下的局域网/公网地址共用同一份段缓存，
-                    // 在家缓存过的部分，出门走公网直接复用。
-                    namespace = "conn:" + record.id,
-                ).also { remoteCache = it },
+                // 缓存上限先按磁盘余量收紧（2026-10-20）：上限 0 = 关闭缓存；空间不够连一个段都放不下也关。
+                backend = run {
+                    remoteCache = null
+                    val tuning = networkTuning.tuning.value
+                    val free = runCatching { android.os.StatFs(appContext.cacheDir.absolutePath).availableBytes }
+                        .getOrDefault(-1L)
+                    val effectiveMax = CacheBudget.effectiveMaxBytes(tuning.maxBytes, free, tuning.segmentBytes)
+                    if (effectiveMax <= 0L) {
+                        if (tuning.maxBytes > 0L) {
+                            AppLog.w(TAG, "磁盘余量不足，缓存关闭：free=" + free + " requested=" + tuning.maxBytes)
+                        }
+                        return@run TimeoutStorageBackend(build())
+                    }
+                    if (effectiveMax < tuning.maxBytes) {
+                        AppLog.w(TAG, "缓存上限按磁盘余量下调：" + tuning.maxBytes + " → " + effectiveMax)
+                    }
+                    SegmentedCacheBackend(
+                        delegate = TimeoutStorageBackend(build()),
+                        rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
+                        readAheadScope = ioScope,
+                        // 段大小与缓存总上限在构造时定（改它等于缓存作废，所以"下次连接生效"）…
+                        segmentBytes = tuning.segmentBytes,
+                        maxBytes = effectiveMax,
+                        // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
+                        readAheadSegments = tuning.readAheadSegments,
+                        // **按"连接"而不是"地址"分缓存**（2026-10-03 用户提问「局域网留了缓存，
+                        // 切公网还要重新缓存吗？」）：同一连接下的局域网/公网地址共用同一份段缓存，
+                        // 在家缓存过的部分，出门走公网直接复用。
+                        namespace = "conn:" + record.id,
+                    ).also { remoteCache = it }
+                },
             )
         }.onFailure { t ->
             AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + address.display, t)

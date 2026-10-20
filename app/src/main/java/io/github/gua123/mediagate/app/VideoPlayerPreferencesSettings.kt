@@ -18,6 +18,7 @@ import io.github.gua123.mediagate.feature.player.video.VideoLoopMode
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
+import io.github.gua123.mediagate.media.engine.PlaybackBufferPolicy
 
 /** 视频播放页偏好的 DataStore（App 私有；进程内单例由 [preferencesDataStore] 委托保证）。 */
 private val Context.videoPlayerDataStore by preferencesDataStore(name = "video_player_settings")
@@ -45,6 +46,29 @@ class VideoPlayerPreferencesSettings(
     override val engine: StateFlow<EngineKind> = context.videoPlayerDataStore.data
         .map { preferences -> parseEngine(preferences[KEY_ENGINE]) }
         .stateIn(scope, SharingStarted.Eagerly, EngineKind.MEDIA3)
+
+    /**
+     * **播放缓冲时间（秒）**（2026-10-20，借鉴 nPlayer 的 buffer_time；默认 5 秒）。
+     *
+     * 走 StateFlow（Eagerly）：引擎构造播放器时读当前值，设置页改完下次起播生效。
+     */
+    private val bufferSecondsFlow: StateFlow<Int> = context.videoPlayerDataStore.data
+        .map { preferences ->
+            PlaybackBufferPolicy.clampSeconds(
+                preferences[KEY_BUFFER_SECONDS] ?: PlaybackBufferPolicy.DEFAULT_SECONDS,
+            )
+        }
+        .stateIn(scope, SharingStarted.Eagerly, PlaybackBufferPolicy.DEFAULT_SECONDS)
+
+    /** 给设置页与引擎读的缓冲时间。 */
+    val bufferSeconds: StateFlow<Int> = bufferSecondsFlow
+
+    /** 改缓冲时间（落盘；越界值夹回合法区间）。 */
+    suspend fun setBufferSeconds(seconds: Int) {
+        context.videoPlayerDataStore.edit { preferences ->
+            preferences[KEY_BUFFER_SECONDS] = PlaybackBufferPolicy.clampSeconds(seconds)
+        }
+    }
 
     /** 上次选择的解码档位（R10）；没有记录时是 AUTO_HW（硬解优先，用户拍板的默认档）。 */
     override val decoderMode: StateFlow<DecoderMode> = context.videoPlayerDataStore.data
@@ -177,6 +201,9 @@ class VideoPlayerPreferencesSettings(
 
         /** 控制层隐藏延时（2026-10-03）：3/5/10 秒，0 = 永不隐藏。 */
         val KEY_CONTROLS_HIDE_SECONDS = intPreferencesKey("controls_hide_seconds")
+
+        /** 播放缓冲时间（2026-10-20）：秒；缺省 5 秒。 */
+        val KEY_BUFFER_SECONDS = intPreferencesKey("buffer_seconds")
 
         /** 上次播放方向（2026-10-03）：存枚举名，认不出来就当跟随系统。 */
         val KEY_LAST_ORIENTATION = stringPreferencesKey("last_player_orientation")

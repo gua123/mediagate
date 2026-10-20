@@ -56,6 +56,8 @@ import io.github.gua123.mediagate.core.common.AppLog
 class ExoPlayerEngine(
     context: Context,
     private val dataSourceFactory: DataSource.Factory,
+    /** 缓冲几秒（2026-10-20，设置页可调；默认 5 秒，见 [PlaybackBufferPolicy]）。 */
+    private val bufferSeconds: () -> Int = { PlaybackBufferPolicy.DEFAULT_SECONDS },
 ) : PlayerEngine {
 
     private val appContext: Context = context.applicationContext
@@ -89,6 +91,10 @@ class ExoPlayerEngine(
     private var media: MediaSourceRef? = null
 
     override val currentMedia: MediaSourceRef? get() = media
+
+    /** 网络统计（2026-10-20）：诊断卡里那一行「网络 42.0 MB · 1.8 s（23.3 MB/s）」。 */
+    override fun metricsLine(): String? =
+        (dataSourceFactory as? NetworkStatsProvider)?.networkStatsLine()
 
     override val isPlaying: Boolean get() = player.isPlaying
 
@@ -127,6 +133,7 @@ class ExoPlayerEngine(
     // ------------------------------------------------------------------ 引擎动作
 
     override fun setMedia(src: MediaSourceRef) {
+        (dataSourceFactory as? NetworkStatsProvider)?.resetNetworkStats()
         media = src
         player.setMediaItem(buildMediaItem(src))
         // 视频源始终走注入的数据源工厂（本地/远端同一套，R4 拖拽 seek 依赖它做 Range 重开）
@@ -250,6 +257,8 @@ class ExoPlayerEngine(
             .setMediaCodecSelector(codecSelectorFor(mode))
         val built = ExoPlayer.Builder(appContext, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            // 缓冲时间（2026-10-20）：起播前攒多少、卡顿恢复前攒多少、最多提前缓多少
+            .setLoadControl(PlaybackBufferPolicy.loadControl(bufferSeconds()))
             // R18：后台播放时保持网络与 CPU（服务被切后台后不中断）
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()

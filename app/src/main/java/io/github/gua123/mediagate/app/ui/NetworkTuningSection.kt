@@ -89,6 +89,12 @@ fun NetworkTuningSection(
                 text = "缓存上限：**" + labelOfGb(tuning.maxBytes) + "**（下次连接生效）",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (tuning.maxBytes <= 0L) {
+                Text(
+                    text = "已关闭缓存：不写磁盘，每次播放都走网络（小存储设备或不想占空间时用）。",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CacheTuning.CACHE_CHOICES.forEach { bytes ->
                     FilterChip(
@@ -184,6 +190,7 @@ private fun humanBytes(bytes: Long): String = when {
 
 /** 字节数 → GB 口径；不是整 GB 时保留一位小数（自定义值用得上）。 */
 private fun labelOfGb(bytes: Long): String {
+    if (bytes <= 0L) return "关闭"
     val gb = bytes.toDouble() / (1024.0 * 1024 * 1024)
     return if (gb >= 10 || gb == gb.toLong().toDouble()) {
         gb.toLong().toString() + " GB"
