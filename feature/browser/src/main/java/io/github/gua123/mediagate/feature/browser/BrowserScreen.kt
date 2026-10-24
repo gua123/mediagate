@@ -542,21 +542,24 @@ private fun ErrorPanel(
         BrowserErrorKind.NOT_FOUND -> stringResource(R.string.browser_error_not_found)
         BrowserErrorKind.NOT_SUPPORTED -> stringResource(R.string.browser_error_not_supported)
         BrowserErrorKind.AUTH_FAILED -> stringResource(R.string.browser_error_auth)
+        BrowserErrorKind.TIMEOUT -> stringResource(R.string.browser_error_timeout)
         else -> stringResource(R.string.browser_error_unknown)
     }
     val detail = state.errorDetail?.let { stringResource(R.string.browser_error_detail, it) }.orEmpty()
     // 认证失败是"用户自己能修"的一类：把去哪儿改说清楚（真机反馈：只看到认证失败，不知道该重填密码）
-    val authHint = if (state.errorKind == BrowserErrorKind.AUTH_FAILED) {
-        stringResource(R.string.browser_error_auth_hint)
-    } else {
-        ""
+    // 认证失败是"用户自己能修"的一类：把去哪儿改说清楚（真机反馈：只看到认证失败，不知道该重填密码）
+    // 超时同样是"用户能动手"的一类：告诉他换网络/重试，而不是只甩一句"加载失败"
+    val hint = when (state.errorKind) {
+        BrowserErrorKind.AUTH_FAILED -> stringResource(R.string.browser_error_auth_hint)
+        BrowserErrorKind.TIMEOUT -> stringResource(R.string.browser_error_timeout_hint)
+        else -> ""
     }
-    val fullText = listOf(message, detail, authHint).filter { it.isNotEmpty() }.joinToString("\n\n")
+    val fullText = listOf(message, detail, hint).filter { it.isNotEmpty() }.joinToString("\n\n")
     val context = LocalContext.current
     CenteredMessage(
         icon = Icons.Default.ErrorOutline,
         title = message,
-        message = listOf(detail, authHint).filter { it.isNotEmpty() }.joinToString("\n\n"),
+        message = listOf(detail, hint).filter { it.isNotEmpty() }.joinToString("\n\n"),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Row(verticalAlignment = Alignment.CenterVertically) {

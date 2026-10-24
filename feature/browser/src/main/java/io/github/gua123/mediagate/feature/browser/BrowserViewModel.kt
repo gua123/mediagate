@@ -251,6 +251,8 @@ class BrowserViewModel(
         is StorageException.NotSupported -> BrowserErrorKind.NOT_SUPPORTED
         // 认证失败单独一类：界面要给出"去哪儿改密码"的可照做指引（真机反馈过）
         is StorageException.Auth -> BrowserErrorKind.AUTH_FAILED
+        // 超时也单独一类：公网/弱网下"一直转圈"变成"明确超时 + 重试"（2026-10-24）
+        is StorageException.Timeout -> BrowserErrorKind.TIMEOUT
         else -> BrowserErrorKind.UNKNOWN
     }
 

@@ -396,3 +396,10 @@
   ③ 缓存上限补 0（关闭）/128 MB/256 MB 档；CacheBudget 纯函数按磁盘剩余留 25%（不足一个段则关闭），
   AppContainer 建远端缓存前用 StatFs 计算，0 时不套缓存层。测试：PlaybackBufferPolicyTest / NetworkMeterTest / CacheBudgetTest，
   全量 **1381 用例 0 失败**。release 包 0.1.77 / versionCode 78。
+- **公网返回上一级一直转圈（2026-10-24，0.1.78；用户提问「为什么在我使用公网的时候，会出现返回上一个文件夹一直转圈的情况？」）**：
+  根因＝TimeoutStorageBackend 的超时只包在协程层，**协程取消打断不了阻塞式网络调用**——实测「2000 ms 阻塞调用套 100 ms 超时」
+  实际 2059 ms 才返回；公网下请求卡在 DNS/TLS/服务端不响应时，界面就永远停在 LOADING。
+  修：阻塞调用放进独立作用域（CoroutineScope(SupervisorJob() + Dispatchers.IO)），调用方用 withTimeout { worker.await() }
+  **到点必返回**（元数据 15 s / 单次读 30 s），超时抛中文 StorageException.Timeout；被放弃的调用由底层 socket 超时收尾（无法强杀线程）。
+  新增 BrowserErrorKind.TIMEOUT + 界面「网络超时：15 秒没有响应」+ 重试与换网提示；测试：阻塞假后端两例（列目录/读取必须 <1.2 s 返回，
+  而底层睡 2 s）＋ 浏览器超时归类一例；全量 **1384 用例 0 失败**。release 包 0.1.78 / versionCode 79。

@@ -26,6 +26,8 @@
     <string name="browser_sort_ascending">改为升序 ↑</string>
     <string name="browser_sort_descending">改为降序 ↓</string>
     <string name="browser_error_auth">认证失败：账号或密码不对</string>
+    <string name="browser_error_timeout">网络超时：15 秒没有响应</string>
+    <string name="browser_error_timeout_hint">怎么办：点「重试」再试一次；如果一直超时，换个网络再试（公网链路不稳，或手机开着 VPN/代理时也会这样）。</string>
     <string name="browser_error_auth_hint">怎么办：到「连接」页点开这条连接 →「编辑」，重新输入密码后先点「测试一下」，通过再保存（密码框留空表示沿用已保存的旧密码，所以改过服务器密码时必须重新输入）。</string>
     <string name="browser_error_detail">错误详情：%1$s</string>
 

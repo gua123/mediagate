@@ -372,6 +372,29 @@ class BrowserViewModelTest {
     }
 
     /** 假后端：按目录返回预设列表，可注入异常。 */
+    @Test
+    fun 超时归类为网络超时_公网一直转圈变成明确提示() = runTest(dispatcher) {
+        val backend = FakeBackend(mapOf("" to emptyList()))
+        backend.failures["Slow"] = StorageException.Timeout("等待超过 15 秒：列目录 Slow")
+        val environment = FakeEnvironment()
+        val viewModel = BrowserViewModel(environment, io = dispatcher)
+        advanceUntilIdle()
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+
+        viewModel.open("Slow")
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(BrowserStatus.ERROR, state.status)
+        assertEquals(
+            "超时不能混进 UNKNOWN——否则界面只会说「加载失败」，用户不知道是网络卡住了",
+            BrowserErrorKind.TIMEOUT,
+            state.errorKind,
+        )
+        assertTrue(state.errorDetail.orEmpty().contains("15 秒"))
+    }
+
     private class FakeBackend(
         private val children: Map<String, List<RemoteEntry>>,
     ) : StorageBackend {
