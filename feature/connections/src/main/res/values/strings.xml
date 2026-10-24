@@ -73,6 +73,9 @@
     <string name="connections_field_local_path">本地目录（绝对路径）</string>
     <string name="connections_section_addresses">地址（局域网 + 公网可各配一个）</string>
     <string name="connections_action_add_address">添加地址</string>
+    <string name="connections_action_add_paired">再加一条同一服务器的另一条网络</string>
+    <string name="connections_action_add_missing">补一条%1$s地址</string>
+    <string name="connections_addresses_pair_hint">同一个连接的多个地址会被当作同一台服务器：缓存共用、按当前网络自动选路；局域网和公网各加一条即可。</string>
     <string name="connections_action_remove_address">删除该地址</string>
     <string name="connections_field_host">主机名或 IP</string>
     <string name="connections_field_scheme">传输方案</string>

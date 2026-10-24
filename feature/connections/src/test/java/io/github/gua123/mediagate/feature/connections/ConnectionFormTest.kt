@@ -265,4 +265,46 @@ class ConnectionFormTest {
         assertEquals(ConnectionOptions.Default, ConnectionOptions.parse("connectTimeoutMs=abc"))
         assertEquals(false, ConnectionOptions.parse("allowInsecureHttp=false;unknown=1").allowInsecureHttp)
     }
+    @Test
+    fun 追加地址默认补上还缺的那条网络() {
+        val lanOnly = draft()
+        assertEquals(io.github.gua123.mediagate.core.network.AddressLabel.WAN, lanOnly.plusAddress().addresses.last().label)
+
+        val wanOnly = draft().copy(
+            addresses = listOf(AddressDraft(label = io.github.gua123.mediagate.core.network.AddressLabel.WAN, host = "dav.example.com")),
+        )
+        assertEquals(io.github.gua123.mediagate.core.network.AddressLabel.LAN, wanOnly.plusAddress().addresses.last().label)
+    }
+
+    @Test
+    fun 成对地址复制协议端口优先级_标签取反_主机留空() {
+        val original = draft().copy(
+            addresses = listOf(
+                AddressDraft(label = io.github.gua123.mediagate.core.network.AddressLabel.WAN, scheme = "https", host = "dav.example.com", port = "8443", priority = "7"),
+            ),
+        )
+        val paired = original.withPairedAddress(0)
+        assertEquals(2, paired.addresses.size)
+        assertEquals("原对象不变", 1, original.addresses.size)
+
+        val added = paired.addresses[1]
+        assertEquals(io.github.gua123.mediagate.core.network.AddressLabel.LAN, added.label)
+        assertEquals("https", added.scheme)
+        assertEquals("8443", added.port)
+        assertEquals("7", added.priority)
+        assertEquals("主机留空让用户填另一条网络", "", added.host)
+        assertEquals("新地址不继承数据库主键", 0L, added.id)
+
+        assertEquals("越界不改", original, original.withPairedAddress(9))
+    }
+
+    @Test
+    fun 缺哪条网络按地址标签算() {
+        assertEquals(
+            io.github.gua123.mediagate.core.network.AddressLabel.WAN,
+            draft().missingNetworkLabel,
+        )
+        val both = draft().withPairedAddress(0)
+        assertEquals(null, both.missingNetworkLabel)
+    }
 }

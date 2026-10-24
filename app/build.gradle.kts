@@ -35,8 +35,8 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.65：自研引擎第一次能在播放页点到（内核按钮三档轮转）。**尚未发布**——
         // 先出本机预览包给用户真机试播，试通再走一次正式发版。
-        versionCode = 79
-        versionName = "0.1.78"
+        versionCode = 80
+        versionName = "0.1.79"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

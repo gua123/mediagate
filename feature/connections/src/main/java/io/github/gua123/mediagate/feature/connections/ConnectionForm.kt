@@ -107,16 +107,44 @@ fun ConnectionDraft.withAddress(index: Int, address: AddressDraft): ConnectionDr
     return copy(addresses = addresses.toMutableList().also { it[index] = address })
 }
 
-/** 追加一个地址（沿用当前协议的默认方案/端口）。 */
+/**
+ * 追加一个地址（沿用当前协议的默认方案/端口）。
+ *
+ * **2026-10-24 用户要求**「增加已有链接的公网局域网链接」：新地址的标签默认取**当前还缺的那条网络**
+ * ——只有局域网就默认公网、只有公网就默认局域网，省掉一次手选。
+ */
 fun ConnectionDraft.plusAddress(): ConnectionDraft {
     val defaults = ProtocolDefaults.of(protocol)
+    val label = missingNetworkLabel ?: AddressLabel.WAN
     return copy(
         addresses = addresses + AddressDraft(
-            label = io.github.gua123.mediagate.core.network.AddressLabel.WAN,
+            label = label,
             scheme = defaults.scheme,
             port = defaults.port,
         ),
     )
+}
+
+/** 当前地址列表里还缺哪条网络（局域网 / 公网）；两条都有或没有地址时为 null。 */
+val ConnectionDraft.missingNetworkLabel: AddressLabel?
+    get() = when {
+        addresses.isEmpty() -> null
+        addresses.none { it.label == AddressLabel.LAN } -> AddressLabel.LAN
+        addresses.none { it.label == AddressLabel.WAN } -> AddressLabel.WAN
+        else -> null
+    }
+
+/**
+ * 追加一条「**同一台服务器的另一条网络**」地址（**2026-10-24 用户要求**）：
+ * 复制第 [index] 个地址的方案 / 端口 / 优先级，标签取反（局域网 ↔ 公网），主机留空让用户填另一条网络。
+ *
+ * 为什么要这条捷径：同一个连接的多个地址会被当作同一台服务器（缓存共用、按当前网络自动选路），
+ * 但两条网络只有主机名不同；让用户重新填一遍协议/端口/优先级既啰嗦又容易填错。
+ */
+fun ConnectionDraft.withPairedAddress(index: Int): ConnectionDraft {
+    val base = addresses.getOrNull(index) ?: return this
+    val next = if (base.label == AddressLabel.LAN) AddressLabel.WAN else AddressLabel.LAN
+    return copy(addresses = addresses + base.copy(id = 0L, label = next, host = ""))
 }
 
 /** 删除第 [index] 个地址（至少保留一个，否则表单没地方填地址）。 */

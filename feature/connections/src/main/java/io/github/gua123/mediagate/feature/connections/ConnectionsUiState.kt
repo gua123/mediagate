@@ -38,6 +38,8 @@ data class ConnectionCardUi(
     val current: Boolean,
     val selection: SelectionResult?,
     val test: ConnectionTestUi?,
+    /** 本地目录连接（LOCAL）：不参与"补一条公网/局域网地址"的提示。 */
+    val local: Boolean = false,
 ) {
 
     val addressCount: Int get() = addresses.size
@@ -69,6 +71,7 @@ data class ConnectionCardUi(
             current = currentId == record.id,
             selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules()),
             test = result,
+            local = record.protocol == io.github.gua123.mediagate.core.network.ProtocolKind.LOCAL,
         )
 
         /** 状态归约：测试中 > 有结果（全通/部分/全败）> 未测试。 */
