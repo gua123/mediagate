@@ -133,6 +133,7 @@ fun ConnectionsScreen(
             onProtocolChange = viewModel::changeProtocol,
             onAddressChange = viewModel::updateAddress,
             onAddAddress = viewModel::addAddress,
+            onAddPairedAddress = viewModel::addPairedAddress,
             onRemoveAddress = viewModel::removeAddress,
             onAddRule = viewModel::addRule,
             onRemoveRule = viewModel::removeRule,
@@ -203,6 +204,7 @@ fun ConnectionsScreen(
                         onSetCurrent = { viewModel.setCurrent(card.id) },
                         onEdit = { viewModel.openEdit(card.id) },
                         onDelete = { viewModel.requestDelete(card.id) },
+                        onAddPaired = { viewModel.openEditWithPairedAddress(card.id) },
                     )
                 }
                 item { Spacer(modifier = Modifier.height(72.dp)) }
@@ -396,8 +398,21 @@ private fun ConnectionCard(
     onSetCurrent: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    /** 卡片上直接补一条缺失的网络（局域网 / 公网）。 */
+    onAddPaired: () -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    // 缺哪条网络：只给"还缺一条"的远程连接这个入口（本地目录连接没有内外网可言）
+    val missingLabel = if (card.local) {
+        null
+    } else {
+        when {
+            card.addresses.isEmpty() -> null
+            card.addresses.none { it.label == AddressLabel.LAN } -> AddressLabel.LAN
+            card.addresses.none { it.label == AddressLabel.WAN } -> AddressLabel.WAN
+            else -> null
+        }
+    }
     val now = remember(card.test) { System.currentTimeMillis() }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -478,6 +493,11 @@ private fun ConnectionCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+            missingLabel?.let { label ->
+                TextButton(onClick = onAddPaired) {
+                    Text(stringResource(R.string.connections_action_add_missing, label.zhText))
+                }
             }
 
             card.test?.let { test ->
@@ -599,6 +619,7 @@ private fun ConnectionEditorScreen(
     onProtocolChange: (ProtocolKind) -> Unit,
     onAddressChange: (Int, AddressDraft) -> Unit,
     onAddAddress: () -> Unit,
+    onAddPairedAddress: (Int) -> Unit,
     onRemoveAddress: (Int) -> Unit,
     onAddRule: (RuleDraft) -> Unit,
     onRemoveRule: (Int) -> Unit,
@@ -681,6 +702,7 @@ private fun ConnectionEditorScreen(
                     address = address,
                     errors = errors.addressErrors.getOrNull(index).orEmpty(),
                     onChange = { onAddressChange(index, it) },
+                    onAddPaired = { onAddPairedAddress(index) },
                     onRemove = { onRemoveAddress(index) },
                     removable = draft.addresses.size > 1,
                     localRoot = localRoot,
@@ -694,6 +716,12 @@ private fun ConnectionEditorScreen(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(stringResource(R.string.connections_action_add_address))
             }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.connections_addresses_pair_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(stringResource(R.string.connections_section_credentials), style = MaterialTheme.typography.titleSmall)
@@ -865,6 +893,8 @@ private fun AddressEditor(
     address: AddressDraft,
     errors: Map<FormField, String>,
     onChange: (AddressDraft) -> Unit,
+    /** 「再加一条同一服务器的另一条网络」（局域网 ↔ 公网）。 */
+    onAddPaired: () -> Unit = {},
     onRemove: () -> Unit,
     removable: Boolean,
     /** 已选的本地根目录（LOCAL 时给"用已选的目录"用）。 */
@@ -985,6 +1015,13 @@ private fun AddressEditor(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (ProtocolDefaults.needsHostAndPort(protocol)) {
+                TextButton(onClick = onAddPaired) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.connections_action_add_paired))
+                }
+            }
         }
     }
 }

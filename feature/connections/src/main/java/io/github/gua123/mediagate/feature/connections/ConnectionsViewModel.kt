@@ -117,6 +117,29 @@ class ConnectionsViewModel(
         _state.update { it.reduce(ConnectionsEvent.EditorChanged(draft.plusAddress())) }
     }
 
+    /**
+     * 加一条「同一服务器的另一条网络」（**2026-10-24 用户要求**）：
+     * 复制第 [index] 个地址的协议/端口/优先级，标签取反、主机留空。
+     */
+    fun addPairedAddress(index: Int) {
+        val draft = _state.value.editor ?: return
+        _state.update { it.reduce(ConnectionsEvent.EditorChanged(draft.withPairedAddress(index))) }
+    }
+
+    /**
+     * 从连接卡片直接「补一条公网/局域网地址」（**2026-10-24 用户要求**）：
+     * 打开编辑器，并预先把缺失的那条网络作为配对地址加好——用户只需填主机名。
+     */
+    fun openEditWithPairedAddress(id: Long) {
+        viewModelScope.launch {
+            val record = withContext(io) { repository.byId(id) } ?: return@launch
+            val draft = record.toDraft()
+            val baseIndex = draft.addresses.lastIndex
+            val prepared = if (baseIndex >= 0) draft.withPairedAddress(baseIndex) else draft
+            _state.update { it.reduce(ConnectionsEvent.EditorOpened(prepared)) }
+        }
+    }
+
     /** 删一个地址。 */
     fun removeAddress(index: Int) {
         val draft = _state.value.editor ?: return
