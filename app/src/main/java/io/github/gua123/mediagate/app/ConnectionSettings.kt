@@ -13,7 +13,7 @@ private val Context.connectionDataStore by preferencesDataStore(name = "connecti
 /**
  * 「当前连接」的持久化（**R8** / **R7**）。
  *
- * 只存一个 id：连接的名称、地址、规则、密文都在 `connection` / `address` / `network_rule` 三张表里，
+ * 只存一个 id：连接的名称、地址、选路、密文都在 `connection` / `address` / `network_rule` 三张表里，
  * 这里存 id 就够了（避免两份数据不一致）。id 指向的行被删掉时，[AppContainer] 会自动回落到
  * 首页选择的本地根目录。
  *

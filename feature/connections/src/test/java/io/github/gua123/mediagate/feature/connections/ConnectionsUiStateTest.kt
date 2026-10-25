@@ -37,7 +37,7 @@ class ConnectionsUiStateTest {
             AddressRecord(1L, 1L, AddressLabel.LAN, "http", "192.168.1.10", 8080, 0),
             AddressRecord(2L, 1L, AddressLabel.WAN, "http", "dav.example.com", 8443, 0),
         ),
-        rules = listOf(RuleRecord(1L, 1L, NetworkCapability.WIFI, "Home*", null, AddressLabel.LAN)),
+        prefer = AddressLabel.LAN,
     )
 
     private fun addressResult(id: Long, ok: Boolean): AddressTestUi = AddressTestUi(
@@ -71,25 +71,37 @@ class ConnectionsUiStateTest {
     }
 
     @Test
-    fun `卡片按当前网络算出首选地址与判定依据`() {
+    fun `卡片按先内网后外网给出首选地址与兜底说明`() {
         val state = ConnectionsUiState()
             .reduce(ConnectionsEvent.Loaded(listOf(record), currentConnectionId = null, network = wifi))
         val card = state.cards.single()
-        // Wi-Fi + SSID Home* 命中规则 → 首选局域网地址，不竞速
-        assertEquals(SelectionReason.RULE_MATCHED, card.selection!!.reason)
-        assertEquals(1L, card.selection!!.primary!!.id)
-        assertFalse(card.selection!!.needsRace)
-        assertTrue(card.selectionText!!.contains("192.168.1.10"))
+        val selection = card.selection!!
+        assertEquals(SelectionReason.PREFERRED_FIRST, selection.reason)
+        assertEquals(1L, selection.primary!!.id)
+        assertTrue("两个地址应能自动兜底", selection.hasFallback)
+        val text = card.selectionText!!
+        assertTrue(text.contains("先内网后外网"))
+        assertTrue(text.contains("192.168.1.10"))
     }
 
     @Test
-    fun `换到蜂窝网络后变为无规则竞速`() {
+    fun `换到蜂窝网络仍先内网后外网（不再按传输类型改规则）`() {
         val state = ConnectionsUiState()
             .reduce(ConnectionsEvent.Loaded(listOf(record), null, wifi))
             .reduce(ConnectionsEvent.Loaded(listOf(record), null, cellular))
         val selection = state.cards.single().selection!!
-        assertEquals(SelectionReason.NEEDS_RACE, selection.reason)
-        assertTrue(selection.needsRace)
+        assertEquals(SelectionReason.PREFERRED_FIRST, selection.reason)
+        assertEquals(1L, selection.primary!!.id)
+    }
+
+    @Test
+    fun `连接可以改成先外网后内网`() {
+        val wanFirst = record.copy(prefer = AddressLabel.WAN)
+        val card = ConnectionsUiState()
+            .reduce(ConnectionsEvent.Loaded(listOf(wanFirst), null, wifi))
+            .cards.single()
+        assertEquals(2L, card.selection!!.primary!!.id)
+        assertTrue(card.selectionText!!.contains("先外网后内网"))
     }
 
     @Test

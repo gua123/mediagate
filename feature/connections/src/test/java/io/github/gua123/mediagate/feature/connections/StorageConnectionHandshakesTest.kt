@@ -40,7 +40,6 @@ class StorageConnectionHandshakesTest {
         lastWorkingAddressId = null,
         lastCheckedAt = null,
         addresses = emptyList(),
-        rules = emptyList(),
     )
 
     private fun address(port: Int) = SelectableAddress(1L, AddressLabel.LAN, "sftp", "127.0.0.1", port)

@@ -4,7 +4,6 @@ import io.github.gua123.mediagate.core.network.AddressTestResult
 import io.github.gua123.mediagate.core.network.AddressLabel
 import io.github.gua123.mediagate.core.network.ConnectivityError
 import io.github.gua123.mediagate.core.network.NetworkContext
-import io.github.gua123.mediagate.core.network.NetworkRule
 import io.github.gua123.mediagate.core.network.SelectableAddress
 import io.github.gua123.mediagate.core.network.TestStage
 

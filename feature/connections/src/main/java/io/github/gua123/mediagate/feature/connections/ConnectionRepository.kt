@@ -13,15 +13,20 @@ import io.github.gua123.mediagate.core.database.AddressEntity
 import io.github.gua123.mediagate.core.database.ConnectionEntity
 import io.github.gua123.mediagate.core.database.MediaGateDatabase
 import io.github.gua123.mediagate.core.database.NetworkRuleEntity
+import io.github.gua123.mediagate.core.network.AddressLabel
 
 /**
- * 连接的持久化（**R8** 多连接记录 / **R7** 多地址与规则 / **R6** 凭据加密）。
+ * 连接的持久化（**R8** 多连接记录 / **R7** 多地址与优先网络 / **R6** 凭据加密）。
  *
  * 只做四件事，且全部在 `Dispatchers.IO` 上：
  * - [connections]：把 connection / address / network_rule 三张表拼成 [ConnectionRecord] 流（UI 直接 collect）；
  * - [save]：把编辑草稿写回（**密码立即加密**，明文不落库、不回显）；
  * - [delete]：删连接并清掉它的地址与规则（同一个事务里做，不留孤儿行）；
  * - [revealSecret]：解密出明文，仅供 :app 构造 WebDAV 后端用，**界面永远不显示它**。
+ *
+ * **选路口径（2026-10-25 用户要求：先内网后外网）**：`network_rule` 表不再承载
+ * "Wi-Fi / 蜂窝 / SSID / 本机网段"这些条件，每条连接只存一条"优先网络"记录
+ * （复用 `prefer` 列）；旧版留下的多条规则读出来时只取第一条的 `prefer`，行为不丢。
  *
  * 事务用 `room-ktx` 的 [withTransaction]，保证"删连接 + 删地址 + 删规则"要么全做要么全不做。
  *
@@ -37,7 +42,7 @@ class ConnectionRepository(
 
     private val dao = database.connectionDao()
 
-    /** 连接列表（含地址与规则），数据库一变就发新值。 */
+    /** 连接列表（含地址与优先网络），数据库一变就发新值。 */
     val connections: Flow<List<ConnectionRecord>> =
         combine(
             dao.observeAll(),
@@ -48,19 +53,23 @@ class ConnectionRepository(
                 val base = entity.toRecordBase()
                 base.copy(
                     addresses = addresses.filter { it.connectionId == entity.id }.map { it.toRecord() },
-                    rules = rules.filter { it.connectionId == entity.id }.map { it.toRecord() },
+                    prefer = preferredLabelOf(rules.filter { it.connectionId == entity.id }),
                 )
             }
         }.flowOn(io)
 
-    /** 取单条（测试/选路时用；已带地址与规则）。 */
+    /** 取单条（测试/选路时用；已带地址与优先网络）。 */
     suspend fun byId(id: Long): ConnectionRecord? = withContext(io) {
         val entity = dao.byId(id) ?: return@withContext null
         entity.toRecordBase().copy(
             addresses = dao.addressesOf(id).map { it.toRecord() },
-            rules = dao.rulesOf(id).map { it.toRecord() },
+            prefer = preferredLabelOf(dao.rulesOf(id)),
         )
     }
+
+    /** 旧库可能有多条规则：只认第一条的 `prefer`；没有规则就是默认「先内网后外网」。 */
+    private fun preferredLabelOf(rules: List<NetworkRuleEntity>): AddressLabel =
+        rules.firstOrNull()?.prefer?.let { AddressLabel.fromId(it) } ?: AddressLabel.LAN
 
     /**
      * 保存草稿（新建或更新）。
@@ -110,27 +119,15 @@ class ConnectionRepository(
                 )
             }
 
-            // 规则：同样增量更新
-            val keepRuleIds = draft.rules.mapNotNull { it.id.takeIf { id -> id > 0L } }.toSet()
-            dao.rulesOf(connectionId)
-                .filter { it.id !in keepRuleIds }
-                .forEach { dao.deleteRule(it.id) }
-            draft.rules.forEach { rule ->
-                val transport = rule.transport
-                val ssid = rule.ssidPattern.trim()
-                val subnet = rule.localSubnet.trim()
-                // 三个条件全空的规则等于"任意网络都偏好" —— 允许，但至少要有偏好意义，故保留
-                dao.upsertRule(
-                    NetworkRuleEntity(
-                        id = rule.id,
-                        connectionId = connectionId,
-                        transport = transport?.id,
-                        ssidPattern = ssid.ifEmpty { null },
-                        localSubnet = subnet.ifEmpty { null },
-                        prefer = rule.prefer.id,
-                    ),
-                )
-            }
+            // 选路：只保留一条"优先网络"记录（旧的 Wi-Fi/蜂窝/SSID/网段条件在保存时被替换掉）。
+            // 表结构不动，仍写 network_rule.prefer，老版本升级不会碰到迁移。
+            dao.deleteRulesOf(connectionId)
+            dao.upsertRule(
+                NetworkRuleEntity(
+                    connectionId = connectionId,
+                    prefer = draft.prefer.id,
+                ),
+            )
             connectionId
         }
     }

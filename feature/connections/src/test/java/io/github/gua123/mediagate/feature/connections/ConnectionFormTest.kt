@@ -3,18 +3,16 @@ package io.github.gua123.mediagate.feature.connections
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import io.github.gua123.mediagate.core.network.AddressLabel
-import io.github.gua123.mediagate.core.network.NetworkCapability
 import io.github.gua123.mediagate.core.network.ProtocolKind
 
 /**
  * 连接表单校验的 JVM 单测（**R8**：新建/编辑时在本地就把错误拦下来）。
  *
  * 覆盖：名称、根路径、多地址、主机名、端口、传输方案、WebDAV 明文 http 开关，
- * 以及草稿的纯函数增删改（协议切换、加/删地址、加/删规则）。
+ * 以及草稿的纯函数增删改（协议切换、加/删地址、优先网络切换）。
  */
 class ConnectionFormTest {
 
@@ -174,18 +172,14 @@ class ConnectionFormTest {
     }
 
     @Test
-    fun `规则增删与空串归一`() {
+    fun `默认先内网后外网且可以切换`() {
         val base = draft()
-        val withRule = base.plusRule(RuleDraft(transport = NetworkCapability.WIFI, ssidPattern = "Home*"))
-        assertEquals(1, withRule.rules.size)
-        assertTrue(base.rules.isEmpty())
-        assertEquals(0, withRule.minusRule(0).rules.size)
-        assertEquals(withRule, withRule.minusRule(9))
+        assertEquals("默认优先局域网（先内网后外网）", AddressLabel.LAN, base.prefer)
+        assertEquals("原对象不变", AddressLabel.LAN, base.prefer)
 
-        val normalized = RuleDraft(transport = null, ssidPattern = "  ", localSubnet = " ").toNetworkRule()
-        assertNull(normalized.ssidPattern)
-        assertNull(normalized.localSubnet)
-        assertEquals(AddressLabel.LAN, normalized.prefer)
+        val wanFirst = base.withPrefer(AddressLabel.WAN)
+        assertEquals(AddressLabel.WAN, wanFirst.prefer)
+        assertEquals("原对象不变", AddressLabel.LAN, base.prefer)
     }
 
     @Test

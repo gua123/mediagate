@@ -17,8 +17,8 @@ import io.github.gua123.mediagate.core.common.AppLog
  *
  * 采集三样东西（[NetworkContext]）：
  * - **传输类型**：Wi-Fi / 蜂窝 / 以太网 / VPN（[NetworkCapabilities] 的 TRANSPORT_*）；
- * - **SSID**：仅 Wi-Fi 且**有定位权限**时才拿得到；拿不到就是 null（R6 不为它额外申请权限，
- *   此时 SSID 规则自然不命中，规则会退化为"按网段 / 传输类型"）；
+ * - **SSID**：仅 Wi-Fi 且**有定位权限**时才拿得到；拿不到就是 null（R6 不为它额外申请权限；
+ *   2026-10-25 起只用于界面展示，不参与选路）；
  * - **本机网段**：`LinkProperties.linkAddresses` → `192.168.1.10/24` 这样的 CIDR 串。
  *
  * 每次回调都把 [NetworkContext.revision] +1，界面据此让 60 s 缓存立刻失效。

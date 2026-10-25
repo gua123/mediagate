@@ -146,18 +146,6 @@ class ConnectionsViewModel(
         _state.update { it.reduce(ConnectionsEvent.EditorChanged(draft.minusAddress(index))) }
     }
 
-    /** 加一条选路规则（R7）。 */
-    fun addRule(rule: RuleDraft) {
-        val draft = _state.value.editor ?: return
-        _state.update { it.reduce(ConnectionsEvent.EditorChanged(draft.plusRule(rule))) }
-    }
-
-    /** 删一条选路规则。 */
-    fun removeRule(index: Int) {
-        val draft = _state.value.editor ?: return
-        _state.update { it.reduce(ConnectionsEvent.EditorChanged(draft.minusRule(index))) }
-    }
-
     /**
      * 保存（R8/R6）。
      *
@@ -425,14 +413,6 @@ internal fun ConnectionRecord.toDraft(): ConnectionDraft {
         hasStoredSecret = hasSecret,
         allowInsecureHttp = options.allowInsecureHttp,
         addresses = addressDrafts,
-        rules = rules.map {
-            RuleDraft(
-                id = it.id,
-                transport = it.transport,
-                ssidPattern = it.ssidPattern.orEmpty(),
-                localSubnet = it.localSubnet.orEmpty(),
-                prefer = it.prefer,
-            )
-        },
+        prefer = prefer,
     )
 }

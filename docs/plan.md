@@ -94,7 +94,7 @@
 | R4 | 视频进度条可拖拽，远端也要准 | RandomAccessSource + 各协议随机读 + TS 索引 |
 | R5 | 缩略图（视频抽帧/图片/音频封面） | media/thumbnail + 两级缓存 |
 | R6 | App 本身无登录、无权限体系 | 无账号体系；协议凭据存连接里 |
-| R7 | 局域网 + 公网域名，按网络自动选 | 连接内多地址 + 网络监听 + 竞速探测 | **（2026-10-24 补：编辑器/卡片可一键补「另一条网络」配对地址，协议端口优先级自动复制）**
+| R7 | 局域网 + 公网域名，按网络自动选 | 连接内多地址 + 网络监听 + **先内网后外网**顺序探测 | **（2026-10-24 补：编辑器/卡片可一键补「另一条网络」配对地址，协议端口优先级自动复制；2026-10-25 改：不再按 Wi-Fi/蜂窝/SSID/网段配规则，统一「先局域网，连不上自动换公网」）**
 | R8 | 多连接记录 + 连通性测试 | feature/connections |
 | R9 | **多播放内核**（Media3 为主，LibVLC 兜底） | media/engine + 引擎切换 |
 | R10 | **硬解 / 软解可切换，默认硬解** | media/engine/decode-mode |
@@ -225,8 +225,11 @@
 
 ### 4.5 连接、地址与网络切换（沿用 v1，接真实测试地址）
 
-- 连接记录含多个地址（LAN / 公网域名），规则 = 传输类型 / SSID / 本机网段 → 优先 LAN 或 WAN；无规则时并行竞速探测（TCP 1.5 s）。
-- 判定顺序：网络能力 → 规则 → 竞速 → 协议握手（真正的决定权）；结果缓存 60 s，`NetworkCallback` 变化即失效并重测、必要时无缝换地址续播。
+- 连接记录含多个地址（LAN / 公网域名）。**2026-10-25 用户要求：按「先内网后外网」选路**——不再使用传输类型 / SSID / 本机网段这类规则；
+  局域网地址排在前面，TCP 探测（1.5 s 上限）不通就自动改用公网（每条连接可切换成"先外网后内网"，默认局域网优先）。
+- 判定顺序：网络能力 → 优先网络排序 → 顺序 TCP 探测（首选不通自动换下一个）→ 协议握手（真正的决定权）；
+  网络变化（`NetworkCallback` 的 revision）或连接被编辑时重新判断；同一条连接 + 同一份网络现场的结果会复用，不重复探测。
+- 旧的并行竞速（RaceProbe）与按 Wi-Fi/蜂窝切换规则的实现已移除：并行竞速会让公网抢在局域网前面，与"先内网"口径冲突。
 - 连通性测试三段计时：DNS 解析 / TCP 握手 / 协议握手（WebDAV PROPFIND 期望 207 或 200，401=账号密码错；SFTP banner + 认证 + 列目录，主机密钥变更红色告警；FTP 220 + 登录 + PASV）。
 - 验收直接用用户给的两组地址：在家 Wi-Fi 应命中 192.168.1.10，切蜂窝应命中 dav.example.com。
 
@@ -387,7 +390,7 @@
 | --- | --- | --- |
 | connection | id,name,protocol,basePath,username,secretRef,options,tls,lastWorkingAddressId,lastCheckedAt | 连接 |
 | address | id,connectionId,label(LAN/WAN),scheme,host,port,priority | 多地址 |
-| network_rule | id,connectionId,transport,ssidPattern,localSubnet,prefer | 选路规则 |
+| network_rule | id,connectionId,transport,ssidPattern,localSubnet,prefer | 选路设置（**2026-10-25 起只写一条、只用 prefer**；前三个条件列保留但不再使用，旧数据读第一条的 prefer） |
 | dir_cache | id,connectionId,path,entriesJson,fetchedAt,ttl | 目录缓存 |
 | ts_index | id,connectionId,path,size,mtime,indexBlobPath,status,progress | TS 索引 |
 | thumb_meta | key,connectionId,path,size,mtime,kind,filePath,failedAt | 缩略图索引/负缓存 |
@@ -438,7 +441,7 @@
 | R4 | 拖拽 | 局域网松手到出画面 ≤3 s，公网 ≤6 s；有 TS 索引时 ≤1.5 s；连续拖 20 次不错位 |
 | R5 | 缩略图 | 200 项滚动 ≥55 fps；≥90% 视频出帧；缓存命中二次进入秒显 |
 | R6 | 无登录 | 冷启动直达首页，除系统权限外无任何登录/权限弹窗 |
-| R7 | 网络切换 | 家中 Wi-Fi 走 192.168.1.10，切蜂窝走 dav.example.com，切换后续播不丢位置 |
+| R7 | 网络切换 | **先内网后外网**：内网可达时走 192.168.1.10；内网不可达时自动改用 dav.example.com（不用手动改地址），切换后续播不丢位置 |
 | R8 | 多连接与自测 | ≥5 个连接可建；「测试全部」给出每地址三段耗时与错误分类；改错端口能复现对应错误 |
 | R9 | 多内核 | 同一视频可在 Media3 / LibVLC 间切换，位置、倍速、字幕保持 |
 | R10 | 硬/软解 | 默认硬解可播；切软解后同一视频（含 HEVC TS）仍可播，功耗/温度明显上升但可用 |
