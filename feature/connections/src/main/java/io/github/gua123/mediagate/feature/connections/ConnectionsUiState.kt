@@ -1,5 +1,6 @@
 package io.github.gua123.mediagate.feature.connections
 
+import io.github.gua123.mediagate.core.network.AddressLabel
 import io.github.gua123.mediagate.core.network.AddressSelector
 import io.github.gua123.mediagate.core.network.NetworkContext
 import io.github.gua123.mediagate.core.network.SelectionResult
@@ -24,7 +25,7 @@ enum class ConnectionStatus(val zhText: String) {
 
 /**
  * 列表里一张连接卡片的状态（**R8**：名称 + 协议 + 地址数 + 最近检测时间 + 状态徽标；
- * **R7**：当前网络下的首选地址与判定依据）。
+ * **R7**：先内网后外网的尝试顺序与判定依据）。
  */
 data class ConnectionCardUi(
     val id: Long,
@@ -32,7 +33,7 @@ data class ConnectionCardUi(
     val protocolText: String,
     val browsable: Boolean,
     val addresses: List<AddressRecord>,
-    val rules: List<RuleRecord>,
+    val prefer: AddressLabel,
     val lastCheckedAt: Long?,
     val status: ConnectionStatus,
     val current: Boolean,
@@ -44,12 +45,9 @@ data class ConnectionCardUi(
 
     val addressCount: Int get() = addresses.size
 
-    /** 选路一行中文（R7）：「首选 局域网 · http://192.168.1.10:8080（命中规则…）」。 */
+    /** 选路一行中文（R7）：「先内网后外网：首选 局域网 http://…；连不上会自动改用公网」。 */
     val selectionText: String?
-        get() = selection?.let { result ->
-            val primary = result.primary?.let { it.display } ?: return@let result.explanation
-            "首选 " + primary + " · " + result.explanation
-        }
+        get() = selection?.explanation
 
     companion object {
         /** 由记录 + 运行时状态拼出卡片（纯函数，单测覆盖状态归约）。 */
@@ -65,11 +63,11 @@ data class ConnectionCardUi(
             protocolText = record.protocolText,
             browsable = record.browsable,
             addresses = record.addresses,
-            rules = record.rules,
+            prefer = record.prefer,
             lastCheckedAt = record.lastCheckedAt,
             status = statusOf(record.id, testing, result),
             current = currentId == record.id,
-            selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules()),
+            selection = AddressSelector.select(record.selectableAddresses(), network, record.prefer),
             test = result,
             local = record.protocol == io.github.gua123.mediagate.core.network.ProtocolKind.LOCAL,
         )

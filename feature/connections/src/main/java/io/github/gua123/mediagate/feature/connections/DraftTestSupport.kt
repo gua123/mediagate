@@ -48,7 +48,7 @@ object DraftTestSupport {
             lastWorkingAddressId = null,
             lastCheckedAt = null,
             addresses = addresses,
-            rules = emptyList(),
+            prefer = draft.prefer,
         )
     }
 

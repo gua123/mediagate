@@ -1,9 +1,10 @@
 package io.github.gua123.mediagate.core.network
 
 /**
- * 选路结论（**R7**，plan 4.5「判定顺序：网络能力 → 规则 → 竞速 → 协议握手」）。
+ * 选路结论（**R7**）。
  *
- * [reason] 说明走到了哪一步，[explanation] 是可以直接贴到界面上的中文依据（R16）。
+ * **2026-10-25 用户要求：按「先内网后外网」选路**——不再看 Wi-Fi / 蜂窝这类传输类型，
+ * 而是永远先试局域网地址；局域网连不上再自动改用公网（[AddressFallbackProbe]）。
  */
 enum class SelectionReason(val code: String, val zhText: String) {
     /** 设备离线：任何地址都不必试。 */
@@ -12,13 +13,10 @@ enum class SelectionReason(val code: String, val zhText: String) {
     /** 连接还没配置地址。 */
     NO_ADDRESS("NO_ADDRESS", "该连接还没有配置地址"),
 
-    /** 命中规则：按规则偏好排序，直接用它（协议握手仍会做，失败再降级到备选）。 */
-    RULE_MATCHED("RULE_MATCHED", "命中选路规则，按规则偏好直连"),
+    /** 有多个地址：按「优选网络 → 同网络优先级」排好序，调用方按顺序尝试，失败的自动换下一个。 */
+    PREFERRED_FIRST("PREFERRED_FIRST", "按优先网络依次尝试"),
 
-    /** 没有规则命中且有多个地址：需要并行竞速（TCP 1.5 s）。 */
-    NEEDS_RACE("NEEDS_RACE", "没有命中规则，多个地址需要并行竞速"),
-
-    /** 只有一个地址：直接试，不必竞速。 */
+    /** 只有一个地址：直接试，不必兜底。 */
     SINGLE_ADDRESS("SINGLE_ADDRESS", "只有一个可用地址，直接连接"),
 }
 
@@ -26,19 +24,19 @@ enum class SelectionReason(val code: String, val zhText: String) {
  * 选路结果（**R7**）。
  *
  * @param primary 首选地址；[SelectionReason.OFFLINE] / [SelectionReason.NO_ADDRESS] 时为 null。
- * @param ordered 备选顺序（含 [primary]）。命中规则时= 规则偏好序；无规则时= 人工优先级序。
+ * @param ordered 尝试顺序（含 [primary]）：优选网络的地址在前，同网络内按人工优先级降序。
  * @param reason 判定依据（稳定枚举，便于单测与埋点）。
- * @param explanation 中文解释（界面直接展示，讲清"为什么选它"）。
- * @param needsRace 是否需要并行竞速（true = 调用方应交给 [RaceProbe] 而不是直接连 [primary]）。
- * @param matchedRule 命中的规则（null = 没命中）。
+ * @param explanation 中文解释（界面直接展示，讲清"为什么选它、连不上会怎样"）。
+ * @param hasFallback 首选失败时是否还有备选可自动尝试。
+ * @param preferred 该连接偏好的网络（默认 [AddressLabel.LAN] = 先内网后外网）。
  */
 data class SelectionResult(
     val primary: SelectableAddress?,
     val ordered: List<SelectableAddress>,
     val reason: SelectionReason,
     val explanation: String,
-    val needsRace: Boolean,
-    val matchedRule: NetworkRule? = null,
+    val hasFallback: Boolean,
+    val preferred: AddressLabel = AddressLabel.LAN,
 ) {
     /** 没有可用地址（离线或未配置）。 */
     val empty: Boolean get() = primary == null
@@ -47,34 +45,27 @@ data class SelectionResult(
 /**
  * 多地址选路（**R7**）——**纯逻辑，零 IO**，JVM 单测覆盖全部判定分支。
  *
- * 判定顺序与 plan 4.5 一致：
+ * **口径（2026-10-25 用户要求）**：先内网后外网。
  * 1. **网络能力**：离线 → [SelectionReason.OFFLINE]，不再往下走；
- * 2. **规则**：按"具体度"（SSID > 网段 > 传输类型）挑出第一条匹配的 [NetworkRule]，
- *    命中后按 [NetworkRule.prefer] 排序（LAN 优先或 WAN 优先），**不竞速**
- *    （plan 4.5：有规则命中就不必竞速）；
- * 3. **无规则**：按 `priority` 降序 + `id` 升序给出候选，并置 [SelectionResult.needsRace]
- *    （多地址时）交给 [RaceProbe] 并行探测；
- * 4. **协议握手**：本类不做——真正的决定权在协议握手，调用方对 [SelectionResult.ordered]
- *    逐个（或竞速）握手，失败的顺延到下一个。
- *
- * 排序稳定性：同一优先级下按 [SelectableAddress.id] 升序，保证结果可复现（单测依赖这一点）。
+ * 2. **排序**：该连接偏好的网络（默认局域网）的地址全部排在前面，另一条网络的地址排在后面；
+ *    同一条网络内仍按人工 `priority` 降序 + `id` 升序，保证结果可复现；
+ * 3. **兜底**：[SelectionResult.hasFallback] 为真时，调用方用 [AddressFallbackProbe]
+ *    依次探测（首选不通就自动换下一个），不再按 Wi-Fi / 蜂窝 / SSID / 本机网段配置规则；
+ * 4. **协议握手**：本类不做——真正的决定权仍在协议握手，失败的顺延到下一个。
  */
 object AddressSelector {
-
-    /** TCP 竞速的默认超时（plan 4.5：1.5 s）。 */
-    const val DEFAULT_RACE_TIMEOUT_MS: Long = 1_500L
 
     /**
      * 选路主入口。
      *
      * @param addresses 该连接的全部地址（顺序无关）。
      * @param context 当前网络现场（来自 :app 的网络监听）。
-     * @param rules 该连接的选路规则（顺序 = 用户录入顺序；同具体度时先录入者优先）。
+     * @param prefer 该连接偏好的网络；默认局域网（先内网后外网）。
      */
     fun select(
         addresses: List<SelectableAddress>,
         context: NetworkContext,
-        rules: List<NetworkRule> = emptyList(),
+        prefer: AddressLabel = AddressLabel.LAN,
     ): SelectionResult {
         if (addresses.isEmpty()) {
             return SelectionResult(
@@ -82,7 +73,8 @@ object AddressSelector {
                 ordered = emptyList(),
                 reason = SelectionReason.NO_ADDRESS,
                 explanation = SelectionReason.NO_ADDRESS.zhText,
-                needsRace = false,
+                hasFallback = false,
+                preferred = prefer,
             )
         }
         // ① 网络能力
@@ -92,68 +84,57 @@ object AddressSelector {
                 ordered = emptyList(),
                 reason = SelectionReason.OFFLINE,
                 explanation = SelectionReason.OFFLINE.zhText + "（" + context.capability.zhText + "）",
-                needsRace = false,
+                hasFallback = false,
+                preferred = prefer,
             )
         }
-        // ② 规则
-        val rule = matchRule(context, rules)
-        if (rule != null) {
-            val ordered = sortByPreference(addresses, rule.prefer)
-            return SelectionResult(
-                primary = ordered.first(),
-                ordered = ordered,
-                reason = SelectionReason.RULE_MATCHED,
-                explanation = "命中规则：" + rule.display + "，首选 " + ordered.first().display,
-                needsRace = false,
-                matchedRule = rule,
-            )
+        // ② 先内网后外网（或反过来，按该连接的偏好）
+        val ordered = sortByPreferredLabel(addresses, prefer)
+        val first = ordered.first()
+        val other = prefer.other()
+        val otherCount = ordered.count { it.label == other }
+        val reason = if (ordered.size == 1) SelectionReason.SINGLE_ADDRESS else SelectionReason.PREFERRED_FIRST
+        val explanation = when {
+            ordered.size == 1 -> "只有一个地址 " + first.label.zhText + " " + first.display
+            otherCount > 0 -> orderText(prefer) + "：首选 " + first.label.zhText + " " + first.display +
+                "；连不上会自动改用" + other.zhText + "（" + otherCount + " 个）"
+            else -> orderText(prefer) + "：首选 " + first.label.zhText + " " + first.display +
+                "（没有另一条网络的地址）"
         }
-        // ③ 无规则 → 人工优先级排序 + 竞速信号
-        val ordered = sortByPriority(addresses)
-        val multi = ordered.size > 1
         return SelectionResult(
-            primary = ordered.first(),
+            primary = first,
             ordered = ordered,
-            reason = if (multi) SelectionReason.NEEDS_RACE else SelectionReason.SINGLE_ADDRESS,
-            explanation = if (multi) {
-                "未命中规则：" + ordered.size + " 个地址按优先级排序，需并行竞速（TCP " +
-                    DEFAULT_RACE_TIMEOUT_MS + " ms）"
-            } else {
-                "未命中规则：只有一个地址 " + ordered.first().display
-            },
-            needsRace = multi,
+            reason = reason,
+            explanation = explanation,
+            hasFallback = ordered.size > 1,
+            preferred = prefer,
         )
     }
 
     /**
-     * 挑出命中的规则：三个条件（传输类型 / SSID / 网段）全部满足才算命中；
-     * 多条命中时取 [NetworkRule.specificity] 最大者，同分取先录入者。
+     * 按"优选网络优先，其次人工优先级降序，最后 id 升序"排序。
+     *
+     * 注意：**不是**优先级数字大就能压过网络偏好——用户的口径是"先内网后外网"，
+     * 公网地址优先级再高也只排在内网之后；同一网络内部的先后才看优先级。
      */
-    fun matchRule(context: NetworkContext, rules: List<NetworkRule>): NetworkRule? = rules
-        .filter { matches(it, context) }
-        .maxByOrNull { it.specificity }
+    fun sortByPreferredLabel(
+        addresses: List<SelectableAddress>,
+        prefer: AddressLabel,
+    ): List<SelectableAddress> = addresses.sortedWith(
+        compareBy<SelectableAddress> { if (it.label == prefer) 0 else 1 }
+            .thenByDescending { it.priority }
+            .thenBy { it.id },
+    )
 
-    /** 单条规则是否命中当前网络。 */
-    fun matches(rule: NetworkRule, context: NetworkContext): Boolean {
-        if (rule.transport != null && rule.transport != context.capability) return false
-        if (!rule.ssidPattern.isNullOrBlank() && !NetworkRuleMatch.matchesSsid(rule.ssidPattern, context.ssid)) {
-            return false
-        }
-        if (!rule.localSubnet.isNullOrBlank() && !NetworkRuleMatch.matchesSubnet(rule.localSubnet, context.localSubnets)) {
-            return false
-        }
-        return true
+    /** 「先内网后外网」/「先外网后内网」的中文说法。 */
+    fun orderText(prefer: AddressLabel): String = when (prefer) {
+        AddressLabel.LAN -> "先内网后外网"
+        AddressLabel.WAN -> "先外网后内网"
     }
 
-    /** 按"偏好标签优先，其次人工优先级降序，最后 id 升序"排序。 */
-    fun sortByPreference(addresses: List<SelectableAddress>, prefer: AddressLabel): List<SelectableAddress> =
-        addresses.sortedWith(
-            compareBy<SelectableAddress> { if (it.label == prefer) 0 else 1 }
-                .thenByDescending { it.priority }
-                .thenBy { it.id },
-        )
-
-    /** 纯人工优先级排序（无规则时用）。 */
-    fun sortByPriority(addresses: List<SelectableAddress>): List<SelectableAddress> =
-        addresses.sortedWith(compareByDescending<SelectableAddress> { it.priority }.thenBy { it.id })
+    /** 另一条网络。 */
+    private fun AddressLabel.other(): AddressLabel = when (this) {
+        AddressLabel.LAN -> AddressLabel.WAN
+        AddressLabel.WAN -> AddressLabel.LAN
+    }
 }

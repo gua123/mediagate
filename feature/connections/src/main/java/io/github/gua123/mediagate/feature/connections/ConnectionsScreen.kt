@@ -73,7 +73,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.gua123.mediagate.core.network.AddressLabel
-import io.github.gua123.mediagate.core.network.NetworkCapability
 import io.github.gua123.mediagate.core.network.ProtocolKind
 
 /**
@@ -135,8 +134,6 @@ fun ConnectionsScreen(
             onAddAddress = viewModel::addAddress,
             onAddPairedAddress = viewModel::addPairedAddress,
             onRemoveAddress = viewModel::removeAddress,
-            onAddRule = viewModel::addRule,
-            onRemoveRule = viewModel::removeRule,
             onTestDraft = viewModel::testDraft,
             localRoot = localRoot,
             onRequestAllFilesAccess = onRequestAllFilesAccess,
@@ -607,7 +604,7 @@ private fun AddressResultRow(result: AddressTestUi) {
 }
 
 /**
- * 连接编辑器（R8）：名称 / 协议 / 多地址 / 账号密码 / 根路径 / WebDAV 明文开关 / 选路规则。
+ * 连接编辑器（R8）：名称 / 协议 / 多地址 / 账号密码 / 根路径 / WebDAV 明文开关 / 选路（先内网后外网）。
  *
  * 密码框只进不出：已保存过就提示"已保存，留空表示不修改"，输入的新密码保存时立即加密（R6）。
  */
@@ -621,8 +618,6 @@ private fun ConnectionEditorScreen(
     onAddAddress: () -> Unit,
     onAddPairedAddress: (Int) -> Unit,
     onRemoveAddress: (Int) -> Unit,
-    onAddRule: (RuleDraft) -> Unit,
-    onRemoveRule: (Int) -> Unit,
     onTestDraft: () -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
@@ -723,6 +718,15 @@ private fun ConnectionEditorScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            // 本地目录没有内外网之分：不显示选路开关（避免让人以为它也按网络切换）
+            if (draft.protocol != ProtocolKind.LOCAL) {
+                Spacer(modifier = Modifier.height(16.dp))
+                RoutingSection(
+                    prefer = draft.prefer,
+                    onChange = { onDraftChange(draft.withPrefer(it)) },
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             Text(stringResource(R.string.connections_section_credentials), style = MaterialTheme.typography.titleSmall)
             Spacer(modifier = Modifier.height(8.dp))
@@ -807,13 +811,6 @@ private fun ConnectionEditorScreen(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            RulesSection(
-                rules = draft.rules,
-                onAdd = onAddRule,
-                onRemove = onRemoveRule,
-            )
 
             Spacer(modifier = Modifier.height(16.dp))
             // 「测试一下」（R8）：用**当前草稿**测，不落库——密码对不对、端口通不通，保存前就知道
@@ -1036,127 +1033,42 @@ private val ConnectionResultPassed = Color(0xFF1B5E20)
 /** 内部存储的标准路径（「使用内部存储」一键填它，配合「所有文件访问」权限使用）。 */
 private const val INTERNAL_STORAGE_PATH = "/storage/emulated/0"
 
-/** 选路规则区（R7）：列出已有规则 + 通过对话框新增。 */
+/**
+ * 选路区（**R7**，2026-10-25 用户要求「按照先内网后外网的规则，将现有的 Wi-Fi 蜂窝网络等替换一下」）。
+ *
+ * 只保留一个开关：优先局域网（默认，先内网后外网）或优先公网（先外网后内网）。
+ * "另一条网络自动兜底"始终生效，不再让用户配 Wi-Fi / 蜂窝 / SSID / 本机网段这类条件。
+ */
 @Composable
-private fun RulesSection(
-    rules: List<RuleDraft>,
-    onAdd: (RuleDraft) -> Unit,
-    onRemove: (Int) -> Unit,
-) {
-    var dialogOpen by remember { mutableStateOf(false) }
-    Text(stringResource(R.string.connections_section_rules), style = MaterialTheme.typography.titleSmall)
+private fun RoutingSection(prefer: AddressLabel, onChange: (AddressLabel) -> Unit) {
+    val lanFirst = prefer == AddressLabel.LAN
+    Text(stringResource(R.string.connections_section_routing), style = MaterialTheme.typography.titleSmall)
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text = stringResource(R.string.connections_rules_hint),
+        text = stringResource(R.string.connections_routing_hint),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(modifier = Modifier.height(8.dp))
-    rules.forEachIndexed { index, rule ->
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Switch(
+            checked = lanFirst,
+            onCheckedChange = { onChange(if (it) AddressLabel.LAN else AddressLabel.WAN) },
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
             Text(
-                text = rule.toNetworkRule().display,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f),
+                text = stringResource(
+                    if (lanFirst) R.string.connections_routing_lan_first else R.string.connections_routing_wan_first,
+                ),
+                style = MaterialTheme.typography.bodyMedium,
             )
-            IconButton(onClick = { onRemove(index) }) {
-                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.connections_action_remove_rule))
-            }
+            Text(
+                text = stringResource(R.string.connections_routing_fallback),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
-    OutlinedButton(onClick = { dialogOpen = true }) {
-        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(stringResource(R.string.connections_action_add_rule))
-    }
-    if (dialogOpen) {
-        RuleDialog(
-            onDismiss = { dialogOpen = false },
-            onConfirm = { rule ->
-                dialogOpen = false
-                onAdd(rule)
-            },
-        )
-    }
 }
 
-/** 新增选路规则的对话框（R7：传输类型 / SSID / 本机网段 + 偏好 LAN 或 WAN）。 */
-@Composable
-private fun RuleDialog(onDismiss: () -> Unit, onConfirm: (RuleDraft) -> Unit) {
-    var preferLan by remember { mutableStateOf(true) }
-    var transport by remember { mutableStateOf<NetworkCapability?>(null) }
-    var ssid by remember { mutableStateOf("") }
-    var subnet by remember { mutableStateOf("") }
-    var transportOpen by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.connections_rule_dialog_title)) },
-        text = {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = preferLan, onCheckedChange = { preferLan = it })
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        stringResource(
-                            if (preferLan) R.string.connections_rule_prefer_lan else R.string.connections_rule_prefer_wan,
-                        ),
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Box {
-                    OutlinedButton(onClick = { transportOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(transport?.zhText ?: stringResource(R.string.connections_rule_any_transport))
-                    }
-                    DropdownMenu(expanded = transportOpen, onDismissRequest = { transportOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.connections_rule_any_transport)) },
-                            onClick = { transportOpen = false; transport = null },
-                        )
-                        NetworkCapability.entries.forEach { capability ->
-                            DropdownMenuItem(
-                                text = { Text(capability.zhText) },
-                                onClick = { transportOpen = false; transport = capability },
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = ssid,
-                    onValueChange = { ssid = it },
-                    label = { Text(stringResource(R.string.connections_rule_ssid)) },
-                    supportingText = { Text(stringResource(R.string.connections_rule_ssid_hint)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = subnet,
-                    onValueChange = { subnet = it },
-                    label = { Text(stringResource(R.string.connections_rule_subnet)) },
-                    supportingText = { Text(stringResource(R.string.connections_rule_subnet_hint)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    onConfirm(
-                        RuleDraft(
-                            transport = transport,
-                            ssidPattern = ssid.trim(),
-                            localSubnet = subnet.trim(),
-                            prefer = if (preferLan) AddressLabel.LAN else AddressLabel.WAN,
-                        ),
-                    )
-                },
-            ) { Text(stringResource(R.string.connections_rule_add)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.connections_cancel)) }
-        },
-    )
-}

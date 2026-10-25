@@ -2,15 +2,16 @@ package io.github.gua123.mediagate.feature.connections
 
 import io.github.gua123.mediagate.core.database.AddressEntity
 import io.github.gua123.mediagate.core.database.ConnectionEntity
-import io.github.gua123.mediagate.core.database.NetworkRuleEntity
 import io.github.gua123.mediagate.core.network.AddressLabel
-import io.github.gua123.mediagate.core.network.NetworkCapability
-import io.github.gua123.mediagate.core.network.NetworkRule
 import io.github.gua123.mediagate.core.network.ProtocolKind
 import io.github.gua123.mediagate.core.network.SelectableAddress
 
 /**
  * 界面用的连接记录（**R8**）：把 `connection` + `address` + `network_rule` 三张表拼成一个不可变快照。
+ *
+ * [prefer] 是**优先网络**（R7，2026-10-25 起）——默认局域网 = 先内网后外网；
+ * 数据库里仍沿用 `network_rule.prefer` 这一列（表结构不迁移），但不再使用
+ * 传输类型 / SSID / 本机网段这些旧条件。
  *
  * [protocol] 允许为 null：数据库里存的是字符串，将来若升级出未知协议，界面照原样显示 [protocolId]，
  * **不猜**成别的协议（错了会引导用户点错按钮）。
@@ -28,7 +29,7 @@ data class ConnectionRecord(
     val lastWorkingAddressId: Long?,
     val lastCheckedAt: Long?,
     val addresses: List<AddressRecord>,
-    val rules: List<RuleRecord>,
+    val prefer: AddressLabel = AddressLabel.LAN,
 ) {
 
     /** 协议展示名（未知协议显示原始字符串）。 */
@@ -45,9 +46,6 @@ data class ConnectionRecord(
 
     /** 交给选路逻辑的地址列表（R7）。 */
     fun selectableAddresses(): List<SelectableAddress> = addresses.map { it.toSelectable() }
-
-    /** 交给选路逻辑的规则列表（R7）。 */
-    fun networkRules(): List<NetworkRule> = rules.map { it.toNetworkRule() }
 }
 
 /** 界面用的地址记录（**R7** 多地址）。 */
@@ -75,28 +73,6 @@ data class AddressRecord(
     )
 }
 
-/** 界面用的规则记录（**R7**）。 */
-data class RuleRecord(
-    val id: Long,
-    val connectionId: Long,
-    val transport: NetworkCapability?,
-    val ssidPattern: String?,
-    val localSubnet: String?,
-    val prefer: AddressLabel,
-) {
-
-    fun toNetworkRule(): NetworkRule = NetworkRule(
-        id = id,
-        transport = transport,
-        ssidPattern = ssidPattern,
-        localSubnet = localSubnet,
-        prefer = prefer,
-    )
-
-    /** 中文摘要（列表里展示）。 */
-    val display: String get() = toNetworkRule().display
-}
-
 /** `connection` 行 → 记录（不含地址与规则，由仓储拼装）。 */
 internal fun ConnectionEntity.toRecordBase(): ConnectionRecord = ConnectionRecord(
     id = id,
@@ -111,7 +87,7 @@ internal fun ConnectionEntity.toRecordBase(): ConnectionRecord = ConnectionRecor
     lastWorkingAddressId = lastWorkingAddressId,
     lastCheckedAt = lastCheckedAt,
     addresses = emptyList(),
-    rules = emptyList(),
+    prefer = AddressLabel.LAN,
 )
 
 /** `address` 行 → 记录（**R7**：label 字符串容错成枚举）。 */
@@ -123,14 +99,4 @@ internal fun AddressEntity.toRecord(): AddressRecord = AddressRecord(
     host = host,
     port = port,
     priority = priority,
-)
-
-/** `network_rule` 行 → 记录（**R7**）。 */
-internal fun NetworkRuleEntity.toRecord(): RuleRecord = RuleRecord(
-    id = id,
-    connectionId = connectionId,
-    transport = transport?.let { NetworkCapability.fromId(it) },
-    ssidPattern = ssidPattern,
-    localSubnet = localSubnet,
-    prefer = AddressLabel.fromId(prefer),
 )

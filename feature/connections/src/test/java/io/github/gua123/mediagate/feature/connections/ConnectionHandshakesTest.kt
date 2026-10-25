@@ -135,6 +135,5 @@ class ConnectionHandshakesTest {
         lastWorkingAddressId = null,
         lastCheckedAt = null,
         addresses = emptyList(),
-        rules = emptyList(),
     )
 }

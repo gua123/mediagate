@@ -1,7 +1,7 @@
 package io.github.gua123.mediagate.core.network
 
 /**
- * 当前网络能力（**R7**：按网络自动选地址；plan 4.5 判定顺序的第一环"网络能力"）。
+ * 当前网络能力（**R7**：判定顺序的第一环"网络能力"；2026-10-25 起选路不再看传输类型）。
  *
  * [UNKNOWN] 不是"没有网络"，而是"拿不到传输类型"（例如仅 VPN、或系统没给权限）；
  * 是否在线看 [NetworkContext.online]。
@@ -29,7 +29,7 @@ enum class NetworkCapability(val id: String, val zhText: String) {
  *
  * @param capability 传输类型（Wi-Fi / 蜂窝 / 以太网 / VPN / 未知）。
  * @param ssid 当前 Wi-Fi 名称；**没有定位权限时 Android 会返回 `<unknown ssid>`，
- *   这里统一归一成 null**（R6 不额外要权限，规则会退化为按网段/传输类型匹配）。
+ *   这里统一归一成 null**（R6 不额外要权限；只用于展示，不再参与选路规则）。
  * @param localSubnets 本机网段（CIDR 或 IP/前缀长度，如 `192.168.1.0/24`、`192.168.1.10/24`）。
  * @param online 是否有可用网络（`NetworkCapabilities.NET_CAPABILITY_INTERNET` + 已验证）。
  * @param revision 网络变化计数：每次 `NetworkCallback` 回调 +1，用于让缓存（60 s）立即失效。

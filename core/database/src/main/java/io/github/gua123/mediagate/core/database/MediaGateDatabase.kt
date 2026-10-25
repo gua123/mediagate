@@ -59,16 +59,18 @@ data class AddressEntity(
 )
 
 /**
- * 选路规则（**R7**，plan 第 7 章 `network_rule` 表）。
+ * 选路设置（**R7**，plan 第 7 章 `network_rule` 表；**2026-10-25 用户要求「先内网后外网」后简化**）。
  *
- * 一条规则 = 传输类型 / SSID / 本机网段的组合条件 + 偏好标签：
- * 家里的 Wi-Fi（SSID 或 192.168.1.x 网段）走 LAN 地址，蜂窝网络走公网域名。
- * 三个条件都为 null 表示"任意网络都偏好 [prefer]"。
+ * 现在每条连接只写**一条**记录、只使用 [prefer]：默认 `LAN`（先内网后外网），
+ * 可切换成 `WAN`（先外网后内网）；"连不上自动换另一条"由 :app 的顺序探测保证。
  *
- * @param transport WIFI / CELLULAR / ETHERNET / VPN / UNKNOWN；null = 任意。
- * @param ssidPattern Wi-Fi 名称匹配（支持 `*` 通配）；null = 任意。
- * @param localSubnet 本机网段匹配（CIDR 或前缀写法）；null = 任意。
- * @param prefer 命中后优先使用的地址标签（LAN / WAN）。
+ * [transport] / [ssidPattern] / [localSubnet] 是**旧版遗留列**：数据库结构保持不动（免迁移），
+ * 读旧数据时只看第一条记录的 [prefer]，新保存时这三个字段一律写 null。
+ *
+ * @param transport 旧条件（WIFI / CELLULAR / …）；新数据不再写。
+ * @param ssidPattern 旧条件（Wi-Fi 名称）；新数据不再写。
+ * @param localSubnet 旧条件（本机网段）；新数据不再写。
+ * @param prefer 优先网络（LAN / WAN），默认 LAN。
  */
 @Entity(
     tableName = "network_rule",
@@ -127,7 +129,7 @@ interface ConnectionDao {
     @Query("UPDATE connection SET lastWorkingAddressId = :addressId, lastCheckedAt = :checkedAt WHERE id = :id")
     suspend fun updateLastChecked(id: Long, addressId: Long?, checkedAt: Long)
 
-    /** 某个连接的选路规则（R7）。 */
+    /** 某个连接的选路设置（R7；2026-10-25 起每条连接只有一条 prefer 记录）。 */
     @Query("SELECT * FROM network_rule WHERE connectionId = :connectionId ORDER BY id")
     suspend fun rulesOf(connectionId: Long): List<NetworkRuleEntity>
 

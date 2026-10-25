@@ -1,8 +1,6 @@
 package io.github.gua123.mediagate.feature.connections
 
 import io.github.gua123.mediagate.core.network.AddressLabel
-import io.github.gua123.mediagate.core.network.NetworkCapability
-import io.github.gua123.mediagate.core.network.NetworkRule
 import io.github.gua123.mediagate.core.network.ProtocolKind
 
 /**
@@ -39,30 +37,12 @@ data class AddressDraft(
     val priorityOrZero: Int get() = priority.trim().toIntOrNull() ?: 0
 }
 
-/** 编辑器里的一条选路规则草稿（**R7**）。 */
-data class RuleDraft(
-    val id: Long = 0L,
-    val transport: NetworkCapability? = null,
-    val ssidPattern: String = "",
-    val localSubnet: String = "",
-    val prefer: AddressLabel = AddressLabel.LAN,
-) {
-
-    /** 展示/选路用的核心模型（空串归一成 null = 不限制）。 */
-    fun toNetworkRule(): NetworkRule = NetworkRule(
-        id = id,
-        transport = transport,
-        ssidPattern = ssidPattern.trim().ifEmpty { null },
-        localSubnet = localSubnet.trim().ifEmpty { null },
-        prefer = prefer,
-    )
-}
-
 /**
  * 连接编辑草稿（**R8**）。
  *
  * @param password 用户**新输入**的明文；空串表示"不修改已保存的密码"（[hasStoredSecret] 为真时界面提示"已保存"）。
  * @param basePath 连接内的根路径（plan 第 7 章 `connection.basePath`）；LOCAL 协议时它是本地目录的绝对路径。
+ * @param prefer 优先网络（**R7**，2026-10-25 用户要求）：默认局域网 = 先内网后外网，连不上自动改用公网。
  */
 data class ConnectionDraft(
     val id: Long? = null,
@@ -74,7 +54,7 @@ data class ConnectionDraft(
     val hasStoredSecret: Boolean = false,
     val allowInsecureHttp: Boolean = true,
     val addresses: List<AddressDraft> = listOf(AddressDraft()),
-    val rules: List<RuleDraft> = emptyList(),
+    val prefer: AddressLabel = AddressLabel.LAN,
 ) {
 
     /** 协议选项写回 `connection.options`（R8）。 */
@@ -138,7 +118,7 @@ val ConnectionDraft.missingNetworkLabel: AddressLabel?
  * 追加一条「**同一台服务器的另一条网络**」地址（**2026-10-24 用户要求**）：
  * 复制第 [index] 个地址的方案 / 端口 / 优先级，标签取反（局域网 ↔ 公网），主机留空让用户填另一条网络。
  *
- * 为什么要这条捷径：同一个连接的多个地址会被当作同一台服务器（缓存共用、按当前网络自动选路），
+ * 为什么要这条捷径：同一个连接的多个地址会被当作同一台服务器（缓存共用、先内网后外网自动选路），
  * 但两条网络只有主机名不同；让用户重新填一遍协议/端口/优先级既啰嗦又容易填错。
  */
 fun ConnectionDraft.withPairedAddress(index: Int): ConnectionDraft {
@@ -153,14 +133,12 @@ fun ConnectionDraft.minusAddress(index: Int): ConnectionDraft {
     return copy(addresses = addresses.toMutableList().also { it.removeAt(index) })
 }
 
-/** 追加一条选路规则（R7）。 */
-fun ConnectionDraft.plusRule(rule: RuleDraft): ConnectionDraft = copy(rules = rules + rule)
-
-/** 删除第 [index] 条选路规则。 */
-fun ConnectionDraft.minusRule(index: Int): ConnectionDraft {
-    if (index !in rules.indices) return this
-    return copy(rules = rules.toMutableList().also { it.removeAt(index) })
-}
+/**
+ * 设置优先网络（**R7**，2026-10-25 用户要求「先内网后外网」）。
+ *
+ * 「连不上自动换另一条」始终生效；这个开关只决定先试哪一条。
+ */
+fun ConnectionDraft.withPrefer(prefer: AddressLabel): ConnectionDraft = copy(prefer = prefer)
 
 /** 各协议的默认传输方案与端口（R2/R8）。 */
 object ProtocolDefaults {

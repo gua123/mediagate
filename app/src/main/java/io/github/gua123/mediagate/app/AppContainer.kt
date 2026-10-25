@@ -35,6 +35,7 @@ import io.github.gua123.mediagate.core.crypto.CredentialCipher
 import io.github.gua123.mediagate.core.crypto.KeystoreCredentialCipher
 import io.github.gua123.mediagate.core.database.MediaGateDatabase
 import io.github.gua123.mediagate.core.model.RemoteEntry
+import io.github.gua123.mediagate.core.network.AddressFallbackProbe
 import io.github.gua123.mediagate.core.network.AddressSelector
 import io.github.gua123.mediagate.core.network.AndroidNetworkMonitor
 import io.github.gua123.mediagate.core.network.NetworkContext
@@ -157,7 +158,7 @@ class AppContainer(context: Context) :
     // 四协议都真正接进 App：本地双模式（R12）、WebDAV、SFTP、FTP —— 见 applyCurrentConnection
 
     /**
-     * 连接/地址/规则三张表的数据库（plan 第 7 章）。
+     * 连接/地址/选路三张表的数据库（plan 第 7 章）。
      *
      * 懒加载：冷启动不做任何数据库 IO，只有进连接页（或选中了某个连接）才建库。
      * 建库时带上 [MediaGateDatabase.MIGRATIONS]，v1 → v2 只是新增 `network_rule` 表，旧数据原样保留。
@@ -191,6 +192,23 @@ class AppContainer(context: Context) :
 
     private val networkMonitor: AndroidNetworkMonitor by networkMonitorLazy
 
+    /**
+     * 选路探测（**R7**，2026-10-25 用户要求「先内网后外网」）：
+     * 首选地址 TCP 不通时自动改用下一条（局域网 → 公网，或按连接偏好反过来）。
+     */
+    private val addressFallbackProbe = AddressFallbackProbe()
+
+    /**
+     * 上一次选路结果（同一条连接 + 同一份网络现场 + 同一组地址时复用，避免每次刷新都探测一遍）。
+     *
+     * 网络变化会让 [NetworkContext.revision] 变，key 自然失效并重新探测；
+     * 连接被编辑（地址/优先网络变化）也会让 key 变化。
+     */
+    private var lastAddressChoice: AddressChoiceCache? = null
+
+    /** @param key 选路输入指纹（连接 + 网络现场 + 地址）。 */
+    private data class AddressChoiceCache(val key: String, val address: SelectableAddress?)
+
     /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
     val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
 
@@ -214,7 +232,7 @@ class AppContainer(context: Context) :
             if (record == null) {
                 SettingsConnectionUi()
             } else {
-                val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
+                val selection = AddressSelector.select(record.selectableAddresses(), network, record.prefer)
                 SettingsConnectionUi(
                     name = record.name,
                     protocolText = record.protocolText,
@@ -1480,8 +1498,8 @@ class AppContainer(context: Context) :
     /**
      * 把「当前连接」落成实际后端（**R8** + **R7**）。
      *
-     * - **WEBDAV**：用 [AddressSelector] 在当前网络下选地址（命中规则就用规则偏好的，
-     *   否则按优先级取首选），解密密码后构造 [WebDavStorageBackend]；
+     * - **WEBDAV**：用 [AddressSelector] 先内网后外网选地址（局域网不通自动换公网），
+     *   解密密码后构造 [WebDavStorageBackend]；
      * - **SFTP**：同一条选路 + Keystore 解密密码 + TOFU 主机密钥校验（[sftpHostKeys]）；
      * - **FTP**：同一条选路，`connection.tls` 决定明文 / 显式 FTPS / 隐式 FTPS；
      * - **LOCAL**：不建远端后端，改为把连接里的目录写回 [RootSettings]（SAF 树 URI 或绝对路径），
@@ -1515,20 +1533,48 @@ class AppContainer(context: Context) :
     }
 
     /**
-     * 选路（**R7**）：当前网络下该连接的首选地址。
+     * 选路（**R7**）：当前网络下该连接要用的地址。
+     *
+     * **2026-10-25 用户要求「先内网后外网」**：先按「优先网络 → 同网络优先级」排好序，
+     * 再依次 TCP 探测（1.5 s 上限）；局域网不通会自动改用公网，不再依赖 Wi-Fi / 蜂窝这类规则。
+     *
+     * 同一条连接 + 同一份网络现场 + 同一组地址的结果会缓存（[lastAddressChoice]）：
+     * 网络变化时 revision 变、连接被编辑时地址/偏好变，key 自然失效——不会每次刷新都探测。
      *
      * 没有可用地址时给一条中文提示（界面弹 Snackbar），调用方随后回落到本地根目录——
      * 比起"悄悄什么都不做"，用户至少知道为什么目录还是本地那套。
      */
-    private fun selectAddress(record: ConnectionRecord, network: NetworkContext): SelectableAddress? {
-        val selection = AddressSelector.select(record.selectableAddresses(), network, record.networkRules())
-        val address = selection.primary
-        if (address == null) {
+    private suspend fun selectAddress(record: ConnectionRecord, network: NetworkContext): SelectableAddress? {
+        val selection = AddressSelector.select(record.selectableAddresses(), network, record.prefer)
+        val primary = selection.primary
+        if (primary == null) {
             AppLog.w(TAG, "连接 " + record.name + " 当前没有可用地址（" + selection.explanation + "）")
             _remoteNotice.value = "连接「" + record.name + "」当前没有可用地址：" + selection.explanation
+            return null
         }
-        return address
+
+        val key = addressChoiceKey(record, network)
+        lastAddressChoice?.takeIf { it.key == key }?.let { return it.address }
+
+        val choice = addressFallbackProbe.choose(selection.ordered)
+        val chosen = choice.address ?: primary
+        if (choice.usedFallback) {
+            AppLog.i(
+                TAG,
+                "先内网后外网：连接 " + record.name + " 的首选 " + primary.display +
+                    " 不通，已自动改用 " + chosen.display,
+            )
+        }
+        lastAddressChoice = AddressChoiceCache(key, chosen)
+        return chosen
     }
+
+    /** 选路输入指纹：连接 + 网络现场 + 地址组；任何一项变了都要重新探测。 */
+    private fun addressChoiceKey(record: ConnectionRecord, network: NetworkContext): String =
+        record.id.toString() + "#" + network.revision + "#" + record.prefer.id + "#" +
+            record.addresses.joinToString(",") {
+                it.id.toString() + ":" + it.label.id + ":" + it.scheme + "://" + it.host + ":" + it.port
+            }
 
     /**
      * 远端后端的统一收尾（WebDAV / SFTP / FTP 共用）：换根、关旧、发布、启动自检。

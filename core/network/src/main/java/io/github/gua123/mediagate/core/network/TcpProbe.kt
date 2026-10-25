@@ -89,7 +89,7 @@ data class TcpProbeResult(
 }
 
 /**
- * TCP 连通性探测（**R7** 竞速 / **R8** 三段计时的前两段）——DNS 与 TCP 分开计时。
+ * TCP 连通性探测（**R7** 先内网后外网的顺序探测 / **R8** 三段计时的前两段）——DNS 与 TCP 分开计时。
  *
  * 为什么把 DNS 单独拎出来：`Socket.connect(host, port)` 内部会先解析域名再连接，
  * 拿不到"DNS 用掉多少"，而 plan 4.5 明确要求三段耗时。这里的做法是
@@ -208,7 +208,7 @@ class TcpProbe(
         t.javaClass.simpleName + (t.message?.takeIf { it.isNotBlank() }?.let { ": " + it } ?: "")
 
     companion object {
-        /** plan 4.5：无规则时并行竞速的 TCP 超时 1.5 s。 */
+        /** plan 4.5 口径：选路探测的 TCP 超时 1.5 s（先内网后外网时每个候选的预算）。 */
         const val DEFAULT_TIMEOUT_MS: Long = 1_500L
 
         /** 每次尝试至少给 1 ms（避免预算耗尽后传 0 变成无限等待）。 */

@@ -43,7 +43,6 @@ class ConnectionBackendsTest {
         lastWorkingAddressId = null,
         lastCheckedAt = null,
         addresses = listOf(AddressRecord(7L, 3L, AddressLabel.LAN, "sftp", "192.168.1.10", 2222, 0)),
-        rules = emptyList(),
     )
 
     // ------------------------------------------------------------------ SFTP
