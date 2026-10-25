@@ -33,10 +33,10 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.81：修复清空缓存后播放一直转圈——清空时作废旧的段下载任务（旧任务可能已卡死，
-        // 新播放 join 上去会永远等不到字节、也没有网络流量）。
-        versionCode = 82
-        versionName = "0.1.81"
+        // 0.1.82：缓存按 nPlayer 借鉴方案 A 改造（访问 LRU + 自适应预读 + 统计），
+        // 硬解保持默认、增加常见编码覆盖诊断；不做按编码器面板/渲染器切换。
+        versionCode = 83
+        versionName = "0.1.82"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

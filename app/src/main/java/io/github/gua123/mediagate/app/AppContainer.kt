@@ -843,6 +843,36 @@ class AppContainer(context: Context) :
      */
     fun videoSessionDiagnostic(): String = videoSession.diagnostic()
 
+    /**
+     * **缓存自述**（2026-10-25 缓存改造）：命中/请求、下载字节、最近吞吐、段大小与预读。
+     *
+     * 与 [videoSessionDiagnostic] 一起摆进设置页诊断卡——用户截图就能回答
+     * "是缓存命中低，还是网络慢"，不必靠猜。
+     */
+    /** 常见视频编码的硬解覆盖自述（真机诊断；不做开关）。 */
+    fun codecDiagnostic(): String = CodecCoverage.summary()
+
+    fun cacheDiagnostic(): String {
+        val cache = remoteCache ?: return "缓存：未启用（当前为本地目录或已关闭）"
+        val stats = cache.stats()
+        val requests = stats.segmentHits + stats.segmentMisses
+        val hitRate = stats.hitRate?.let { String.format(java.util.Locale.US, "%.0f%%", it * 100.0) } ?: "—"
+        val downloadedMb = stats.downloadedBytes / (1024.0 * 1024.0)
+        val throughputMb = stats.recentThroughputBytesPerSec / (1024.0 * 1024.0)
+        val tuning = networkTuning.tuning.value
+        return String.format(
+            java.util.Locale.US,
+            "缓存：命中 %d/%d（%s）· 下载 %.1f MB · 最近 %.2f MB/s · 段 %.0f MB · 预读 %d 段",
+            stats.segmentHits,
+            requests,
+            hitRate,
+            downloadedMb,
+            throughputMb,
+            tuning.segmentBytes / (1024.0 * 1024.0),
+            tuning.readAheadSegments,
+        )
+    }
+
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {
 
@@ -970,6 +1000,9 @@ class AppContainer(context: Context) :
         /** 上一个做窗口预取时的位置（0 = 还没发过）；每个文件一份。 */
         private var lastWindowPositionMs = 0L
 
+        /** 上一次采样到的播放位置：用来识别"刚 seek 过"（回拖或前进超过 30 秒）。 */
+        private var lastObservedPositionMs = 0L
+
         /** 已经预热过"下一集"的那个文件（每个文件只预热一次）。 */
         private var nextEpisodeWarmedPath: String? = null
 
@@ -982,25 +1015,40 @@ class AppContainer(context: Context) :
         override fun prefetchAhead(path: String, positionMs: Long, durationMs: Long) {
             val cache = remoteCache ?: return
             if (lastWarmedPath != path) {
-                // 换文件：窗口与"下一集已预热"都重新开始
+                // 换文件：窗口、seek 检测与"下一集已预热"都重新开始
                 lastWarmedPath = path
                 lastWindowPositionMs = 0L
+                lastObservedPositionMs = 0L
             }
             val segment = networkTuning.tuning.value.segmentBytes
+            val seeked = lastObservedPositionMs > 0L &&
+                (positionMs < lastObservedPositionMs || positionMs - lastObservedPositionMs > 30_000L)
+            lastObservedPositionMs = positionMs
+            val cap = networkTuning.tuning.value.readAheadSegments
             ioScope.launch {
                 runCatching {
                     val size = cache.knownSizeOf(path)
+                    // 2026-10-25：用户设置的预读段数是上限；自适应只能收缩（弱网/刚 seek 时少抓）
+                    val ahead = AdaptiveReadAhead.segments(
+                        throughputBytesPerSec = cache.recentThroughputBytesPerSec(),
+                        seekedRecently = seeked,
+                        capSegments = cap,
+                    )
                     val window = PrefetchWindow.decide(
                         positionMs = positionMs,
                         durationMs = durationMs,
                         size = size,
                         segmentBytes = segment,
                         lastWindowPositionMs = lastWindowPositionMs,
+                        aheadSegments = ahead,
                     )
                     if (window != null) {
                         lastWindowPositionMs = positionMs
-                        AppLog.i(TAG, "滑窗预取 @" + (positionMs / 1000) + "s：" + path)
-                        // 一次 4 段、两个连接并发拉：高延迟链路上把往返藏起来（2026-10-20）
+                        AppLog.i(
+                            TAG,
+                            "滑窗预取 @" + (positionMs / 1000) + "s：" + path + "（" + ahead + " 段，自适应）",
+                        )
+                        // 两个连接并发拉：高延迟链路上把往返藏起来（2026-10-20）
                         cache.prefetchParallel(path, offset = window.offset, length = window.length, concurrency = 2)
                     }
                     // 下一集预热（P1.7）：播到 80% 时只抓下一集的头尾——连播切集几乎瞬时

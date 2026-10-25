@@ -302,6 +302,47 @@ class SegmentedCacheBackendTest {
     }
 
     @Test
+    fun `命中缓存会刷新 LRU，热段不会被冷段先淘汰`() = runTest {
+        val cache = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, mutableListOf()),
+            rootDir = tmp.newFolder(),
+            segmentBytes = segment,
+            maxBytes = 2L * segment,
+            io = Dispatchers.Unconfined,
+        )
+        suspend fun readOnce(path: String) {
+            cache.openRead(path, offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        }
+        readOnce("/hot.ts")
+        readOnce("/cold.ts")
+        // 再读一次 hot：按"下载时间"它会比 cold 旧；按访问 LRU 它应该比 cold 新
+        readOnce("/hot.ts")
+        readOnce("/third.ts")
+
+        val paths = cache.cachedFiles().mapNotNull { it.path }.toSet()
+        assertTrue("刚读过的 hot 应保留，实际：$paths", "/hot.ts" in paths)
+        assertFalse("最久没读的 cold 应被淘汰，实际：$paths", "/cold.ts" in paths)
+        assertTrue("新读的 third 应保留，实际：$paths", "/third.ts" in paths)
+    }
+
+    @Test
+    fun `统计能区分冷读与命中`() = runTest {
+        val cache = backend()
+        assertEquals("刚创建时没有任何访问", 0L, cache.stats().segmentHits)
+        cache.openRead("/movie.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        val cold = cache.stats()
+        assertTrue("冷读至少一次 miss：$cold", cold.segmentMisses >= 1L)
+        assertTrue("冷读应有下载字节：$cold", cold.downloadedBytes > 0L)
+        assertTrue("吞吐样本应为正：$cold", cold.recentThroughputBytesPerSec > 0L)
+
+        cache.openRead("/movie.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+        val warm = cache.stats()
+        assertTrue("第二次应命中：$warm", warm.segmentHits >= 1L)
+        assertEquals("下载请求不应随命中增长", cold.downloadRequests, warm.downloadRequests)
+        assertTrue("命中率应在 0..1：${warm.hitRate}", (warm.hitRate ?: 0.0) in 0.0..1.0)
+    }
+
+    @Test
     fun `清空缓存会作废清空前启动的段任务，而不是让新播放跟着一起等`() = runBlocking<Unit> {
         // 2026-10-25 用户真机：清空缓存后播放一直转圈、网络带宽完全不占用。
         // 旧实现只删 .seg，不动 in-flight 任务——新播放 join 到旧任务上，永远等不到字节。
