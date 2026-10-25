@@ -302,6 +302,38 @@ class SegmentedCacheBackendTest {
     }
 
     @Test
+    fun `清空缓存会作废清空前启动的段任务，而不是让新播放跟着一起等`() = runBlocking<Unit> {
+        // 2026-10-25 用户真机：清空缓存后播放一直转圈、网络带宽完全不占用。
+        // 旧实现只删 .seg，不动 in-flight 任务——新播放 join 到旧任务上，永远等不到字节。
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val cache = SegmentedCacheBackend(
+            delegate = BlockingBackend(payload, started, release),
+            rootDir = tmp.newFolder(),
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.IO,
+        )
+        val oldRead = async(Dispatchers.IO) {
+            runCatching {
+                cache.openRead("/movie.ts", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+            }
+        }
+        withTimeout(2_000L) { started.await() }
+        cache.clearAll()
+        val first = withTimeout(2_000L) { oldRead.await() }
+        assertTrue("旧读必须被清空作废，不能一直等：$first", first.isFailure)
+
+        // 放行旧任务，让它自行收尾；新读用新代际的临时文件，应该正常拿到数据
+        release.complete(Unit)
+        val buffer = ByteArray(8)
+        val read = cache.openRead("/movie.ts", offset = 0L, length = 8L).use { it.read(buffer, 0, 8) }
+        assertEquals(8, read)
+        assertArrayEquals(payload.copyOfRange(0, 8), buffer)
+        oldRead.await()
+    }
+
+    @Test
     fun `length 按请求长度或文件剩余量计算`() = runTest {
         val cache = backend()
         assertEquals(64L, cache.openRead("/movie.ts", offset = 0L, length = 64L).length)
@@ -445,6 +477,55 @@ class SegmentedCacheBackendTest {
         assertEquals("最终能读到整段", segmentSize, total)
         assertEquals("读完接 EOF", -1, withTimeout(3_000) { stream.read(ByteArray(16), 0, 16) })
         stream.close()
+    }
+
+    /** 第一段下载会卡在 [release] 上；用来模拟"清空缓存时旧任务还在等网络"。 */
+    private class BlockingBackend(
+        private val payload: ByteArray,
+        private val started: CompletableDeferred<Unit>,
+        private val release: CompletableDeferred<Unit>,
+    ) : StorageBackend {
+
+        override val id: String = "fake-blocking:/root"
+
+        override val caps: Caps = Caps(randomAccess = false, maxParallelReads = 1)
+
+        override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+
+        override suspend fun stat(path: String): RemoteEntry =
+            RemoteEntry(name = path.substringAfterLast('/'), path = path, size = payload.size.toLong(), mtime = 1L)
+
+        override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+            return object : RangeStream {
+                private var cursor = offset
+                override val length: Long = payload.size.toLong() - offset
+
+                override suspend fun read(buf: ByteArray, off: Int, len: Int): Int {
+                    started.complete(Unit)
+                    release.await()
+                    if (cursor >= payload.size) return -1
+                    val count = minOf(len.toLong(), payload.size - cursor).toInt()
+                    if (count <= 0) return -1
+                    System.arraycopy(payload, cursor.toInt(), buf, off, count)
+                    cursor += count
+                    return count
+                }
+
+                override suspend fun seek(position: Long) {
+                    cursor = offset + position
+                }
+
+                override fun position(): Long = cursor - offset
+
+                override fun close() = Unit
+            }
+        }
+
+        override suspend fun write(path: String, data: InputStream) = Unit
+
+        override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+
+        override fun close() = Unit
     }
 
     private class FakeSequentialBackend(
