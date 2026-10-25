@@ -858,7 +858,8 @@ private fun SettingsRoute(
                     breadcrumbs = breadcrumbs,
                     // 自研引擎自检（2026-10-14）：真机上一眼确认"原生库加载成功 + 用的是哪套 FFmpeg"
                     // 2026-10-15 再加一行探针结论：本机能不能跑自研引擎、哪一步没通过（独立进程测的）
-                    engineInfo = container.videoSessionDiagnostic(),
+                    engineInfo = container.videoSessionDiagnostic() + "\n" +
+                        container.codecDiagnostic() + "\n" + container.cacheDiagnostic(),
                     playbackMetrics = playbackMetrics,
                     onClear = {
                         container.clearCrashes()

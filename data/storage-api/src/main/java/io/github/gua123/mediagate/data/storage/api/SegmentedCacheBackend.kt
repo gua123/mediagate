@@ -22,6 +22,8 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 分段缓存（**plan 4.1 降级链的第二级**）：把远端文件按固定大小的段落到本地，
@@ -90,6 +92,23 @@ class SegmentedCacheBackend(
      */
     @Volatile
     private var epoch: Long = 0L
+
+    /**
+     * 段访问顺序（**LRU 修正，2026-10-25**）：以前只看段文件 mtime，而命中缓存时从不更新 mtime
+     * （只有下载时更新），于是"刚看过的段"和"很久没看的段"在 LRU 眼里一样旧，热缓存可能被误淘汰。
+     *
+     * 这里用进程内单调序号记录最近访问；重启后没有记录的段按"最旧"处理（合理：这一轮还没读过它）。
+     */
+    private val accessSeq = AtomicLong(0L)
+    private val accessTimes = ConcurrentHashMap<String, Long>()
+
+    /** 诊断计数（只在内存里，重启归零；不影响缓存内容）。 */
+    private val statHits = AtomicLong(0L)
+    private val statMisses = AtomicLong(0L)
+    private val statDownloadRequests = AtomicLong(0L)
+    private val statDownloadedBytes = AtomicLong(0L)
+    @Volatile
+    private var recentThroughputBytesPerSec: Long = 0L
 
     /** 一段正在下载的临时文件；[tempFile] 里的字节对读者可见（[onBytes] 累计已写入量）。 */
     private class SegmentJob(val finalFile: File, val epoch: Long) {
@@ -296,6 +315,36 @@ class SegmentedCacheBackend(
         segmentFiles().sumOf { it.length() }
     }
 
+    /** 运行统计（诊断卡显示；只读内存计数，不扫盘）。 */
+    fun stats(): CacheStats = CacheStats(
+        segmentHits = statHits.get(),
+        segmentMisses = statMisses.get(),
+        downloadRequests = statDownloadRequests.get(),
+        downloadedBytes = statDownloadedBytes.get(),
+        recentThroughputBytesPerSec = recentThroughputBytesPerSec,
+    )
+
+    /** 最近一次成功下载的吞吐（自适应预读用；0 = 还没有样本）。 */
+    fun recentThroughputBytesPerSec(): Long = recentThroughputBytesPerSec
+
+    /** 记一次"读到这个段"（LRU 用；命中与下载落盘都算）。 */
+    private fun touch(file: File) {
+        accessTimes[file.absolutePath] = accessSeq.incrementAndGet()
+    }
+
+    /** 段的最近访问序号；这一轮还没读过的段按 0（最旧）处理。 */
+    private fun lastAccessOf(file: File): Long = accessTimes[file.absolutePath] ?: 0L
+
+    private fun forgetAccess(file: File) {
+        accessTimes.remove(file.absolutePath)
+    }
+
+    /** 丢掉某个目录下所有段的访问记录（删文件/清目录时用）。 */
+    private fun forgetAccessUnder(dir: File) {
+        val prefix = dir.absolutePath + File.separator
+        accessTimes.keys.removeIf { it.startsWith(prefix) }
+    }
+
     /**
      * **清空所有缓存段**（2026-10-03 设置页新增「缓存上限」时一并给的出口：
      * 用户把上限调小、或想立刻释放空间时，不必去系统设置里清 App 数据）。
@@ -325,6 +374,12 @@ class SegmentedCacheBackend(
         }
         // 目录留着（下次取段直接用），只清内容
         activePath = null
+        accessTimes.clear()
+        statHits.set(0L)
+        statMisses.set(0L)
+        statDownloadRequests.set(0L)
+        statDownloadedBytes.set(0L)
+        recentThroughputBytesPerSec = 0L
         synchronized(stampCache) { stampCache.clear() }
         freed
     }
@@ -395,6 +450,7 @@ class SegmentedCacheBackend(
         val dir = File(rootDir, entry.dirName)
         val freed = runCatching { dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }.getOrDefault(0L)
         runCatching { dir.deleteRecursively() }
+        forgetAccessUnder(dir)
         entry.path?.let { path -> synchronized(stampCache) { stampCache.remove(path) } }
         freed
     }
@@ -402,7 +458,9 @@ class SegmentedCacheBackend(
     /** 丢弃某个文件的全部缓存段（换根目录 / 文件已变时调用）。 */
     suspend fun clearFile(path: String) {
         withContext(io) {
-            dirFor(path).deleteRecursively()
+            val dir = dirFor(path)
+            dir.deleteRecursively()
+            forgetAccessUnder(dir)
         }
     }
 
@@ -492,10 +550,12 @@ class SegmentedCacheBackend(
     private suspend fun ensureSegment(path: String, index: Long): File {
         val file = segmentFile(path, index)
         if (file.isFile && file.length() > 0L) {
-            file.setLastModified(System.currentTimeMillis())
+            touch(file)
+            statHits.incrementAndGet()
             return file
         }
         val job = ensureJob(path, index) ?: return file
+        statMisses.incrementAndGet()
         val error = withContext(io) { job.awaitDone() }
         if (error != null) throw error
         return file
@@ -542,6 +602,9 @@ class SegmentedCacheBackend(
      */
     private suspend fun runDownloadJob(path: String, index: Long, key: String, job: SegmentJob) {
         var failure: Throwable? = null
+        var downloaded = 0L
+        val startedNanos = System.nanoTime()
+        statDownloadRequests.incrementAndGet()
         try {
             if (job.epoch != epoch) throw CacheClearedException()
             job.finalFile.parentFile?.mkdirs()
@@ -563,6 +626,7 @@ class SegmentedCacheBackend(
                             job.onBytes(total)
                         }
                         if (total <= 0L) throw StorageException.Unknown("分段下载为空：" + path + " @" + start)
+                        downloaded = total
                     }
                 }
                 if (job.epoch != epoch) throw CacheClearedException()
@@ -576,6 +640,19 @@ class SegmentedCacheBackend(
                     throw CacheClearedException()
                 }
                 job.finalFile.setLastModified(System.currentTimeMillis())
+                touch(job.finalFile)
+                if (downloaded > 0L) {
+                    statDownloadedBytes.addAndGet(downloaded)
+                    val elapsedMs = ((System.nanoTime() - startedNanos) / 1_000_000L).coerceAtLeast(1L)
+                    val sample = downloaded * 1000L / elapsedMs
+                    synchronized(this@SegmentedCacheBackend) {
+                        recentThroughputBytesPerSec = if (recentThroughputBytesPerSec <= 0L) {
+                            sample
+                        } else {
+                            (recentThroughputBytesPerSec * 3L + sample) / 4L
+                        }
+                    }
+                }
                 evictIfNeeded()
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -694,7 +771,10 @@ class SegmentedCacheBackend(
      *   （缓存明细页会提示"固定的缓存不受自动清理"，用户可以自己取消固定或调大上限）。
      */
     private suspend fun evictIfNeeded() {
-        val files = segmentFiles().sortedBy { it.lastModified() }
+        // 先按本轮访问序号排（访问过的段越大越新），没访问记录的老缓存按文件 mtime 排在更前（先淘汰）。
+        val files = segmentFiles().sortedWith(
+            compareBy<File> { lastAccessOf(it) }.thenBy { it.lastModified() },
+        )
         var total = files.sumOf { it.length() }
         if (total <= maxBytes) return
         val pinned = pinnedDirs()
@@ -721,7 +801,10 @@ class SegmentedCacheBackend(
             val dir = file.parentFile?.absolutePath
             if (dir != null && dir in skipDirs) continue
             val length = file.length()
-            if (file.delete()) total -= length
+            if (file.delete()) {
+                total -= length
+                forgetAccess(file)
+            }
         }
         return total
     }
@@ -797,13 +880,21 @@ class SegmentedCacheBackend(
         ): Int {
             val file = segmentFile(path, index)
             if (file.isFile && file.length() > 0L) {
+                touch(file)
+                statHits.incrementAndGet()
                 return readFrom(file, inSegment, chunk, buf, off)
             }
             val job = ensureJob(path, index)
-            if (job == null) return readFrom(file, inSegment, chunk, buf, off)
+            if (job == null) {
+                touch(file)
+                statHits.incrementAndGet()
+                return readFrom(file, inSegment, chunk, buf, off)
+            }
+            statMisses.incrementAndGet()
             withContext(io) { job.awaitBytes(inSegment.toLong() + chunk) }
             job.failureOrNull()?.let { throw it }
             val readable = if (file.isFile && file.length() > 0L) file else job.tempFile
+            if (readable === file) touch(file)
             val available = withContext(io) { readable.length() } - inSegment
             if (available <= 0L) return 0
             val toRead = minOf(chunk.toLong(), available).toInt()

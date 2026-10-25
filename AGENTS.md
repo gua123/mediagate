@@ -427,3 +427,14 @@
   代际变了立即删临时文件退出，绝不把段写回已清空的缓存；③ 临时文件按代际命名（`.tmp.<epoch>`），清空时一并删除；
   ④ 新增回归「清空缓存会作废清空前启动的段任务」（旧读必须失败、新读正常拿到数据），全量 **1370 用例 0 失败**。
   release 包 0.1.81 / versionCode 82；tag v0.1.81 已先 push 源码再发布并校正到 release commit。
+- **nPlayer 借鉴落地（2026-10-25，0.1.82；用户拍板：硬解不分编码器、渲染器不做、缓存按推荐 A 做并保留 B 方案）**：
+  ① **缓存 A**：`SegmentedCacheBackend` 加**段访问 LRU**（命中缓存刷新访问序号，修掉"只按下载时间淘汰、热段被冷段挤掉"）、
+  `CacheStats`（命中/未命中/下载字节/最近吞吐）并接进设置页诊断卡；新增纯函数 `AdaptiveReadAhead`（按最近吞吐 + 刚 seek 的状态
+  把滑窗预读从固定 4 段往下收，用户设置是上限），`PrefetchWindow.decide` 增加 `aheadSegments`，:app 的 `prefetchAhead` 接上。
+  ② **真机前基准**：新增 opt-in `CacheBenchmarkTest`（SFTP 同一 1 GB AVI，1/2/4/8 MB 段；凭据只读 `.toolchain`，不进 git），
+  结果：1MB cold 1716/seq 3035/seek 717ms；2MB 1635/2987/971；**4MB 1487/2950/890**；8MB 1409/2826/1592 ⇒ **默认 4 MB 不变**。
+  明细 `docs/验收记录-网络加载-SFTP基准.md`。
+  ③ **硬解**：不做按编码器面板；默认 AUTO_HW（硬解优先、Media3 回退兜底）；诊断卡新增 `CodecCoverage`：
+  H.264/HEVC/VP9/AV1/MPEG-4/MPEG-2/H.263 的硬解/软解数量；去掉 `DecoderSelection` 里"切 LibVLC"过期文案。
+  ④ **明确未做**：渲染器切换、缓冲 1/2/15 秒、B 方案（64 KiB 块表）、SMB/NFS。测试：全量 **1381 通过 + 1 跳过（基准 opt-in）**，0 失败；
+  release 包 0.1.82 / versionCode 83。方案文档 `docs/方案-nPlayer借鉴.md`（本地草稿，按用户拍板更新）。

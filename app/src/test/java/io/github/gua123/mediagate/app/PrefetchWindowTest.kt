@@ -75,6 +75,42 @@ class PrefetchWindowTest {
     }
 
     @Test
+    fun `自适应预读取几段由调用方给，且 0 段等于关闭`() {
+        val one = PrefetchWindow.decide(
+            positionMs = 60_000L,
+            durationMs = duration,
+            size = size,
+            segmentBytes = segment,
+            lastWindowPositionMs = 0L,
+            aheadSegments = 1,
+        )
+        assertTrue("1 段也要发", one != null)
+        assertEquals("只抓 1 段", segment, one!!.length)
+
+        val two = PrefetchWindow.decide(
+            positionMs = 60_000L,
+            durationMs = duration,
+            size = size,
+            segmentBytes = segment,
+            lastWindowPositionMs = 0L,
+            aheadSegments = 2,
+        )!!
+        assertEquals("2 段", segment * 2L, two.length)
+
+        assertNull(
+            "0 段 = 关闭滑窗预取",
+            PrefetchWindow.decide(
+                positionMs = 60_000L,
+                durationMs = duration,
+                size = size,
+                segmentBytes = segment,
+                lastWindowPositionMs = 0L,
+                aheadSegments = 0,
+            ),
+        )
+    }
+
+    @Test
     fun 时长未知时仍然按位置预取但不做末尾判断() {
         // duration=0（有些流拿不到总时长）：仍应发（落点按 PrefetchTargets 的规则给出），不该崩
         val window = PrefetchWindow.decide(60_000L, durationMs = 0L, size = size, segmentBytes = segment, lastWindowPositionMs = 0L)

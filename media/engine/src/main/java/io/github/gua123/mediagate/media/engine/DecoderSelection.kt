@@ -63,10 +63,10 @@ object DecoderSelection {
     /** 生成面向用户的说明（null = 无需提示）。 */
     fun note(mode: DecoderMode, selection: CodecSelection): String? = when {
         mode.preferSoftwareDecoder && selection.onlyHardwareAvailable ->
-            "本机没有可用的软件解码器（未内置 FFmpeg 解码扩展），已退回硬解；如需真软解请切 LibVLC 内核"
+            "本机没有可用的软件解码器（未内置 FFmpeg 解码扩展），已退回硬解"
 
         mode == DecoderMode.FORCE_HW && selection.onlySoftwareAvailable ->
-            "本机没有可用的硬解解码器，已退回软解；如果画面卡顿，可切到 LibVLC 内核"
+            "本机没有可用的硬解解码器，已退回软解；如果画面卡顿，可降低分辨率或换一个文件"
 
         else -> null
     }

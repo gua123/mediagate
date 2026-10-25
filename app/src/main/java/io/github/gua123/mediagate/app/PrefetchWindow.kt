@@ -50,7 +50,10 @@ object PrefetchWindow {
         size: Long?,
         segmentBytes: Long,
         lastWindowPositionMs: Long,
+        /** 本次抓几段；由调用方用 [AdaptiveReadAhead] 按吞吐/seek 算出来，默认保持旧的 4 段。 */
+        aheadSegments: Int = AHEAD_SEGMENTS,
     ): Window? {
+        if (aheadSegments <= 0) return null
         if (size == null || size <= 0L || segmentBytes <= 0L) return null
         if (positionMs <= 0L) return null
         // 位置没往前走够 ⇒ 不发（这就是"让路"的节流阀）
@@ -60,7 +63,7 @@ object PrefetchWindow {
         val targetMs = positionMs + AHEAD_MS
         val offset = PrefetchTargets.offsetForPosition(targetMs, durationMs, size) ?: return null
         if (offset <= 0L || offset >= size) return null
-        val want = (segmentBytes.coerceAtLeast(1L) * AHEAD_SEGMENTS).coerceAtMost(size - offset)
+        val want = (segmentBytes.coerceAtLeast(1L) * aheadSegments).coerceAtMost(size - offset)
         return Window(offset = offset, length = want.coerceAtLeast(segmentBytes.coerceAtMost(size - offset)))
     }
 
