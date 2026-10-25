@@ -81,9 +81,20 @@ class SegmentedCacheBackend(
      */
     private val inFlight = mutableMapOf<String, SegmentJob>()
 
+    /**
+     * 缓存代际：每次 [clearAll] +1（**2026-10-25 用户真机：清空缓存后播放一直转圈、网络不占用**）。
+     *
+     * 清空缓存时必须让**清空前启动的段下载任务**失效：旧任务可能还卡在一个已经没用的请求上，
+     * 新播放如果 join 到它，就会一直等不到字节、又没有任何网络流量（看起来就是永远转圈）。
+     * 任务在开始、写块、改名之前都核对代际；代际变了立刻作废。
+     */
+    @Volatile
+    private var epoch: Long = 0L
+
     /** 一段正在下载的临时文件；[tempFile] 里的字节对读者可见（[onBytes] 累计已写入量）。 */
-    private class SegmentJob(val finalFile: File) {
-        val tempFile: File = File(finalFile.parentFile, finalFile.name + TMP_SUFFIX)
+    private class SegmentJob(val finalFile: File, val epoch: Long) {
+        /** 每个代际用自己的临时文件，旧任务即使还在写也不会和新任务抢同一个 .tmp。 */
+        val tempFile: File = File(finalFile.parentFile, finalFile.name + "." + epoch + TMP_SUFFIX)
 
         private val lock = Object()
         private var written: Long = 0L
@@ -122,6 +133,9 @@ class SegmentedCacheBackend(
 
         fun failureOrNull(): Throwable? = synchronized(lock) { failure }
     }
+
+    /** 清空缓存时用来唤醒读者的内部失败（不是真的网络错误，调用方按"缓存已清空"处理）。 */
+    private class CacheClearedException : RuntimeException("缓存已清空，旧的段下载任务已作废")
 
     /** 保护 [inFlight] 的锁（只在取放 map 时持有，**不覆盖下载过程**）。 */
     private val inFlightLock = Mutex()
@@ -289,13 +303,28 @@ class SegmentedCacheBackend(
      * @return 实际删掉的字节数。
      */
     suspend fun clearAll(): Long = withContext(io) {
-        val files = segmentFiles()
+        // ① 让清空前启动的段任务全部作废：先换代，再摘掉 in-flight 表并唤醒等待者。
+        //    否则新播放会 join 到一个已经"不属于当前缓存"的旧任务上，一直等不到字节。
+        epoch += 1L
+        val staleJobs = inFlightLock.withLock {
+            val snapshot = inFlight.values.toList()
+            inFlight.clear()
+            snapshot
+        }
+        staleJobs.forEach { it.finish(CacheClearedException()) }
+        if (staleJobs.isNotEmpty()) {
+            AppLog.i(TAG, "清空缓存：epoch=" + epoch + "，作废 " + staleJobs.size + " 个正在下载的段任务")
+        }
+
+        // ② 删正式段 + 临时文件（旧任务写到一半的 .tmp 也要清掉；新任务用新代际的临时文件）。
+        val files = segmentFiles() + tempFiles()
         var freed = 0L
         for (file in files) {
             val length = file.length()
             if (file.delete()) freed += length
         }
         // 目录留着（下次取段直接用），只清内容
+        activePath = null
         synchronized(stampCache) { stampCache.clear() }
         freed
     }
@@ -450,6 +479,11 @@ class SegmentedCacheBackend(
         rootDir.listFiles()?.flatMap { it.listFiles()?.toList().orEmpty() }.orEmpty()
             .filter { it.isFile && it.name.endsWith(SEGMENT_SUFFIX) }
 
+    /** 正在写/遗留的临时段文件。 */
+    private fun tempFiles(): List<File> =
+        rootDir.listFiles()?.flatMap { it.listFiles()?.toList().orEmpty() }.orEmpty()
+            .filter { it.isFile && it.name.endsWith(TMP_SUFFIX) }
+
     /**
      * 确保第 [index] 段**整段**在本地（预取 / 手动缓存用；播放路径不调它）。
      *
@@ -476,9 +510,16 @@ class SegmentedCacheBackend(
         val file = segmentFile(path, index)
         if (file.isFile && file.length() > 0L) return null
         val key = path + "#" + index
+        val currentEpoch = epoch
         val existing = inFlightLock.withLock { inFlight[key] }
-        if (existing != null) return existing
-        val created = SegmentJob(file)
+        if (existing != null && existing.epoch == currentEpoch) return existing
+        // 旧代际的任务（清空缓存前启动的）不许复用：摘掉并唤醒它的等待者，重新开一个
+        if (existing != null) {
+            inFlightLock.withLock { if (inFlight[key] === existing) inFlight.remove(key) }
+            existing.finish(CacheClearedException())
+            AppLog.w(TAG, "丢弃清空缓存前的旧段任务：" + path + " #" + index)
+        }
+        val created = SegmentJob(file, currentEpoch)
         val winner = inFlightLock.withLock {
             val current = inFlight[key]
             if (current != null) {
@@ -502,6 +543,7 @@ class SegmentedCacheBackend(
     private suspend fun runDownloadJob(path: String, index: Long, key: String, job: SegmentJob) {
         var failure: Throwable? = null
         try {
+            if (job.epoch != epoch) throw CacheClearedException()
             job.finalFile.parentFile?.mkdirs()
             withContext(io) {
                 val start = index * segmentBytes
@@ -511,6 +553,7 @@ class SegmentedCacheBackend(
                         val buffer = ByteArray(COPY_BUFFER_BYTES)
                         var total = 0L
                         while (total < length) {
+                            if (job.epoch != epoch) throw CacheClearedException()
                             val want = minOf(buffer.size.toLong(), length - total).toInt()
                             val read = stream.read(buffer, 0, want)
                             if (read < 0) break
@@ -522,9 +565,15 @@ class SegmentedCacheBackend(
                         if (total <= 0L) throw StorageException.Unknown("分段下载为空：" + path + " @" + start)
                     }
                 }
+                if (job.epoch != epoch) throw CacheClearedException()
                 if (!job.tempFile.renameTo(job.finalFile)) {
                     job.tempFile.copyTo(job.finalFile, overwrite = true)
                     job.tempFile.delete()
+                }
+                // 改名和清空可能擦肩而过：清空之后写出来的段不能再留下（否则"清空"不彻底）
+                if (job.epoch != epoch) {
+                    job.finalFile.delete()
+                    throw CacheClearedException()
                 }
                 job.finalFile.setLastModified(System.currentTimeMillis())
                 evictIfNeeded()
@@ -538,7 +587,8 @@ class SegmentedCacheBackend(
             failure = t
         } finally {
             inFlightLock.withLock { if (inFlight[key] === job) inFlight.remove(key) }
-            job.finish(failure)
+            // 清空发生在本任务结束前：等待者拿到的必须是"已作废"，不能是成功/旧失败
+            job.finish(if (job.epoch != epoch) CacheClearedException() else failure)
         }
     }
 

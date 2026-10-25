@@ -33,10 +33,10 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.80：连接选路改为「先内网后外网」——默认先试局域网，连不上自动换公网；
-        // 旧的 Wi-Fi / 蜂窝 / SSID / 网段规则编辑器已替换为一个「优先网络」开关。
-        versionCode = 81
-        versionName = "0.1.80"
+        // 0.1.81：修复清空缓存后播放一直转圈——清空时作废旧的段下载任务（旧任务可能已卡死，
+        // 新播放 join 上去会永远等不到字节、也没有网络流量）。
+        versionCode = 82
+        versionName = "0.1.81"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
