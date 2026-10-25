@@ -420,3 +420,10 @@
   ③ **兼容**：`network_rule` 表结构不动（不迁移），每条连接只写一条 `prefer`；旧的多条规则读第一条的 `prefer`。
   删除死代码：`RaceProbe` / `NetworkRuleMatch` / `NetworkRule` 模型与对应单测；新增 `AddressFallbackProbeTest` 6 例。
   测试：全量 **1369 用例 0 失败**（较 0.1.79 的 1387 少 18 例，均为删除的旧规则/竞速测试）。release 包 0.1.80 / versionCode 81。
+- **清空缓存后播放一直转圈（2026-10-25，0.1.81 热修；用户原话「现在我把缓存清空以后播放视频会一直转圈且网络带宽完全不占用」）**：
+  根因＝`SegmentedCacheBackend.clearAll()` **只删 .seg 文件，没有作废清空前启动的段下载任务**——旧任务可能卡在已无用的请求上，
+  新播放要读同一段时 join 到旧任务上，`SegmentJob.awaitBytes` 无限等字节（没有新请求 = 带宽为 0，界面永远转圈）。
+  修：① `clearAll` 换代（epoch）+ 清空 in-flight 表 + 唤醒/作废旧任务；② 旧任务在开始/写块/改名前后核对代际，
+  代际变了立即删临时文件退出，绝不把段写回已清空的缓存；③ 临时文件按代际命名（`.tmp.<epoch>`），清空时一并删除；
+  ④ 新增回归「清空缓存会作废清空前启动的段任务」（旧读必须失败、新读正常拿到数据），全量 **1370 用例 0 失败**。
+  release 包 0.1.81 / versionCode 82；tag v0.1.81 已先 push 源码再发布并校正到 release commit。
