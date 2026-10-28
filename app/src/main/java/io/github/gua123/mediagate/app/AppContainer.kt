@@ -1117,7 +1117,14 @@ class AppContainer(context: Context) :
                     AppLog.i(TAG, "ffmpegTest：使用自研 FFmpeg 引擎")
                     return it
                 }
-                AppLog.w(TAG, "ffmpegTest：自研引擎加载失败，退回 Media3", loaded.exceptionOrNull())
+                // 测试包不能静默退回 Media3：那样"测了 FFmpeg"其实测的是正式引擎，结论全错。
+                val failure = loaded.exceptionOrNull()
+                AppLog.w(TAG, "ffmpegTest：自研引擎加载失败", failure)
+                Breadcrumbs.mark("FFmpeg 测试引擎加载失败：" + (failure?.message ?: "未知"))
+                throw IllegalStateException(
+                    "FFmpeg 测试引擎加载失败：" + (failure?.message ?: failure?.javaClass?.simpleName ?: "未知"),
+                    failure,
+                )
             }
             // 正式版：仍只保留 Media3。旧偏好里的 NATIVE/VLC 一律回落，不抛异常。
             if (kind != EngineKind.MEDIA3) {
