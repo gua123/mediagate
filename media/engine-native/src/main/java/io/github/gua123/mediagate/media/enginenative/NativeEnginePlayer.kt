@@ -105,6 +105,9 @@ class NativeEnginePlayer(
      */
     private var firstFrameWatchdog: Job? = null
 
+    /** "等 Surface"超时看门狗：没有 Surface 时 playSource 根本不会被调用，之前会一直 Preparing（黑屏无提示）。 */
+    private var surfaceWatchdog: Job? = null
+
     @Volatile
     private var lastStatus: NativePlayerStatus? = null
 
@@ -169,6 +172,7 @@ class NativeEnginePlayer(
 
     override fun play() {
         playWhenReady = true
+        if (!opened && !surfaceReady) ensureSurfaceWatchdog()
         if (opened) {
             NativeEngine.resumePlayback()
             // 暂停时启动的第一帧看门狗会因 playWhenReady=false 提前退出；恢复播放时重新计时
@@ -244,6 +248,8 @@ class NativeEnginePlayer(
 
     private fun attachSurface(holder: SurfaceHolder, width: Int, height: Int) {
         surfaceReady = true
+        surfaceWatchdog?.cancel()
+        surfaceWatchdog = null
         runCatching { NativeEngine.setSurface(holder.surface) }
         // surfaceCreated 时宽高可能是 0；surfaceChanged 才有真实尺寸。
         // 不补这一下，native 会一直认为窗口是 0×0，所有帧被丢弃 ⇒ 黑屏。
@@ -258,7 +264,11 @@ class NativeEnginePlayer(
      * 两条路都会走到这里。
      */
     private fun startIfReady() {
-        if (released || opened || !surfaceReady) return
+        if (released || opened) return
+        if (!surfaceReady) {
+            ensureSurfaceWatchdog()
+            return
+        }
         val ready = source ?: return
         val error = NativeEngine.playSource(ready)
         if (error.isNotEmpty()) {
@@ -293,9 +303,29 @@ class NativeEnginePlayer(
     private fun closeSource() {
         firstFrameWatchdog?.cancel()
         firstFrameWatchdog = null
+        surfaceWatchdog?.cancel()
+        surfaceWatchdog = null
         source?.let { runCatching { it.close() } }
         source = null
         opened = false
+    }
+
+    /**
+     * 10 秒还没拿到 Surface ⇒ 显示可读错误。
+     *
+     * 之前 surfaceCreated 没来时 startIfReady 会一直 return，界面停在 Preparing/黑屏，
+     * 用户只能看到"没画面"；这里把"Surface 没挂上"单独说清楚。
+     */
+    private fun ensureSurfaceWatchdog() {
+        if (surfaceWatchdog != null) return
+        surfaceWatchdog = scope.launch {
+            delay(SURFACE_TIMEOUT_MS)
+            if (released || surfaceReady) return@launch
+            _state.value = EngineState.Error(
+                "FFmpeg 引擎 10 秒还没有拿到 Surface（SurfaceView 未创建或尺寸为 0；" +
+                    "hasSurface=" + NativeEngine.hasSurface() + "）",
+            )
+        }
     }
 
     /**
@@ -342,5 +372,8 @@ class NativeEnginePlayer(
 
         /** 第一帧看门狗：超过这个时间还黑屏就显示可读错误，不再让用户对着黑屏猜。 */
         const val FIRST_FRAME_TIMEOUT_MS = 10_000L
+
+        /** 等 Surface 的超时；与第一帧看门狗分开，能区分"没画面"和"没解码"。 */
+        const val SURFACE_TIMEOUT_MS = 10_000L
     }
 }
