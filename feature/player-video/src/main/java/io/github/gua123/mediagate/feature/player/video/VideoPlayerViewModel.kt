@@ -1049,7 +1049,7 @@ class VideoPlayerViewModel(
                     }
                     // 自研引擎播不了这个文件（格式/编码不认、数据读不动…）⇒ **自动换回 Media3 接着播**，
                     // 用户不用动手，但要知道为什么换了内核（口径：不硬切、不静默）。
-                    if (target.kind == EngineKind.NATIVE && !autoFallbackDone) {
+                    if (target.kind == EngineKind.NATIVE && target.allowAutoFallback && !autoFallbackDone) {
                         autoFallbackDone = true
                         val dst = VideoEngineSwitch.fallbackTarget(EngineKind.NATIVE, proxyAvailable)
                         if (dst != null) {

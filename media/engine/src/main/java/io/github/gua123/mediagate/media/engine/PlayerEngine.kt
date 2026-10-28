@@ -50,6 +50,15 @@ interface PlayerEngine {
      */
     val capabilities: EngineCapabilities get() = EngineCapabilities.ALL
 
+    /**
+     * 内核出错时是否允许上层"自动回退到 Media3"。
+     *
+     * 默认 true（Media3 本身不会触发）；FFmpeg 测试版覆盖为 false——
+     * 测试版必须把失败暴露出来，否则自动回退到 Media3 会让用户以为 FFmpeg 已经能播，
+     * A/B 结论直接失效。
+     */
+    val allowAutoFallback: Boolean get() = true
+
     /** 装载媒体（不自动起播，按 plan 草案语义：setMedia → prepare → play）。 */
     fun setMedia(src: MediaSourceRef)
 

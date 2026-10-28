@@ -63,6 +63,9 @@ class NativeEnginePlayer(
     /** 能力从契约层的能力表取（唯一一份声明；本模块不许自己再写一遍）。 */
     override val capabilities: EngineCapabilities = EngineCatalog.capabilitiesOf(kind)
 
+    /** 测试版不自动回退 Media3：失败必须让用户看到，不能把"测的是 FFmpeg"偷偷换成"测的是 Media3"。 */
+    override val allowAutoFallback: Boolean = false
+
     private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
     override val state: StateFlow<EngineState> = _state.asStateFlow()
 
