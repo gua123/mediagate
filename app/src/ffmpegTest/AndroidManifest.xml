@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅 ffmpegTest 构建包含：自研引擎探针跑独立进程，崩了只带走探针自己。
+     正式版不打包 :media:engine-native，所以不登记这个 service。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name="io.github.gua123.mediagate.media.enginenative.NativeEngineProbeService"
+            android:exported="false"
+            android:process=":engineprobe"
+            android:stopWithTask="true" />
+    </application>
+</manifest>
