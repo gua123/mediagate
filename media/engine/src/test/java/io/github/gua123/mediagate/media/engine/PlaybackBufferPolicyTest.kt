@@ -15,6 +15,16 @@ class PlaybackBufferPolicyTest {
     }
 
     @Test
+    fun 每个档位都能构造合法的LoadControl() {
+        // 回归 0.1.82 真机「播放失败：minBufferMs cannot be less than bufferForPlaybackMs」：
+        // 原来 minBuffer 取目标一半、bufferForPlayback 取目标本身，Media3 直接拒绝。
+        PlaybackBufferPolicy.SECONDS_CHOICES.forEach { seconds ->
+            PlaybackBufferPolicy.loadControl(seconds)
+        }
+        PlaybackBufferPolicy.loadControl(PlaybackBufferPolicy.DEFAULT_SECONDS)
+    }
+
+    @Test
     fun 越界与坏值退回默认() {
         assertEquals(5, PlaybackBufferPolicy.clampSeconds(0))
         assertEquals(5, PlaybackBufferPolicy.clampSeconds(-1))

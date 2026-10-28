@@ -33,10 +33,10 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.82：缓存按 nPlayer 借鉴方案 A 改造（访问 LRU + 自适应预读 + 统计），
-        // 硬解保持默认、增加常见编码覆盖诊断；不做按编码器面板/渲染器切换。
-        versionCode = 83
-        versionName = "0.1.82"
+        // 0.1.83 热修：Media3 LoadControl 的 minBufferMs 必须 >= bufferForPlaybackMs；
+        // 0.1.82 的缓冲策略把 min 设成目标的一半，真机播放直接报错（播放失败：minBufferMs...）。
+        versionCode = 84
+        versionName = "0.1.83"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

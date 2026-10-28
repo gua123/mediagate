@@ -438,3 +438,10 @@
   H.264/HEVC/VP9/AV1/MPEG-4/MPEG-2/H.263 的硬解/软解数量；去掉 `DecoderSelection` 里"切 LibVLC"过期文案。
   ④ **明确未做**：渲染器切换、缓冲 1/2/15 秒、B 方案（64 KiB 块表）、SMB/NFS。测试：全量 **1381 通过 + 1 跳过（基准 opt-in）**，0 失败；
   release 包 0.1.82 / versionCode 83。方案文档 `docs/方案-nPlayer借鉴.md`（本地草稿，按用户拍板更新）。
+- **0.1.83 热修：Media3 缓冲参数非法导致播放失败（2026-10-28，用户真机截图「minBufferMs cannot be less than bufferForPlaybackMs」）**：
+  根因＝`PlaybackBufferPolicy.loadControl()` 把 `minBufferMs` 设为目标的一半、`bufferForPlaybackMs` 设为目标本身；
+  Media3 `DefaultLoadControl.Builder.build()` 要求 min ≥ playback，直接抛 IllegalArgumentException ⇒ 播放页「播放失败」。
+  这段参数从 0.1.77 可调缓冲引入，旧单测只测秒数夹值、**从未真正 build LoadControl** 所以一直未红。
+  修：`minBufferMs = 目标秒数`（起播/恢复同值），max 仍 8×夹 60–300 秒；新增回归「每个档位都构造一次 DefaultLoadControl」。
+  全量 **1382 通过 + 1 跳过、0 失败**；release 包 0.1.83 / versionCode 84；说明 docs/release-notes-0.1.83.md。
+  教训：**第三方 Builder 的参数约束必须在单测里真正 build 一次**，只测自己的纯函数等于没测。
