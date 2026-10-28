@@ -81,6 +81,7 @@ import io.github.gua123.mediagate.feature.player.video.ControlsAutoHide
 import io.github.gua123.mediagate.feature.player.video.VideoPlayerPreferences
 import io.github.gua123.mediagate.feature.settings.SettingsConnectionUi
 import io.github.gua123.mediagate.feature.viewer.image.ViewerMath
+import io.github.gua123.mediagate.BuildConfig
 import io.github.gua123.mediagate.core.common.Breadcrumbs
 import kotlinx.coroutines.delay
 import io.github.gua123.mediagate.feature.browser.EntrySort
@@ -1095,9 +1096,30 @@ class AppContainer(context: Context) :
          * 调用方（播放页 ViewModel）在主线程上调用，所以这里是真的在主线程构造播放器——两个内核都要求如此。
          */
         override suspend fun createEngine(kind: EngineKind): PlayerEngine {
-            // **2026-10-15 用户拍板：只保留原有引擎（Media3）**——自研引擎在真机上不出画面，
-            // LibVLC 会把 App 整个带走。这里对下线的内核**回落**而不是抛异常：
-            // 万一偏好里还存着旧值（老版本切过），播放也不能受影响。
+            // 2026-10-28：ffmpegTest 构建类型与正式版同源，只把引擎换成旧的自研 FFmpeg。
+            // 用反射加载，正式版 APK 不依赖/不打包 :media:engine-native。
+            if (BuildConfig.USE_NATIVE_ENGINE) {
+                val loaded = runCatching {
+                    val cls = Class.forName("io.github.gua123.mediagate.media.enginenative.NativeEnginePlayer")
+                    val ctor = cls.getConstructor(
+                        android.content.Context::class.java,
+                        kotlin.jvm.functions.Function0::class.java,
+                        kotlin.coroutines.CoroutineContext::class.java,
+                    )
+                    @Suppress("UNCHECKED_CAST")
+                    ctor.newInstance(
+                        appContext,
+                        { _root.value?.backend } as kotlin.jvm.functions.Function0<io.github.gua123.mediagate.data.storage.api.StorageBackend?>,
+                        Dispatchers.IO,
+                    ) as PlayerEngine
+                }
+                loaded.onSuccess {
+                    AppLog.i(TAG, "ffmpegTest：使用自研 FFmpeg 引擎")
+                    return it
+                }
+                AppLog.w(TAG, "ffmpegTest：自研引擎加载失败，退回 Media3", loaded.exceptionOrNull())
+            }
+            // 正式版：仍只保留 Media3。旧偏好里的 NATIVE/VLC 一律回落，不抛异常。
             if (kind != EngineKind.MEDIA3) {
                 AppLog.w(TAG, "请求的内核已下线（" + kind.label + "），改用原有引擎")
                 Breadcrumbs.mark("内核已下线：" + kind.label + " → Media3")

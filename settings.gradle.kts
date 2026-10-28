@@ -40,7 +40,8 @@ include(
 // 媒体层：播放内核（历史双内核 + **自研单内核**）、回环代理、抽帧、TS 索引、FFmpeg、字幕
 include(
     ":media:engine",
-    // 自研视频播放引擎的 native 内核（**2026-10-06 用户拍板：视频引擎只采用一套，不要来回切换**）
+    // 自研 FFmpeg 播放引擎（2026-10-28 用户要求恢复：测试版与正式版只差引擎）
+    ":media:engine-native",
     ":media:playback",
     ":media:thumbnail",
     ":media:tsext",

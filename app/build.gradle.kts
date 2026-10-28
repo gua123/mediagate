@@ -40,6 +40,8 @@ android {
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
+        // 正式版固定 Media3；ffmpegTest 构建类型覆盖为 true
+        buildConfigField("boolean", "USE_NATIVE_ENGINE", "false")
     }
 
     signingConfigs {
@@ -68,6 +70,22 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+        // 2026-10-28：与正式版同源、只差播放引擎的测试包。独立 applicationId 可共存。
+        create("ffmpegTest") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".ffmpeg"
+            versionNameSuffix = "-ffmpeg"
+            // 测试包先不混淆，native 的 JNI 按名字找方法更容易排查
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // 这个构建类型只存在于 :app；依赖模块只有 debug/release 变体
+            matchingFallbacks += listOf("release", "debug")
+            buildConfigField("boolean", "USE_NATIVE_ENGINE", "true")
+            resValue("string", "app_name", "MediaGate FFmpeg")
+            if (keystorePropsFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     compileOptions {
@@ -75,7 +93,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+        resValues = true
+    }
 
     testOptions {
         // JVM 单测（字幕宿主 R14：写回 / 无权限落本地 / 读取解析）：
@@ -119,8 +141,9 @@ dependencies {
     implementation(project(":data:storage-ftp"))
 
     implementation(project(":media:engine"))
-    // 自研单内核（native）：先只把 .so 打进包并能在诊断里自述，播放逻辑随后长出来
     implementation(project(":media:playback"))
+    // 自研 FFmpeg 引擎只打进 ffmpegTest（正式版包体不背它）；代码侧用反射加载，见 AppContainer.createEngine。
+    "ffmpegTestImplementation"(project(":media:engine-native"))
     // M2-B：:app 是组合根，直接用 ExoPlayerEngine 的构造签名（DataSource.Factory 来自 media3-datasource，
     // :media:engine 把它声明为 implementation，不向上传递）
     implementation(libs.media3.exoplayer)

@@ -445,3 +445,13 @@
   修：`minBufferMs = 目标秒数`（起播/恢复同值），max 仍 8×夹 60–300 秒；新增回归「每个档位都构造一次 DefaultLoadControl」。
   全量 **1382 通过 + 1 跳过、0 失败**；release 包 0.1.83 / versionCode 84；说明 docs/release-notes-0.1.83.md。
   教训：**第三方 Builder 的参数约束必须在单测里真正 build 一次**，只测自己的纯函数等于没测。
+- **FFmpeg 自研引擎测试版（2026-10-28，进行中，未发正式版；用户拍板「这次要把 ffmpeg 自研引擎彻底做好，media3 不可修改的部分太多」，并更正「正式版与测试版除引擎不同外其他同源、可共存」）**：
+  ① 从 `9a05bb9^` 恢复 `:media:engine-native`（旧 FFmpeg/JNI/SurfaceView）；app 新增 `ffmpegTest` 构建类型
+  （applicationId `.ffmpeg`、名称 MediaGate FFmpeg、minify 关闭、仅该变体依赖旧引擎，正式版不打包）。
+  `createEngine` 在 BuildConfig.USE_NATIVE_ENGINE 时用反射加载 NativeEnginePlayer；正式版仍 Media3。
+  ② **黑屏根因假设/修复**：`surfaceCreated` 时宽高可能为 0，`setWindow` 对同一 window 指针提前 return，
+  `surfaceChanged` 不再设 geometry ⇒ native 永远 0×0、所有帧被丢。已加 `nativeSetSurfaceSize`，
+  在 `surfaceChanged` 把真实宽高写进 `ANativeWindow_setBuffersGeometry`。
+  ③ 加**第一帧看门狗**：10 秒没出帧就归约为错误卡片，带上 native 状态（帧数/解码器/音频/Surface），不再让用户对着黑屏猜。
+  ④ 已构建测试包 `0.1.83-ffmpeg`（包名 `io.github.gua123.mediagate.ffmpeg`，95.5MB，sha256 以构建日志为准）并与正式版 0.1.83（Media3，24MB）并存验证过；
+  **待用户真机验证出画/声音/seek**，通过后再把 B/5 缓存等加进两边同源代码。
