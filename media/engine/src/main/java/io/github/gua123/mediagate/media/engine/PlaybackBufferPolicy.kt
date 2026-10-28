@@ -37,12 +37,13 @@ object PlaybackBufferPolicy {
      * 按秒数造 Media3 的 LoadControl。
      *
      * Media3 1.11 的参数顺序是（最小缓冲, 最大缓冲, 起播前缓冲, 卡顿恢复前缓冲），都用毫秒；
-     * 这里让「最小缓冲」取目标的一半、最大取目标的 8 倍（60–300 秒之间），
-     * 目标是「起播等几秒」，上限负责抗抖动，最小缓冲避免一次小抖动就进入缓冲态。
+     * 这里让「最小缓冲」等于目标（Media3 要求它不小于起播/恢复缓冲），
+     * 最大取目标的 8 倍（60–300 秒之间）：目标是「起播等几秒」，上限负责抗抖动。
      */
     fun loadControl(seconds: Int): DefaultLoadControl {
         val ms = clampSeconds(seconds) * 1000L
-        val minBuffer = (ms / 2).coerceAtLeast(1_000L)
+        // minBuffer 必须 >= bufferForPlaybackMs（Media3 的硬校验）；这里直接用目标值
+        val minBuffer = ms
         val maxBuffer = (ms * 8).coerceIn(60_000L, 300_000L)
         return DefaultLoadControl.Builder()
             .setBufferDurationsMs(minBuffer.toInt(), maxBuffer.toInt(), ms.toInt(), ms.toInt())
