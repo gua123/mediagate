@@ -1,8 +1,8 @@
 {
-  "versionCode": 83,
-  "versionName": "0.1.82",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.82/mediagate-0.1.82.apk",
-  "sizeBytes": 24116179,
-  "sha256": "8946b10c55461d06aac8461bb275d1896d8c29347ecaaf149519182ae892826c",
-  "notes": "# 0.1.82 发布说明\n\n> 0.1.82 按你拍板的方案做缓存改造：**访问 LRU + 自适应预读 + 统计**；\n> 硬解保持默认、不做按编码器开关；渲染器不做。另附一份同路径 SFTP 视频的段大小基准。\n\n## 缓存\n\n- **命中缓存会刷新 LRU**：以前只看段文件的\"下载时间\"，导致刚看过的热段和很久没看的冷段一样旧，\n  缓存紧张时热段可能被误淘汰。现在命中即更新访问顺序（内存序号，不额外写盘）。\n- **自适应预读**：按最近一次下载吞吐与\"刚 seek 过\"状态，把一次滑窗抓取从固定的 4 段往下收：\n  弱网/刚拖动时只抓 1–2 段，稳定高速才用满你设置的上限；**预读永远给播放让路**。\n- **缓存统计进诊断卡**：命中/请求、下载字节、最近吞吐、段大小与预读段数；\n  真机截图就能判断\"是缓存命中低，还是网络慢\"。\n- **段大小基准**：用同一个 SFTP 视频（约 1 GB）测 1/2/4/8 MB 段，4 MB 综合最好，\n  **默认保持 4 MB**；明细见 docs/验收记录-网络加载-SFTP基准.md。\n\n## 硬解\n\n- 按你的要求：**不做按编码器硬解开关**，保持默认硬解优先；\n- 诊断卡新增 **常见编码覆盖**：H.264 / HEVC / VP9 / AV1 / MPEG-4 / MPEG-2 / H.263 各自\n  有多少硬解/软解；设备缺硬解时会如实显示（不静默）。\n- 顺手去掉了解码提示里\"切 LibVLC\"这类过期文案。\n\n## 明确没做\n\n- 渲染器 SurfaceView/TextureView 切换（你拍板不做）；\n- 按编码器软/硬面板（你拍板不做）；\n- 缓冲 1/2/15 秒档位、nPlayer 式 64 KiB 块表（B 方案）、SMB/NFS——留到后续。\n\n## 验证\n\n- 新增：LRU 热/冷段回归、冷读/命中统计、自适应预读策略、滑窗 0/1/2 段；\n- SFTP 基准：`MEDIAGATE_BENCHMARK=1` 才会跑，平时跳过；\n- 全量 **1381 用例通过、1 个基准用例按设计跳过（0 失败）**；release 包 0.1.82 / versionCode 83。"
+  "versionCode": 84,
+  "versionName": "0.1.83",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.83/mediagate-0.1.83.apk",
+  "sizeBytes": 24116186,
+  "sha256": "47677758db689dbc79d2a58508ea056d6b34d9f7e0b93b2db2d3e18736a83dd2",
+  "notes": "# 0.1.83 热修发布说明\n\n> 0.1.82 真机播放报错：`播放失败，请重试` / `错误详情：minBufferMs cannot be less than bufferForPlaybackMs`。\n> 这是播放核心不可用，按发版纪律立刻修、立刻发。\n\n## 根因\n\n`PlaybackBufferPolicy.loadControl()` 把 Media3 的四个缓冲参数配成：\n\n- `minBufferMs` = 目标秒数的一半；\n- `bufferForPlaybackMs` = 目标秒数本身。\n\nMedia3 的 `DefaultLoadControl.Builder.build()` 要求 **minBufferMs ≥ bufferForPlaybackMs**，\n否则直接抛 `IllegalArgumentException`，播放页只看到一句英文错误。这段参数是 0.1.77 引入可调缓冲时写的，\n旧单测只测了\"秒数夹值\"，**没有真正 build 一次 LoadControl**，所以一直没红。\n\n## 修复\n\n- `minBufferMs` 改为等于目标秒数（起播/卡顿恢复都等目标秒数）；\n- `maxBufferMs` 仍取目标 8 倍并夹在 60–300 秒；\n- 新增回归：**每个缓冲档位都真的构造一次 `DefaultLoadControl`**，旧写法会在这里直接抛异常；\n- 清理测试里的无效 `@OptIn` 警告。\n\n## 验证\n\n- 全量 **1382 通过 + 1 个 opt-in 基准跳过，0 失败**；\n- 0.1.83 / versionCode 84；\n- 与 0.1.82 相比只动缓冲策略与对应测试，其他缓存/解码逻辑不变。\n\n## 更新\n\n应用内更新，或直接安装：\nhttps://github.com/gua123/mediagate/releases/download/v0.1.83/mediagate-0.1.83.apk"
 }
