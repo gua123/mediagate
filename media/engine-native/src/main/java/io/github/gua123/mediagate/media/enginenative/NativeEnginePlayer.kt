@@ -119,6 +119,13 @@ class NativeEnginePlayer(
     /** "等 Surface"超时看门狗：没有 Surface 时 playSource 根本不会被调用，之前会一直 Preparing（黑屏无提示）。 */
     private var surfaceWatchdog: Job? = null
 
+    /**
+     * "打开数据源"超时看门狗：LAN SFTP/WebDAV 卡在 stat/openRead 时，
+     * EngineAttached 之后界面会一直转圈，而第一帧看门狗还没开始（它要等 source 打开）。
+     * 20 秒还没打开就把"一直转圈"变成可读错误。
+     */
+    private var prepareWatchdog: Job? = null
+
     @Volatile
     private var lastStatus: NativePlayerStatus? = null
 
@@ -164,10 +171,20 @@ class NativeEnginePlayer(
         }
         closeSource()
         _state.value = EngineState.Preparing
+        prepareWatchdog = scope.launch {
+            delay(PREPARE_TIMEOUT_MS)
+            if (released || opened || source != null) return@launch
+            _state.value = EngineState.Error(
+                "FFmpeg 引擎 20 秒还没有打开数据源（" + src.path.substringAfterLast('/') +
+                    "）；局域网 SFTP/WebDAV 可能卡住了",
+            )
+        }
         scope.launch {
             val openedSource = try {
                 openSource(src)
             } catch (t: Throwable) {
+                prepareWatchdog?.cancel()
+                prepareWatchdog = null
                 AppLog.w(TAG, "自研引擎打开数据源失败", t)
                 _state.value = EngineState.Error(ErrorText.of(t))
                 return@launch
@@ -177,6 +194,8 @@ class NativeEnginePlayer(
                 return@launch
             }
             source = openedSource
+            prepareWatchdog?.cancel()
+            prepareWatchdog = null
             startIfReady()
         }
     }
@@ -323,6 +342,8 @@ class NativeEnginePlayer(
         firstFrameWatchdog = null
         surfaceWatchdog?.cancel()
         surfaceWatchdog = null
+        prepareWatchdog?.cancel()
+        prepareWatchdog = null
         source?.let { runCatching { it.close() } }
         source = null
         opened = false
@@ -393,5 +414,8 @@ class NativeEnginePlayer(
 
         /** 等 Surface 的超时；与第一帧看门狗分开，能区分"没画面"和"没解码"。 */
         const val SURFACE_TIMEOUT_MS = 10_000L
+
+        /** 打开数据源的超时：LAN SFTP/WebDAV 卡住时，20 秒内必须从转圈变成可读错误。 */
+        const val PREPARE_TIMEOUT_MS = 20_000L
     }
 }
