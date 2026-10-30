@@ -349,6 +349,14 @@ void testRingThreaded() {
     CHECK_EQ(ring.queuedFrames(), 0);
 }
 
+void testShouldStartPlayback() {
+    std::printf("- 播放线程启动条件（path / 数据源至少一个）\n");
+    CHECK(mediagate::shouldStartPlayback(true, false));   // open(path)
+    CHECK(mediagate::shouldStartPlayback(false, true));   // openSource(JNI)
+    CHECK(mediagate::shouldStartPlayback(true, true));
+    CHECK(!mediagate::shouldStartPlayback(false, false));  // 两者都没有才不启动
+}
+
 }  // namespace
 
 int main() {
@@ -359,6 +367,7 @@ int main() {
     testAudioClock();
     testSeekPosition();
     testScaleTarget();
+    testShouldStartPlayback();
     testRingBasics();
     testRingWrapAround();
     testRingFlush();

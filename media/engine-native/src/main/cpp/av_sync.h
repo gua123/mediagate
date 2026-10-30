@@ -25,6 +25,14 @@ namespace mediagate {
  * 纯整数运算：先取整秒、再补余数，避免 pts 很大时浮点丢精度。
  * 调用方要先滤掉 AV_NOPTS_VALUE；这里对极端值做了夹取（返回 0 而不是整数溢出）。
  */
+/**
+ * 播放线程是否应该启动：open() 用文件路径，openSource() 用 JNI 数据源。
+ * 两者有一个可用就必须启动——只检查路径会让"走我们数据层"的播放直接 return。
+ */
+inline bool shouldStartPlayback(bool hasPath, bool hasSource) {
+    return hasPath || hasSource;
+}
+
 inline int64_t ptsToMs(int64_t pts, int num, int den) {
     if (den <= 0 || num <= 0) return 0;
     constexpr int64_t kLimit = static_cast<int64_t>(1) << 40;  // 约 34 年，单位是 pts

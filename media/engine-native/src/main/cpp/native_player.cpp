@@ -16,6 +16,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "av_sync.h"
 #include "surface_renderer.h"
 
 namespace mediagate {
@@ -115,7 +116,10 @@ bool NativePlayer::openSource(JNIEnv* env, jobject source, std::string* error) {
 }
 
 void NativePlayer::play() {
-    if (path_.empty()) return;
+    // 两条打开路径：open() 用 path_，openSource() 用 JNI 数据源（path_ 为空）。
+    // 旧检查只看 path_，导致"走我们数据层"的本地/远端文件 play() 直接 return，
+    // 线程永远不启动：看门狗报 10 秒无第一帧，状态却是空闲 0 秒/0 帧。
+    if (!shouldStartPlayback(!path_.empty(), source_.valid())) return;
     if (running_.load()) {
         // 已经在跑：只是从暂停恢复
         paused_.store(false);

@@ -75,14 +75,14 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".ffmpeg"
             // 诊断版（测试图案/看门狗）单独标号，避免和普通测试包混淆
-            versionNameSuffix = "-ffmpeg-d2"
+            versionNameSuffix = "-ffmpeg-d3"
             // 测试包先不混淆，native 的 JNI 按名字找方法更容易排查
             isMinifyEnabled = false
             isShrinkResources = false
             // 这个构建类型只存在于 :app；依赖模块只有 debug/release 变体
             matchingFallbacks += listOf("release", "debug")
             buildConfigField("boolean", "USE_NATIVE_ENGINE", "true")
-            resValue("string", "app_name", "MediaGate FFmpeg 诊断")
+            resValue("string", "app_name", "MediaGate FFmpeg 修复")
             if (keystorePropsFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
