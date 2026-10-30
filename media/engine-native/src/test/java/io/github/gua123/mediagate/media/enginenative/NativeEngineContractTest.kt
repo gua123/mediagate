@@ -203,4 +203,15 @@ class NativeEngineContractTest {
         assertTrue("宿主单测要覆盖音频时钟", text.contains("audioClockMs"))
         assertTrue("宿主单测要覆盖自定义 AVIO 的 seek 换算", text.contains("resolveSeekPosition"))
     }
+
+    @Test
+    fun 走数据层播放时_play_不能只看_path() {
+        // 真机实证：openSource() 把 path_ 清空，play() 只看 path_.empty() 就直接 return，
+        // 线程永远不启动 —— 测试图案正常、状态却空闲 0 秒、看门狗报 10 秒无第一帧。
+        val cpp = find("src/main/cpp/native_player.cpp").readText()
+        assertTrue(
+            "play() 必须同时接受 path_ 与 JNI 数据源，不能只检查 path_",
+            cpp.contains("shouldStartPlayback(!path_.empty(), source_.valid())"),
+        )
+    }
 }
