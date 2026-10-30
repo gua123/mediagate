@@ -1105,12 +1105,14 @@ class AppContainer(context: Context) :
                         android.content.Context::class.java,
                         kotlin.jvm.functions.Function0::class.java,
                         kotlin.coroutines.CoroutineContext::class.java,
+                        Boolean::class.javaPrimitiveType,
                     )
                     @Suppress("UNCHECKED_CAST")
                     ctor.newInstance(
                         appContext,
                         { _root.value?.backend } as kotlin.jvm.functions.Function0<io.github.gua123.mediagate.data.storage.api.StorageBackend?>,
                         Dispatchers.IO,
+                        true, // 测试版：先画测试图案，用来区分 Surface 黑屏还是解码黑屏
                     ) as PlayerEngine
                 }
                 loaded.onSuccess {

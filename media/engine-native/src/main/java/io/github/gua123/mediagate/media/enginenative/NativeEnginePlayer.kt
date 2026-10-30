@@ -48,6 +48,13 @@ class NativeEnginePlayer(
     private val context: Context,
     private val backendProvider: () -> StorageBackend?,
     private val io: kotlin.coroutines.CoroutineContext = Dispatchers.IO,
+    /**
+     * 测试版诊断：Surface 绑好后先画一帧测试图案。
+     *
+     * 用来区分"Surface/渲染链路坏了"和"解码不出帧"：如果连测试图案都看不到，问题在 Surface；
+     * 图案能看到、随后变成黑屏，问题在解码/送帧。正式版不打开。
+     */
+    private val debugTestPattern: Boolean = false,
 ) : PlayerEngine {
 
     /**
@@ -88,6 +95,7 @@ class NativeEnginePlayer(
     private var opened = false
     private var surfaceReady = false
     private var playWhenReady = false
+    private var testPatternDrawn = false
 
     /**
      * 打开完成之前收到的 seek（**必须先记下来**）。
@@ -257,6 +265,13 @@ class NativeEnginePlayer(
         // surfaceCreated 时宽高可能是 0；surfaceChanged 才有真实尺寸。
         // 不补这一下，native 会一直认为窗口是 0×0，所有帧被丢弃 ⇒ 黑屏。
         NativeEngine.setSurfaceSize(width, height)
+        // 测试版：第一次拿到真实尺寸后先画一帧测试图案。
+        // 用户能看到渐变/白色竖线 ⇒ Surface 链路正常，黑屏问题在解码/送帧；
+        // 连图案都没有 ⇒ Surface 本身没显示出来。
+        if (debugTestPattern && !testPatternDrawn && width > 0 && height > 0) {
+            testPatternDrawn = true
+            runCatching { NativeEngine.drawTestPattern(0) }
+        }
         startIfReady()
     }
 
