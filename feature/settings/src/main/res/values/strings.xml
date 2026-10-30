@@ -24,7 +24,7 @@
     <string name="settings_group_diagnostics">诊断与日志</string>
     <string name="settings_group_subtitle_connection">当前用哪个连接、去哪儿改</string>
     <string name="settings_group_subtitle_playback">画中画、控件自动隐藏、后台保活</string>
-    <string name="settings_group_subtitle_network">预读 / 段大小 / 缓存上限与已用量</string>
+    <string name="settings_group_subtitle_network">预读 / 缓存上限与已用量（段大小已内置）</string>
     <string name="settings_group_subtitle_update">检查更新、下载与安装</string>
     <string name="settings_group_subtitle_security">SFTP 主机密钥与凭据口径</string>
     <string name="settings_group_subtitle_diagnostics">崩溃报告、自研引擎自检、最近播放指标（排障用）</string>

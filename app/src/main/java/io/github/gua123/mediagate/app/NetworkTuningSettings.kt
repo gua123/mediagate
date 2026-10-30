@@ -18,8 +18,9 @@ private val Context.networkTuningDataStore by preferencesDataStore(name = "netwo
 /**
  * 「网络与缓冲」偏好（**2026-10-03 用户要求**：「我自己调一下并发数，你加到设置里吧」）。
  *
- * 存的是"人话"（段大小 MB、块大小 KB、并发个数、预读段数），读出来一律经
- * [CacheTuning.fromStored] 归一到合法值——旧版本升级上来没有这些键，会拿到全套默认。
+ * 存的是"人话"（缓存上限、预读段数）；**段大小已内置，不再提供设置入口**。
+ * 旧版本持久化的 segment_mb 仍读取，纯粹是为了不让已有段缓存按新段宽错位；新安装默认 4 MB。
+ * 读出来一律经 [CacheTuning.fromStored] 归一到合法值。
  */
 class NetworkTuningSettings(
     private val context: Context,
@@ -38,10 +39,6 @@ class NetworkTuningSettings(
         }
         .stateIn(scope, SharingStarted.Eagerly, CacheTuning())
 
-    suspend fun setSegmentMb(value: Int) {
-        context.networkTuningDataStore.edit { it[KEY_SEGMENT_MB] = value }
-    }
-
     /**
      * 缓存总上限（**MB 存储**：这样"输入框里填 3.5 GB"这种任意值也能表达）。
      *
@@ -59,10 +56,9 @@ class NetworkTuningSettings(
         context.networkTuningDataStore.edit { it[KEY_READ_AHEAD] = value.coerceIn(0, CacheTuning.MAX_READ_AHEAD) }
     }
 
-    /** 恢复默认（把四个键一起清掉，读出来就是 [CacheTuning] 的默认值）。 */
+    /** 恢复默认（缓存上限/预读；段大小已内置，不再随「恢复默认」改动，避免旧缓存错位）。 */
     suspend fun reset() {
         context.networkTuningDataStore.edit { prefs ->
-            prefs.remove(KEY_SEGMENT_MB)
             prefs.remove(KEY_CACHE_GB)
             prefs.remove(KEY_CACHE_MB)
             prefs.remove(KEY_READ_AHEAD)

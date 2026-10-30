@@ -34,14 +34,14 @@ import io.github.gua123.mediagate.data.storage.api.CacheTuning
  * 但"单条连接被人为限速"的服务器也存在——与其替他猜，不如把这几个参数摊开，
  * 让他自己按链路特点调，并写清每种调法的适用场景。
  *
- * 四项参数的生效口径：**并发块数 / 块大小 / 预读段数即时生效**；
- * **段大小在下次连接后生效**（它决定磁盘上段文件的切分方式，中途改等于缓存作废）。
+ * 2026-10-30 用户要求：**段大小改为内置设置、不再允许更改**（4 MB）。
+ * 旧版本持久化的段大小仍沿用，避免已有缓存按新段宽错位；新安装默认 4 MB。
+ * 其余参数：**预读段数即时生效**，缓存上限下次连接生效。
  */
 @Composable
 fun NetworkTuningSection(
     tuning: CacheTuning,
     onReadAheadSegments: (Int) -> Unit,
-    onSegmentBytes: (Long) -> Unit,
     /** 缓存总上限（**GB**，用户要求）。 */
     onCacheBytes: (Long) -> Unit,
     /** 当前缓存占用（字节）；null = 还没读到（本地根目录时为 0）。 */
@@ -60,7 +60,7 @@ fun NetworkTuningSection(
             Text("网络与缓冲", style = MaterialTheme.typography.titleMedium)
             Text(
                 text = "缓存按「段」存：正在看的这个文件的段不会被淘汰，所以下次打开同一个文件是直接读本地。" +
-                    "「段大小」在下次连接后生效，「预读段数」即时生效。",
+                    "「段大小」是内置参数，不再提供设置；「预读段数」即时生效。",
                 style = MaterialTheme.typography.bodySmall,
             )
 
@@ -82,6 +82,10 @@ fun NetworkTuningSection(
             Text(
                 text = "调大 = 播放更不容易卡，但流量与磁盘占用更多（按流量计费时慎调）。",
                 style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                text = "段大小：" + labelOfBytes(tuning.segmentBytes) + "（内置，不可修改）",
+                style = MaterialTheme.typography.bodyMedium,
             )
 
             // ---------------- 缓存上限（2026-10-03 用户要求：GB 档位 + **可以自己输入一个值**）
@@ -157,21 +161,10 @@ fun NetworkTuningSection(
                 TextButton(onClick = onOpenCacheDetail) { Text("查看缓存明细") }
             }
 
-            Text("段大小（缓存最小单位，下次连接生效）", style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CacheTuning.SEGMENT_CHOICES.forEach { bytes ->
-                    FilterChip(
-                        selected = tuning.segmentBytes == bytes,
-                        onClick = { onSegmentBytes(bytes) },
-                        label = { Text(labelOfBytes(bytes)) },
-                    )
-                }
-            }
-
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onReset) { Text("恢复默认") }
                 Text(
-                    text = "默认 4 MB 段 · 预读 2 段",
+                    text = "默认 4 MB 段 · 预读 4 段（段大小已内置）",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

@@ -62,7 +62,7 @@ fun settingsNotesFor(notes: List<SettingsNote>, group: SettingsGroup): List<Sett
 class SettingsSections(
     /** 播放设置（画中画自动进入、控件自动隐藏……）。 */
     val playback: (@Composable ColumnScope.() -> Unit)? = null,
-    /** 网络与缓冲（预读 / 段大小 / 缓存上限与用量）。 */
+    /** 网络与缓冲（预读 / 缓存上限与用量；段大小已内置）。 */
     val network: (@Composable ColumnScope.() -> Unit)? = null,
     /** 应用内更新。 */
     val update: (@Composable ColumnScope.() -> Unit)? = null,

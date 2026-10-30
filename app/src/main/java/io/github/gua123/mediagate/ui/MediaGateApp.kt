@@ -722,7 +722,7 @@ private fun SettingsRoute(
     }
     val updateState by updateViewModel.state.collectAsStateWithLifecycle()
 
-    // 网络与缓冲参数（2026-10-03）：设置页里能改，改完即时生效（段大小下次连接生效）
+    // 网络与缓冲参数：预读/缓存上限可在设置页改；段大小已内置为 4 MB
     val networkTuning by container.networkTuning.tuning.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
@@ -807,14 +807,11 @@ private fun SettingsRoute(
                     onBufferSeconds = { seconds -> scope.launch { container.updateBufferSeconds(seconds) } },
                 )
             },
-            // 网络与缓冲（2026-10-03 用户要求）：并发数/块大小/预读/段大小 开放给用户自己调
+            // 网络与缓冲（2026-10-03 用户要求）：预读/缓存上限开放；段大小已内置为 4 MB
             network = {
                 NetworkTuningSection(
                     tuning = networkTuning,
                     onReadAheadSegments = { value -> scope.launch { container.networkTuning.setReadAheadSegments(value) } },
-                    onSegmentBytes = { value ->
-                        scope.launch { container.networkTuning.setSegmentMb((value / (1024 * 1024)).toInt()) }
-                    },
                     onCacheBytes = { value ->
                         scope.launch { container.networkTuning.setCacheMb((value / (1024 * 1024)).toInt()) }
                     },
