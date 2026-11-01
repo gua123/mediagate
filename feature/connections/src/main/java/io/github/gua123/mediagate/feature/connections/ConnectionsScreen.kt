@@ -202,6 +202,7 @@ fun ConnectionsScreen(
                         onRetest = { viewModel.test(card.id, force = true) },
                         onSetCurrent = { viewModel.setCurrent(card.id) },
                         onEdit = { viewModel.openEdit(card.id) },
+                        onDuplicate = { viewModel.duplicate(card.id) },
                         onDelete = { viewModel.requestDelete(card.id) },
                     )
                 }
@@ -395,6 +396,7 @@ private fun ConnectionCard(
     onRetest: () -> Unit,
     onSetCurrent: () -> Unit,
     onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -433,6 +435,10 @@ private fun ConnectionCard(
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.connections_action_edit)) },
                             onClick = { menuOpen = false; onEdit() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.connections_action_duplicate)) },
+                            onClick = { menuOpen = false; onDuplicate() },
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.connections_action_delete)) },
