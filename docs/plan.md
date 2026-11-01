@@ -225,43 +225,17 @@
 
 ### 4.5 连接、地址与网络切换（沿用 v1，接真实测试地址）
 
-- 连接记录含多个地址（LAN / 公网域名）。**2026-10-25 用户要求：按「先内网后外网」选路**——不再使用传输类型 / SSID / 本机网段这类规则；
-  局域网地址排在前面，TCP 探测（1.5 s 上限）不通就自动改用公网（每条连接可切换成"先外网后内网"，默认局域网优先）。
-- 判定顺序：网络能力 → 优先网络排序 → 顺序 TCP 探测（首选不通自动换下一个）→ 协议握手（真正的决定权）；
-  网络变化（`NetworkCallback` 的 revision）或连接被编辑时重新判断；同一条连接 + 同一份网络现场的结果会复用，不重复探测。
-- 旧的并行竞速（RaceProbe）与按 Wi-Fi/蜂窝切换规则的实现已移除：并行竞速会让公网抢在局域网前面，与"先内网"口径冲突。
+- **2026-11-01 用户要求：一条连接只能有一个地址、一种网络类型**（公网或局域网二选一）；不再同时挂两地址，也不再先内网后外网自动切换。
+- 旧的 TCP 顺序探测 / 地址回退缓存已移除；连接卡片上的复制动作统一为「全量复制连接」，复制后打开副本编辑器。
 - 连通性测试三段计时：DNS 解析 / TCP 握手 / 协议握手（WebDAV PROPFIND 期望 207 或 200，401=账号密码错；SFTP banner + 认证 + 列目录，主机密钥变更红色告警；FTP 220 + 登录 + PASV）。
-- 验收直接用用户给的两组地址：在家 Wi-Fi 应命中 192.168.1.10，切蜂窝应命中 dav.example.com。
+- 验收：公网连接与局域网连接各建一条（或编辑现有连接地址），确认目录与播放正常。
 
-### 4.6 播放内核：多引擎 + 硬解/软解（R9/R10，v2 新增）
+### 4.6 播放内核：Media3 单内核 + 硬解/软解（R9/R10）
 
-> ⚠️ **2026-10-15 变更（以此为准）**：**播放内核回到单一 Media3**——自研引擎与 LibVLC **双双下线**。
-> 用户原话：「**画面全没有，所以我想切回原先的引擎，将自研引擎和 libvlc 都去掉吧，原有引擎就可以。**」
-> 背景：自研引擎能在播放页切过去，但真机上**不出画面**；LibVLC 在这台机器上会把 App 整个带走（历史面包屑为证）。
-> 执行口径：`EngineSelection.availableEngines()` 只含 Media3（"有几个内核可用"的唯一判据）⇒ 播放页不再有「内核」按钮；
-> `resolvePreference()` 把旧版本存过的偏好解析回 Media3；`fallbackFrom()` 恒 null（不再有"改用另一内核续播"）；
-> **三种解码档位都在 Media3 内部实现**（`FORCE_SW` 走 `softwareOnly` 解码器筛选）。下面的表格与降级链是**历史设计**，
-> 保留是为了说明"当初为什么这么设计"；复活路径见 `docs/方案-播放引擎重写.md` §9.4i。
+- **播放内核只有 Media3 ExoPlayer**；统一 `PlayerEngine` 抽象保留，但 `EngineSelection.availableEngines()` 只含 Media3。
+- 三种解码档位都在 Media3 内部实现：AUTO_HW（默认，硬解优先）/ FORCE_HW / FORCE_SW（`softwareOnly` 筛选）。
+- 远端数据源统一走 `BackendDataSource`（映射 Range）；解码失败给中文原因，不静默降级。
 
-    interface PlayerEngine {
-        fun setMedia(src: MediaSourceRef)      // 内部映射到 ExoPlayer MediaSource 或 VLC Media
-        fun prepare(); fun play(); fun pause(); fun seekTo(ms: Long)
-        fun setSpeed(x: Float); fun setResizeMode(m: ResizeMode)
-        fun setDecoderMode(m: DecoderMode)     // AUTO_HW(默认) / FORCE_SW / FORCE_HW
-        fun subtitles(): SubtitleTrackController
-        fun videoView(): View / Surface        // Compose 里用 AndroidView 挂载
-        fun positionMs(): Long; fun durationMs(): Long
-        fun release()
-    }
-
-| 引擎 | 实现 | 硬解 | 软解 | 说明 |
-| --- | --- | --- | --- | --- |
-| Media3（默认） | ProgressiveMediaSource + BackendDataSource | MediaCodec（默认优先） | 音频可叠 media3 FFmpeg 解码扩展 | seek/字幕/缩略图联动最顺 |
-| LibVLC | libvlc-all 3.7.6，媒体源走**本机回环 HTTP 代理**（自研，支持 Range）或本地缓存文件 | `--avcodec-hw=any` | `--avcodec-hw=none` | 覆盖畸形 TS / 冷门编码 |
-
-- **解码模式开关**：AUTO（默认，硬解优先）→ 失败或用户手动切 FORCE_SW 时走 LibVLC 软解；切换时保留播放位置与字幕状态。
-- **自动降级**：Media3 报解码/抽取错误 → 提示并一键切 VLC 同位置续播。
-- 回环代理（127.0.0.1 随机端口，仅本机绑定）同时给 LibVLC、外部播放器、以及"分享播放地址"复用，是让第二引擎复用同一数据层的关键件。
 
 ### 4.7 ~~字幕：外挂 + 本地小模型 CPU 音转字幕（R14，v2 新增）~~ **整条作废（2026-10-19 用户要求删除字幕部分）**
 
