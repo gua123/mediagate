@@ -89,6 +89,18 @@ class ConnectionsViewModel(
         }
     }
 
+    /**
+     * 复制连接（2026-11-01 用户要求「复制连接需要全部复制」）：仓储复制全部字段后，
+     * 直接打开副本的编辑器，用户可继续改协议或目标地址。
+     */
+    fun duplicate(id: Long) {
+        viewModelScope.launch {
+            val newId = withContext(io) { repository.duplicate(id) } ?: return@launch
+            val record = withContext(io) { repository.byId(newId) } ?: return@launch
+            _state.update { it.reduce(ConnectionsEvent.EditorOpened(record.toDraft())) }
+        }
+    }
+
     /** 关闭编辑器（放弃修改）。 */
     fun closeEditor() {
         _state.update { it.reduce(ConnectionsEvent.EditorClosed) }

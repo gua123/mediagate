@@ -132,6 +132,36 @@ class ConnectionRepository(
         }
     }
 
+    /**
+     * 复制一条连接（**2026-11-01 用户要求「复制连接需要全部复制」**）。
+     *
+     * 复制名称 / 协议 / 根路径 / 账号 / 已加密密码 / 协议选项 / TLS / 地址 / 选路规则；
+     * 只重置 id、上次成功地址与检测时间。密码不在这里解密，直接复制密文，界面打开时显示「已保存」。
+     *
+     * @return 新连接 id；源连接不存在时 null。
+     */
+    suspend fun duplicate(id: Long): Long? = withContext(io) {
+        database.withTransaction {
+            val source = dao.byId(id) ?: return@withTransaction null
+            val sourceAddresses = dao.addressesOf(id)
+            val primary = sourceAddresses.firstOrNull { it.id == source.lastWorkingAddressId }
+                ?: sourceAddresses.firstOrNull()
+            val sourceRule = dao.rulesOf(id).firstOrNull()
+            val copied = source.copy(
+                id = 0L,
+                name = source.name + " 副本",
+                lastWorkingAddressId = null,
+                lastCheckedAt = null,
+            )
+            val newId = dao.upsert(copied)
+            primary?.let { dao.upsertAddress(it.copy(id = 0L, connectionId = newId)) }
+            if (sourceRule != null) {
+                dao.upsertRule(sourceRule.copy(id = 0L, connectionId = newId))
+            }
+            newId
+        }
+    }
+
     /** 删除连接（连带地址与规则，同一事务）。 */
     suspend fun delete(id: Long) = withContext(io) {
         database.withTransaction {
