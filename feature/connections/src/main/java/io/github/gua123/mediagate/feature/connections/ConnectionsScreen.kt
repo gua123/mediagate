@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.widget.Toast
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
@@ -400,7 +399,6 @@ private fun ConnectionCard(
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val context = LocalContext.current
     val now = remember(card.test) { System.currentTimeMillis() }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -480,20 +478,12 @@ private fun ConnectionCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    card.copyLink?.let { link ->
-                        IconButton(
-                            onClick = {
-                                val clipboard = context.getSystemService(ClipboardManager::class.java)
-                                clipboard?.setPrimaryClip(ClipData.newPlainText("连接地址", link))
-                                Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
-                            },
-                        ) {
-                            Icon(
-                                Icons.Default.ContentCopy,
-                                contentDescription = "复制链接",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
+                    IconButton(onClick = onDuplicate) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = "复制连接",
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
             }
