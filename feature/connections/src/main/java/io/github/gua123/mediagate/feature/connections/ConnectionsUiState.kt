@@ -34,6 +34,8 @@ data class ConnectionCardUi(
     val browsable: Boolean,
     val addresses: List<AddressRecord>,
     val prefer: AddressLabel,
+    /** 供卡片上的「复制链接」用；本地连接复制路径，远端复制 URL。 */
+    val copyLink: String?,
     val lastCheckedAt: Long?,
     val status: ConnectionStatus,
     val current: Boolean,
@@ -62,8 +64,16 @@ data class ConnectionCardUi(
             name = record.name,
             protocolText = record.protocolText,
             browsable = record.browsable,
-            addresses = record.addresses,
+            // 一条连接只显示一个地址（2026-11-01 用户要求）
+            addresses = listOfNotNull(record.primaryAddress),
             prefer = record.prefer,
+            copyLink = record.primaryAddress?.let { address ->
+                if (record.protocol == io.github.gua123.mediagate.core.network.ProtocolKind.LOCAL) {
+                    address.host
+                } else {
+                    ConnectionBackends.remoteDisplayPath(address.scheme, address.toSelectable(), record.basePath)
+                }
+            },
             lastCheckedAt = record.lastCheckedAt,
             status = statusOf(record.id, testing, result),
             current = currentId == record.id,

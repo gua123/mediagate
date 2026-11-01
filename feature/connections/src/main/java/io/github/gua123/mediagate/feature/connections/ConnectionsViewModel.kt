@@ -391,7 +391,8 @@ internal fun defaultDraft(protocol: ProtocolKind): ConnectionDraft {
 internal fun ConnectionRecord.toDraft(): ConnectionDraft {
     val resolved = protocol ?: ProtocolKind.LOCAL
     val defaults = ProtocolDefaults.of(resolved)
-    val addressDrafts = addresses.map {
+    // 一条连接只保留一个地址：旧库若残留公网+局域网，用上次成功的那条，其余不再显示。
+    val addressDrafts = listOfNotNull(primaryAddress).map {
         AddressDraft(
             id = it.id,
             label = it.label,

@@ -64,44 +64,42 @@ class ConnectionsUiStateTest {
         val card = state.cards.single()
         assertEquals("家里的网盘", card.name)
         assertEquals("WebDAV", card.protocolText)
-        assertEquals(2, card.addressCount)
+        assertEquals(1, card.addressCount)
         assertEquals(ConnectionStatus.UNTESTED, card.status)
         assertFalse(card.current)
         assertTrue(card.browsable)
     }
 
     @Test
-    fun `卡片按先内网后外网给出首选地址与兜底说明`() {
+    fun `一条连接只保留一个地址`() {
         val state = ConnectionsUiState()
             .reduce(ConnectionsEvent.Loaded(listOf(record), currentConnectionId = null, network = wifi))
         val card = state.cards.single()
         val selection = card.selection!!
-        assertEquals(SelectionReason.PREFERRED_FIRST, selection.reason)
+        assertEquals(SelectionReason.SINGLE_ADDRESS, selection.reason)
         assertEquals(1L, selection.primary!!.id)
-        assertTrue("两个地址应能自动兜底", selection.hasFallback)
-        val text = card.selectionText!!
-        assertTrue(text.contains("先内网后外网"))
-        assertTrue(text.contains("192.168.1.10"))
+        assertFalse("单地址没有兜底", selection.hasFallback)
+        assertTrue(card.selectionText!!.contains("只有一个地址"))
     }
 
     @Test
-    fun `换到蜂窝网络仍先内网后外网（不再按传输类型改规则）`() {
+    fun `换到蜂窝网络仍只显示同一个地址`() {
         val state = ConnectionsUiState()
             .reduce(ConnectionsEvent.Loaded(listOf(record), null, wifi))
             .reduce(ConnectionsEvent.Loaded(listOf(record), null, cellular))
         val selection = state.cards.single().selection!!
-        assertEquals(SelectionReason.PREFERRED_FIRST, selection.reason)
+        assertEquals(SelectionReason.SINGLE_ADDRESS, selection.reason)
         assertEquals(1L, selection.primary!!.id)
     }
 
     @Test
-    fun `连接可以改成先外网后内网`() {
-        val wanFirst = record.copy(prefer = AddressLabel.WAN)
+    fun `旧库多地址时优先沿用上次成功的地址`() {
+        val withLastWorkingWan = record.copy(lastWorkingAddressId = 2L)
         val card = ConnectionsUiState()
-            .reduce(ConnectionsEvent.Loaded(listOf(wanFirst), null, wifi))
+            .reduce(ConnectionsEvent.Loaded(listOf(withLastWorkingWan), null, wifi))
             .cards.single()
+        assertEquals(1, card.addressCount)
         assertEquals(2L, card.selection!!.primary!!.id)
-        assertTrue(card.selectionText!!.contains("先外网后内网"))
     }
 
     @Test
