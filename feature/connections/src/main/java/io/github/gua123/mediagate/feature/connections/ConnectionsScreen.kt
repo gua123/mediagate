@@ -18,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.AlertDialog
@@ -201,7 +203,6 @@ fun ConnectionsScreen(
                         onSetCurrent = { viewModel.setCurrent(card.id) },
                         onEdit = { viewModel.openEdit(card.id) },
                         onDelete = { viewModel.requestDelete(card.id) },
-                        onAddPaired = { viewModel.openEditWithPairedAddress(card.id) },
                     )
                 }
                 item { Spacer(modifier = Modifier.height(72.dp)) }
@@ -395,21 +396,9 @@ private fun ConnectionCard(
     onSetCurrent: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    /** 卡片上直接补一条缺失的网络（局域网 / 公网）。 */
-    onAddPaired: () -> Unit = {},
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    // 缺哪条网络：只给"还缺一条"的远程连接这个入口（本地目录连接没有内外网可言）
-    val missingLabel = if (card.local) {
-        null
-    } else {
-        when {
-            card.addresses.isEmpty() -> null
-            card.addresses.none { it.label == AddressLabel.LAN } -> AddressLabel.LAN
-            card.addresses.none { it.label == AddressLabel.WAN } -> AddressLabel.WAN
-            else -> null
-        }
-    }
+    val context = LocalContext.current
     val now = remember(card.test) { System.currentTimeMillis() }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -477,12 +466,30 @@ private fun ConnectionCard(
             HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
 
-            card.addresses.forEach { address ->
-                Text(
-                    text = address.display,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            card.addresses.take(1).forEach { address ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = address.display,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    card.copyLink?.let { link ->
+                        IconButton(
+                            onClick = {
+                                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("连接地址", link))
+                                Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
+                            },
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = "复制链接",
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
             }
             if (card.addresses.isEmpty()) {
                 Text(
@@ -490,11 +497,6 @@ private fun ConnectionCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-            }
-            missingLabel?.let { label ->
-                TextButton(onClick = onAddPaired) {
-                    Text(stringResource(R.string.connections_action_add_missing, label.zhText))
-                }
             }
 
             card.test?.let { test ->
@@ -690,42 +692,23 @@ private fun ConnectionEditorScreen(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Spacer(modifier = Modifier.height(8.dp))
-            draft.addresses.forEachIndexed { index, address ->
-                AddressEditor(
-                    index = index,
-                    protocol = draft.protocol,
-                    address = address,
-                    errors = errors.addressErrors.getOrNull(index).orEmpty(),
-                    onChange = { onAddressChange(index, it) },
-                    onAddPaired = { onAddPairedAddress(index) },
-                    onRemove = { onRemoveAddress(index) },
-                    removable = draft.addresses.size > 1,
-                    localRoot = localRoot,
-                    onRequestAllFilesAccess = onRequestAllFilesAccess,
-                    onPickLocalDirectory = onPickLocalDirectory,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            OutlinedButton(onClick = onAddAddress) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.connections_action_add_address))
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.connections_addresses_pair_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // 一条连接只允许一个地址/一种网络类型（2026-11-01 用户要求）
+            val index = 0
+            val address = draft.addresses.firstOrNull() ?: AddressDraft(
+                scheme = ProtocolDefaults.of(draft.protocol).scheme,
+                port = ProtocolDefaults.of(draft.protocol).port,
             )
-
-            // 本地目录没有内外网之分：不显示选路开关（避免让人以为它也按网络切换）
-            if (draft.protocol != ProtocolKind.LOCAL) {
-                Spacer(modifier = Modifier.height(16.dp))
-                RoutingSection(
-                    prefer = draft.prefer,
-                    onChange = { onDraftChange(draft.withPrefer(it)) },
-                )
-            }
+            AddressEditor(
+                index = index,
+                protocol = draft.protocol,
+                address = address,
+                errors = errors.addressErrors.getOrNull(index).orEmpty(),
+                onChange = { onAddressChange(index, it) },
+                localRoot = localRoot,
+                onRequestAllFilesAccess = onRequestAllFilesAccess,
+                onPickLocalDirectory = onPickLocalDirectory,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(stringResource(R.string.connections_section_credentials), style = MaterialTheme.typography.titleSmall)
@@ -892,8 +875,8 @@ private fun AddressEditor(
     onChange: (AddressDraft) -> Unit,
     /** 「再加一条同一服务器的另一条网络」（局域网 ↔ 公网）。 */
     onAddPaired: () -> Unit = {},
-    onRemove: () -> Unit,
-    removable: Boolean,
+    onRemove: () -> Unit = {},
+    removable: Boolean = false,
     /** 已选的本地根目录（LOCAL 时给"用已选的目录"用）。 */
     localRoot: LocalRootUi = LocalRootUi(),
     onRequestAllFilesAccess: () -> Unit = {},
@@ -998,27 +981,7 @@ private fun AddressEditor(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = address.priority,
-                onValueChange = { onChange(address.copy(priority = it)) },
-                label = { Text(stringResource(R.string.connections_field_priority)) },
-                supportingText = { Text(stringResource(R.string.connections_field_priority_hint)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                text = stringResource(R.string.connections_address_index, index + 1),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (ProtocolDefaults.needsHostAndPort(protocol)) {
-                TextButton(onClick = onAddPaired) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.connections_action_add_paired))
-                }
-            }
+
         }
     }
 }

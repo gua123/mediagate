@@ -44,8 +44,17 @@ data class ConnectionRecord(
     val browsable: Boolean
         get() = protocol != null
 
-    /** 交给选路逻辑的地址列表（R7）。 */
-    fun selectableAddresses(): List<SelectableAddress> = addresses.map { it.toSelectable() }
+    /**
+     * 2026-11-01 用户要求：**一条连接只能有一个地址/一种网络类型**（不能再同时挂局域网+公网）。
+     *
+     * 旧库里可能残留多条地址：优先沿用上次成功的地址，否则取第一条；其余地址不再参与选路，
+     * 用户下次保存时仓储会把它们删掉。
+     */
+    val primaryAddress: AddressRecord?
+        get() = addresses.firstOrNull { it.id == lastWorkingAddressId } ?: addresses.firstOrNull()
+
+    /** 交给选路/后端的地址列表：现在永远最多一个。 */
+    fun selectableAddresses(): List<SelectableAddress> = listOfNotNull(primaryAddress?.toSelectable())
 }
 
 /** 界面用的地址记录（**R7** 多地址）。 */
