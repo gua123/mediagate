@@ -198,17 +198,6 @@ class AppContainer(context: Context) :
      */
     private val addressFallbackProbe = AddressFallbackProbe()
 
-    /**
-     * 上一次选路结果（同一条连接 + 同一份网络现场 + 同一组地址时复用，避免每次刷新都探测一遍）。
-     *
-     * 网络变化会让 [NetworkContext.revision] 变，key 自然失效并重新探测；
-     * 连接被编辑（地址/优先网络变化）也会让 key 变化。
-     */
-    private var lastAddressChoice: AddressChoiceCache? = null
-
-    /** @param key 选路输入指纹（连接 + 网络现场 + 地址）。 */
-    private data class AddressChoiceCache(val key: String, val address: SelectableAddress?)
-
     /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
     val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
 
@@ -1586,9 +1575,8 @@ class AppContainer(context: Context) :
      * **2026-10-25 用户要求「先内网后外网」**：先按「优先网络 → 同网络优先级」排好序，
      * 再依次 TCP 探测（1.5 s 上限）；局域网不通会自动改用公网，不再依赖 Wi-Fi / 蜂窝这类规则。
      *
-     * 同一条连接 + 同一份网络现场 + 同一组地址的结果会缓存（[lastAddressChoice]）：
-     * 网络变化时 revision 变、连接被编辑时地址/偏好变，key 自然失效——不会每次刷新都探测。
-     *
+     * **不做跨调用缓存**：VPN/网络回调不及时时缓存会把上一次的局域网选择继续用下去；
+     * 选路只在换连接/网络变化时发生，多一次 TCP 探测换正确性。
      * 没有可用地址时给一条中文提示（界面弹 Snackbar），调用方随后回落到本地根目录——
      * 比起"悄悄什么都不做"，用户至少知道为什么目录还是本地那套。
      */
@@ -1601,9 +1589,9 @@ class AppContainer(context: Context) :
             return null
         }
 
-        val key = addressChoiceKey(record, network)
-        lastAddressChoice?.takeIf { it.key == key }?.let { return it.address }
-
+        // 不做跨调用缓存：旧实现用「连接 + network.revision + 地址」做 key，但 VPN/网络回调
+        // 没及时刷新时会把上一次的局域网选择继续用下去，导致 5G 下目录一直超时。
+        // 选路只发生在换连接/网络变化时，多一次 1.5s TCP 探测换来正确性，值得。
         val choice = addressFallbackProbe.choose(selection.ordered)
         val chosen = choice.address ?: primary
         if (choice.usedFallback) {
@@ -1613,16 +1601,8 @@ class AppContainer(context: Context) :
                     " 不通，已自动改用 " + chosen.display,
             )
         }
-        lastAddressChoice = AddressChoiceCache(key, chosen)
         return chosen
     }
-
-    /** 选路输入指纹：连接 + 网络现场 + 地址组；任何一项变了都要重新探测。 */
-    private fun addressChoiceKey(record: ConnectionRecord, network: NetworkContext): String =
-        record.id.toString() + "#" + network.revision + "#" + record.prefer.id + "#" +
-            record.addresses.joinToString(",") {
-                it.id.toString() + ":" + it.label.id + ":" + it.scheme + "://" + it.host + ":" + it.port
-            }
 
     /**
      * 远端后端的统一收尾（WebDAV / SFTP / FTP 共用）：换根、关旧、发布、启动自检。
