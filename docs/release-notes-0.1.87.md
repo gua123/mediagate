@@ -1,7 +1,17 @@
-# 0.1.86 发布说明（候选，待真机验证）
+# 0.1.87 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.86 缩放不生效修正（2026-11-12 截图反馈）
+
+- **现象**：本地视频播放位置仍不对，底部「缩放」四档切换不起作用。
+- **原因**：0.1.85/0.1.86 依赖 VLC 的 `VideoHelper/setVideoScale` 做 fit/crop；部分机型/vout 下它不生效，
+  画面仍按原始尺寸/位置画，缩放档位只改了标签。
+- **修**：新增 `VlcVideoSurface`（TextureView 容器），**缩放完全由 app 自己算**：
+  TextureView 布局尺寸 = 视频原始宽高，再用 View 的 scaleX/scaleY 做
+  FIT=min 等比、CROP=max 等比、STRETCH=非等比、ORIGINAL=1:1；容器 `clipChildren=true` 裁掉超出部分。
+  这样缩放不再经过 VLC，四档一定能生效。视频轨道尺寸从 `currentVideoTrack` 取，Vout/ESAdded 时重排。
 
 ## 0.1.85 真机黑屏修正（2026-11-12 截图反馈）
 
