@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.85：0.1.84 候选的真机修正——LibVLC 用官方 VLCVideoLayout（不再左上角原生尺寸）+ 缓冲事件修正。
-        versionCode = 86
-        versionName = "0.1.85"
+        // 0.1.86：0.1.85 真机黑屏修正——VLCVideoLayout 等 attach 后再挂给 VLC，attach 前的 play 记 pending。
+        versionCode = 87
+        versionName = "0.1.86"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

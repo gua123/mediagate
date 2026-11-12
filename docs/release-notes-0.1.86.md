@@ -1,7 +1,15 @@
-# 0.1.85 发布说明（候选，待真机验证）
+# 0.1.86 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.85 真机黑屏修正（2026-11-12 截图反馈）
+
+- **现象**：进入播放页黑屏、进度 0:00、时长 --:--、中间是播放键；没有错误面板。
+- **原因**：0.1.85 换成 VLCVideoLayout 后，在 Compose 的 AndroidView 还没把 layout 挂到窗口时就把 layout 交给了 VLC，
+  内部 SurfaceView 没有有效 surface，VLC 停在起播前（不报错）。
+- **修**：等 VLCVideoLayout `onAttachedToWindow` 后再 `player.attachViews`；attach 前收到的 `play()` 记成
+  pendingPlay，attach 后自动起播；`Vout` 后再套一次缩放档位。这样默认「适应屏幕」也能在窗口尺寸确定后生效。
 
 ## 0.1.84 候选的真机修正（2026-11-12 截图反馈）
 

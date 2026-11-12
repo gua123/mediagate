@@ -119,6 +119,23 @@ class VlcEngine(
     /** 视频输出视图（VLCVideoLayout / SurfaceView / TextureView），由调用方提供或本类默认。 */
     private var attachedView: View? = videoView ?: defaultVideoLayout
 
+    /** 视频输出是否已经真正挂到窗口/播放器（Compose 里 AndroidView 稍后才 attach）。 */
+    private var videoOutputAttached = false
+
+    /** 视频视图还没 attach 时收到的 play()：等 attach 完再起播，否则 VLC 会停在黑屏 0:00。 */
+    private var pendingPlay = false
+
+    /** VLCVideoLayout 从 Compose 树里 attach 上来时再挂给 VLC（此时内部 SurfaceView 才有窗口）。 */
+    private val attachStateListener = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) {
+            if (v is VLCVideoLayout) attachLayoutIfReady(v)
+        }
+
+        override fun onViewDetachedFromWindow(v: View) {
+            videoOutputAttached = false
+        }
+    }
+
     /** LibVLC 实例；解码档位是实例级选项，切档位要重建（见 [setDecoderMode]）。 */
     private var libVlc: LibVLC = buildLibVlc(mode)
 
@@ -138,25 +155,36 @@ class VlcEngine(
      * @param view null = 解绑当前视图。
      */
     fun attachVideoOutput(view: View?) {
+        (attachedView as? VLCVideoLayout)?.removeOnAttachStateChangeListener(attachStateListener)
         val vout = player.vlcVout
+        videoOutputAttached = false
         when (view) {
             null -> {
                 if (vout.areViewsAttached()) player.detachViews()
+                attachedView = null
+                return
             }
 
-            // 官方封装：内部会按视频尺寸/缩放档位设置 SurfaceView，并处理居中
+            // 官方封装：内部会按视频尺寸/缩放档位设置 SurfaceView，并处理居中。
+            // **不能在这里立刻 attach**：Compose 的 AndroidView 还没把 layout 挂到窗口，
+            // 内部 SurfaceView 没有有效 surface，VLC 会停在 0:00 黑屏；等 onViewAttachedToWindow。
             is VLCVideoLayout -> {
-                if (!vout.areViewsAttached()) player.attachViews(view, null, false, false)
+                attachedView = view
+                if (view.isAttachedToWindow) attachLayoutIfReady(view)
+                else view.addOnAttachStateChangeListener(attachStateListener)
+                return
             }
 
             is SurfaceView -> {
                 vout.setVideoView(view)
                 if (!vout.areViewsAttached()) vout.attachViews()
+                videoOutputAttached = true
             }
 
             is TextureView -> {
                 vout.setVideoView(view)
                 if (!vout.areViewsAttached()) vout.attachViews()
+                videoOutputAttached = true
             }
 
             else -> {
@@ -165,6 +193,33 @@ class VlcEngine(
             }
         }
         attachedView = view
+    }
+
+    /** VLCVideoLayout 已 attach 到窗口：把它挂给 MediaPlayer（内部 SurfaceView 这时才有 surface）。 */
+    private fun attachLayoutIfReady(view: VLCVideoLayout) {
+        if (attachedView !== view) return
+        if (!player.vlcVout.areViewsAttached()) {
+            try {
+                player.attachViews(view, null, false, false)
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "LibVLC 视频输出挂载失败", t)
+                _state.value = EngineState.Error("LibVLC 视频输出挂载失败：" + ErrorText.of(t, "未知原因"), t)
+                pendingPlay = false
+                return
+            }
+        }
+        videoOutputAttached = player.vlcVout.areViewsAttached()
+        applyVideoScale()
+        if (pendingPlay) {
+            pendingPlay = false
+            AppLog.i(TAG, "视频视图已挂载，开始起播（之前收到过 play）")
+            player.play()
+        }
+    }
+
+    /** 把当前缩放档位重新套给 VLC（Vout/attach 后再套一次，避免拿到 0 尺寸时算错）。 */
+    private fun applyVideoScale() {
+        runCatching { player.setVideoScale(resize.toVlcScaleType()) }
     }
 
     override fun videoView(): View? = attachedView
@@ -215,10 +270,19 @@ class VlcEngine(
             _state.value = EngineState.Error("音频焦点被其它应用占用，暂时不能播放（可稍后再试）")
             return
         }
+        // Compose 还没把 VLCVideoLayout 挂到窗口：先记下，等 attach 完再真正起播。
+        // 否则 VLC 可能停在 0:00 黑屏（真机截图：标题/控制都在、进度 0:00、时长 --:--）。
+        if (attachedView is VLCVideoLayout && !videoOutputAttached) {
+            pendingPlay = true
+            _state.value = EngineState.Preparing
+            AppLog.i(TAG, "视频视图尚未挂载，等待 attach 后起播")
+            return
+        }
         player.play()
     }
 
     override fun pause() {
+        pendingPlay = false
         if (player.isPlaying) player.pause()
         abandonAudioFocus()
     }
@@ -322,6 +386,9 @@ class VlcEngine(
     override fun durationMs(): Long = player.length.coerceAtLeast(0L)
 
     override fun release() {
+        pendingPlay = false
+        videoOutputAttached = false
+        (attachedView as? VLCVideoLayout)?.removeOnAttachStateChangeListener(attachStateListener)
         try {
             player.setEventListener(null)
             player.detachViews()
@@ -393,6 +460,9 @@ class VlcEngine(
     private fun onVlcEvent(event: MediaPlayer.Event) {
         when (event.type) {
             MediaPlayer.Event.Opening -> _state.value = EngineState.Preparing
+
+            // Vout 出现后视频尺寸/画面窗口才稳定，重新套一次缩放档位（默认适应屏幕）
+            MediaPlayer.Event.Vout -> applyVideoScale()
 
             // 100 = 缓冲完成。VLC 在 Playing 之后还可能补发一次 Buffering(100)，
             // 如果一律当 Preparing，界面会一直停在“正在缓冲…”（真机截图复现）。
