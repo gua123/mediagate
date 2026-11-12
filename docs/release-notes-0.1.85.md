@@ -1,7 +1,15 @@
-# 0.1.84 发布说明（候选，待真机验证）
+# 0.1.85 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.84 候选的真机修正（2026-11-12 截图反馈）
+
+- **视频只画在左上角、按原始像素大小**：0.1.84 用裸 SurfaceView 当全屏容器，绕过了 libvlc-android 的
+  `VideoHelper`，视频按 720×1280 之类的原始尺寸画在 (0,0)，下面/右边被裁掉。改为官方
+  **VLCVideoLayout + MediaPlayer.attachViews(layout, null, false, false)**，由它处理尺寸、等比缩放与居中。
+- **播放中一直显示“正在缓冲…”**：VLC 在 Playing 之后还会补发一次 `Buffering(100)`，旧映射把任何
+  Buffering 都当 Preparing，状态被永久拉回缓冲中。现在 `buffering >= 100` 视为 Ready，只有 <100 才显示缓冲。
 
 ## 新：视频播放引擎改为 LibVLC 3.7.7
 
@@ -25,7 +33,7 @@
 
 ## 验证
 
-- 全量 JVM 单测 **1438 通过 / 1 跳过 / 0 失败**（含新增 VlcCachePolicyTest、更新内核选择/降级/播放页用例）；
+- 全量 JVM 单测 **1438 通过 / 1 跳过 / 0 失败**（含新增 VlcCachePolicyTest、更新内核选择/降级/播放页用例；0.1.85 只改渲染容器与缓冲事件，未新增用例）；
 - :app:assembleDebug 与 :app:assembleRelease 均通过（R8 keep 规则已补 org.videolan.libvlc.**）；
 - **真机待验证**：LibVLC 能否初始化、首帧、硬解、拖拽 seek、后台播放/通知栏、画中画比例（VLC 的 SurfaceView 不报视频尺寸，PIP 暂按 16:9）。
 

@@ -126,7 +126,7 @@ private val CONTROL_SCRIM = Color.Black.copy(alpha = 0.45f)
 /**
  * 视频播放页（R1 视频 / R4 拖拽 / R9 多内核 / R10 硬软解 / R16 全中文）。
  *
- * 结构：全屏黑底 → AndroidView 挂引擎给的画面（Media3 是 PlayerView、LibVLC 是 SurfaceView）→
+ * 结构：全屏黑底 → AndroidView 挂引擎给的画面（Media3 是 PlayerView、LibVLC 是 VLCVideoLayout）→
  * 点按显隐的控制层（返回 / 播放暂停 / 可拖拽进度条与时间 / 倍速 / 上下集 / 内核切换 /
  * 解码档位 / 缩放 / 集数）→ 失败面板（播放失败 + 一键切 LibVLC 续播）→ 切换遮罩（正在切换解码器…）。
  *
@@ -1269,7 +1269,7 @@ private fun errorMessage(kind: VideoErrorKind?): String = stringResource(
 /**
  * 把引擎给的画面挂进 Compose。
  *
- * 视图由引擎创建（Media3 的 PlayerView / :app 注入给 LibVLC 的 SurfaceView），换内核时是**另一个实例**，
+ * 视图由引擎创建（Media3 的 PlayerView / LibVLC 的 VLCVideoLayout），换内核时是**另一个实例**，
  * 这里的防御性 detach 是为了让「同一个 View 被重新挂载」也不会抛 already has a parent。
  */
 private fun mountVideoView(view: View): View {

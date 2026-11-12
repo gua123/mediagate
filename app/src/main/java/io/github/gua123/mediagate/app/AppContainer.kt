@@ -8,7 +8,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
-import android.view.SurfaceView
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.room.Room
@@ -1144,8 +1143,7 @@ class AppContainer(context: Context) :
                             // VlcEngine 对“自动/强制硬解”都按硬解走（用户要求硬解）。
                             initialDecoderMode = videoPreferences.decoderMode.value,
                             cache = cache,
-                            // VLC 的画面挂在外部 SurfaceView 上；Compose 的 AndroidView 会把它挂进页面
-                            videoView = SurfaceView(appContext),
+                            // 不传视图：VlcEngine 会用官方 VLCVideoLayout（自动处理尺寸/居中）
                         )
                     } catch (t: Throwable) {
                         AppLog.e(TAG, "LibVLC 内核创建失败，回落 Media3", t)

@@ -14,7 +14,7 @@ import io.github.gua123.mediagate.media.engine.PlayerEngine
  * @property title 展示名（文件名，R16 不额外拼英文）。
  * @property backendId 后端 id（断点续播的 key 之一，R18）。
  * @property path 后端内路径。
- * @property videoView 当前内核的画面视图（Media3 是 PlayerView、LibVLC 是 SurfaceView）。
+ * @property videoView 当前内核的画面视图（Media3 是 PlayerView、LibVLC 是 VLCVideoLayout）。
  *   :app 的宿主用它取视频真实尺寸来定 PIP 比例（R13），拿不到时为 null（退化成 16:9）。
  */
 data class VideoSession(

@@ -88,7 +88,7 @@ class VideoPlayerViewModel(
     private val _videoOutput = MutableStateFlow<View?>(null)
 
     /**
-     * 当前内核的视频输出视图：ExoPlayer 是它自己懒建的 PlayerView，LibVLC 是 :app 注入的 SurfaceView。
+     * 当前内核的视频输出视图：ExoPlayer 是它自己懒建的 PlayerView，LibVLC 是官方 VLCVideoLayout。
      *
      * 单独一条流而不是塞进 [VideoPlayerUiState]：View 不是纯数据，放进去会让状态归约没法纯 JVM 测。
      */

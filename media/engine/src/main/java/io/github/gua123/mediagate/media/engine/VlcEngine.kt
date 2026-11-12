@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.util.VLCVideoLayout
 import org.videolan.libvlc.interfaces.IMedia
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
@@ -36,8 +37,9 @@ import kotlin.math.roundToInt
  *    改档位时重建 LibVLC 实例（选项是实例级的），位置/倍速/播放状态由本类恢复。
  * 3. **缓存**：按连接网络（LAN / WAN）取 [VlcCacheConfig]，见 [VlcCachePolicy]——局域网 1500 ms、
  *    公网 4000 ms；这是 LibVLC 的时间型预缓冲，不是磁盘缓存。
- * 4. **视频输出**：挂到外部传入的 [SurfaceView] / [TextureView]（`IVLCVout`），
- *    Compose 侧用 AndroidView 传入；[videoView] 返回同一个 View。
+ * 4. **视频输出**：优先用 libvlc-android 官方的 [VLCVideoLayout]（FrameLayout 封装，内部处理
+ *    视频尺寸/等比缩放/居中）；未传入视图时本类自己建一个。低层 [SurfaceView] / [TextureView]
+ *    仍兼容，但**不要再拿裸 SurfaceView 当全屏容器**——实测会按视频原始像素画在左上角。
  *
  * 线程：所有公开方法都在主线程调用（LibVLC 约定），[MediaPlayer] 的事件回调也在主线程。
  *
@@ -111,8 +113,11 @@ class VlcEngine(
 
     override val isPlaying: Boolean get() = player.isPlaying
 
-    /** 视频输出视图（SurfaceView / TextureView），由调用方提供。 */
-    private var attachedView: View? = videoView
+    /** 默认视频输出：官方 VLCVideoLayout（内部 SurfaceView + 自适应尺寸/居中）。 */
+    private val defaultVideoLayout: VLCVideoLayout = VLCVideoLayout(appContext)
+
+    /** 视频输出视图（VLCVideoLayout / SurfaceView / TextureView），由调用方提供或本类默认。 */
+    private var attachedView: View? = videoView ?: defaultVideoLayout
 
     /** LibVLC 实例；解码档位是实例级选项，切档位要重建（见 [setDecoderMode]）。 */
     private var libVlc: LibVLC = buildLibVlc(mode)
@@ -136,19 +141,30 @@ class VlcEngine(
         val vout = player.vlcVout
         when (view) {
             null -> {
-                if (vout.areViewsAttached()) vout.detachViews()
+                if (vout.areViewsAttached()) player.detachViews()
             }
 
-            is SurfaceView -> vout.setVideoView(view)
-            is TextureView -> vout.setVideoView(view)
+            // 官方封装：内部会按视频尺寸/缩放档位设置 SurfaceView，并处理居中
+            is VLCVideoLayout -> {
+                if (!vout.areViewsAttached()) player.attachViews(view, null, false, false)
+            }
+
+            is SurfaceView -> {
+                vout.setVideoView(view)
+                if (!vout.areViewsAttached()) vout.attachViews()
+            }
+
+            is TextureView -> {
+                vout.setVideoView(view)
+                if (!vout.areViewsAttached()) vout.attachViews()
+            }
 
             else -> {
-                AppLog.w(TAG, "LibVLC 视频输出只支持 SurfaceView / TextureView：" + view.javaClass.name)
+                AppLog.w(TAG, "LibVLC 视频输出只支持 VLCVideoLayout / SurfaceView / TextureView：" + view.javaClass.name)
                 return
             }
         }
         attachedView = view
-        if (view != null && !vout.areViewsAttached()) vout.attachViews()
     }
 
     override fun videoView(): View? = attachedView
@@ -376,7 +392,12 @@ class VlcEngine(
 
     private fun onVlcEvent(event: MediaPlayer.Event) {
         when (event.type) {
-            MediaPlayer.Event.Opening, MediaPlayer.Event.Buffering -> _state.value = EngineState.Preparing
+            MediaPlayer.Event.Opening -> _state.value = EngineState.Preparing
+
+            // 100 = 缓冲完成。VLC 在 Playing 之后还可能补发一次 Buffering(100)，
+            // 如果一律当 Preparing，界面会一直停在“正在缓冲…”（真机截图复现）。
+            MediaPlayer.Event.Buffering -> _state.value =
+                if (event.buffering >= 100f) EngineState.Ready else EngineState.Preparing
             MediaPlayer.Event.Playing,
             MediaPlayer.Event.Paused,
             MediaPlayer.Event.SeekableChanged,

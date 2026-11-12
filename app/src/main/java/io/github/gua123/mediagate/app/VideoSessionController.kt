@@ -127,7 +127,7 @@ class VideoSessionController(
      * 当前视频画面尺寸（R13 的 PIP 比例用）；不是 Media3 的 PlayerView、或还没解出画面时为 null。
      *
      * Media3 1.11 的 PlayerView 自己不再暴露 videoSize，改为问它挂着的 Player
-     * （`Player.getVideoSize()`，解码器解出第一帧后才有值）；LibVLC 的 SurfaceView 拿不到尺寸，
+     * （`Player.getVideoSize()`，解码器解出第一帧后才有值）；LibVLC 的 VLCVideoLayout 暂未暴露尺寸，
      * 走 null 让 PIP 用页面给的默认档（16:9）。
      */
     fun videoSize(): Pair<Int, Int>? {

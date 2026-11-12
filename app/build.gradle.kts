@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.84：视频内核改为 LibVLC 3.7.7 + 硬解 + LAN/WAN 缓存（2026-11-12 用户要求）。
-        versionCode = 85
-        versionName = "0.1.84"
+        // 0.1.85：0.1.84 候选的真机修正——LibVLC 用官方 VLCVideoLayout（不再左上角原生尺寸）+ 缓冲事件修正。
+        versionCode = 86
+        versionName = "0.1.85"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
