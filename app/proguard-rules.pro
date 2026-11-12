@@ -21,3 +21,8 @@
 -dontwarn org.apache.logging.log4j.**
 -dontwarn org.ietf.jgss.**
 -dontwarn org.newsclub.net.unix.**
+
+# LibVLC（2026-11-12 重新接入）：JNI 侧按类名/方法名找 Java 对象，R8 不能改名或裁掉
+-keep class org.videolan.libvlc.** { *; }
+-keep class org.videolan.libvlc.interfaces.** { *; }
+-dontwarn org.videolan.**

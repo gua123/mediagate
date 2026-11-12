@@ -127,27 +127,28 @@ class VideoPlayerSwitchTest {
     }
 
     @Test
-    fun 解码档位只在原有引擎内重建_不再换内核() {
-        // 2026-10-15 用户拍板只保留 Media3 之后：三种档位都是"同一内核内重建"
-        //（强制软解由 Media3 自己按 softwareOnly 筛解码器实现，不再借 LibVLC）
+    fun 解码档位在_LibVLC_内重建_不换内核() {
+        // 2026-11-12 起视频内核固定 LibVLC：三种档位都是"同一内核内重建"
         DecoderMode.entries.forEach { mode ->
             assertEquals(
                 mode.name,
                 DecoderAction.RebuildInPlace,
-                VideoEngineSwitch.decoderAction(EngineKind.MEDIA3, mode, canUseVlc = false),
+                VideoEngineSwitch.decoderAction(EngineKind.VLC, mode, canUseVlc = true),
             )
         }
-        // 万一当前内核是已下线的那个（历史状态），会切回 Media3
+        // 旧状态（当前是 Media3）且代理可用时，改档位会切回 LibVLC
         assertEquals(
-            DecoderAction.SwitchTo(EngineKind.MEDIA3),
-            VideoEngineSwitch.decoderAction(EngineKind.VLC, DecoderMode.FORCE_HW, canUseVlc = true),
+            DecoderAction.SwitchTo(EngineKind.VLC),
+            VideoEngineSwitch.decoderAction(EngineKind.MEDIA3, DecoderMode.FORCE_HW, canUseVlc = true),
         )
     }
 
     @Test
-    fun 没有别的内核可退时不给降级动作() {
+    fun LibVLC_出错时可退回_Media3_Media3_无路可退() {
         assertNull(VideoEngineSwitch.fallbackTarget(EngineKind.MEDIA3, canUseVlc = true))
         assertNull(VideoEngineSwitch.fallbackTarget(EngineKind.MEDIA3, canUseVlc = false))
-        assertNull(VideoEngineSwitch.fallbackTarget(EngineKind.VLC, canUseVlc = true))
+        // 退回 Media3 不依赖回环代理，所以 canUseVlc=false 也应给出动作
+        assertEquals(EngineKind.MEDIA3, VideoEngineSwitch.fallbackTarget(EngineKind.VLC, canUseVlc = true))
+        assertEquals(EngineKind.MEDIA3, VideoEngineSwitch.fallbackTarget(EngineKind.VLC, canUseVlc = false))
     }
 }

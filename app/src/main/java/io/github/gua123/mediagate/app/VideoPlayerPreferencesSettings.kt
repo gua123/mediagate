@@ -42,10 +42,10 @@ class VideoPlayerPreferencesSettings(
     scope: CoroutineScope,
 ) : VideoPlayerPreferences {
 
-    /** 上次选择的内核（R9）；没有记录时是 Media3（默认内核）。 */
+    /** 上次选择的内核（R9）；2026-11-12 起默认 LibVLC（Media3 仅内部兜底）。 */
     override val engine: StateFlow<EngineKind> = context.videoPlayerDataStore.data
         .map { preferences -> parseEngine(preferences[KEY_ENGINE]) }
-        .stateIn(scope, SharingStarted.Eagerly, EngineKind.MEDIA3)
+        .stateIn(scope, SharingStarted.Eagerly, EngineKind.VLC)
 
     /**
      * **播放缓冲时间（秒）**（2026-10-20，借鉴 nPlayer 的 buffer_time；默认 5 秒）。
@@ -212,9 +212,9 @@ class VideoPlayerPreferencesSettings(
                                         }
 }
 
-/** 文本 → 内核（无法识别时回到默认 Media3，不抛异常）。 */
+/** 文本 → 内核（无法识别时回到默认 LibVLC，不抛异常；Media3 只是内部兜底，不作为默认）。 */
 internal fun parseEngine(raw: String?): EngineKind =
-    EngineKind.entries.firstOrNull { it.name == raw } ?: EngineKind.MEDIA3
+    EngineKind.entries.firstOrNull { it.name == raw } ?: EngineKind.VLC
 
 /** 文本 → 解码档位（无法识别时回到默认 AUTO_HW = 硬解优先，不抛异常）。 */
 internal fun parseDecoderMode(raw: String?): DecoderMode =

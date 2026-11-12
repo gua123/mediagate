@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.Settings
 import android.view.SurfaceView
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
@@ -98,10 +101,16 @@ import io.github.gua123.mediagate.media.ffmpeg.FfmpegKitRunner
 import io.github.gua123.mediagate.media.ffmpeg.FfmpegProgress
 import io.github.gua123.mediagate.media.ffmpeg.TimestampRepair
 import io.github.gua123.mediagate.media.ffmpeg.TimestampRepairResult
+import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineKind
 import io.github.gua123.mediagate.media.engine.ExoPlayerEngine
 import io.github.gua123.mediagate.media.engine.PlayerEngine
+import io.github.gua123.mediagate.media.engine.VlcCacheConfig
+import io.github.gua123.mediagate.media.engine.VlcCachePolicy
+import io.github.gua123.mediagate.media.engine.VlcEngine
+import io.github.gua123.mediagate.media.engine.VlcProbeService
 import io.github.gua123.mediagate.media.playback.BackendDataSourceFactory
+import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.thumbnail.EmbeddedArtworkExtractor
 import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
 import io.github.gua123.mediagate.media.thumbnail.FrameExtractor
@@ -786,6 +795,25 @@ class AppContainer(context: Context) :
         VideoPlayerPreferencesSettings(appContext, ioScope)
 
     /**
+     * LibVLC 的回环 HTTP 代理（**只绑 127.0.0.1**）：VLC 只认 URL，用它复用当前
+     * [StorageBackend] 的字节与 Range，WebDAV/SFTP/FTP 不需要第二套取数逻辑。
+     */
+    private var videoProxy: LoopbackHttpProxy? = null
+
+    /** 当前远端地址的网络标签（LAN / WAN）；本地根目录时为 null（缓存档位见 [VlcCachePolicy]）。 */
+    @Volatile
+    private var remoteNetworkLabel: String? = null
+
+    /** LibVLC 独立进程探针的结论；null = 本进程还没测过。 */
+    private val _vlcUsable = MutableStateFlow<Boolean?>(null)
+
+    /** 探针串行化：多个播放页同时打开时只跑一次（探针本身会拉独立进程）。 */
+    private val vlcProbeMutex = Mutex()
+
+    /** “LibVLC 起不来，已改用 Media3”的 Toast 只提示一次，避免每个视频都弹。 */
+    private var vlcFallbackNoticeShown = false
+
+    /**
      * 视频播放页的宿主能力（M2-B）：由 MediaGateApp 注入 LocalVideoPlayerEnvironment。
      *
      * **为什么不让 AppContainer 直接实现它**：:feature:viewer-image 的 ImageViewerEnvironment
@@ -874,6 +902,19 @@ class AppContainer(context: Context) :
         override val backend: StateFlow<StorageBackend?> get() = videoBackend
 
         override val preferences: VideoPlayerPreferences get() = videoPreferences
+
+        /** 回环代理基址：没有它 LibVLC 没法把字节喂给播放器（起不来时返回 null）。 */
+        override val proxyBaseUrl: String?
+            get() = runCatching { requireVideoProxy().baseUrl }.getOrNull()
+
+        /** LibVLC 探针结论；null = 还没测（第一次起播会现场测一次）。 */
+        override val vlcUsable: Boolean? get() = _vlcUsable.value
+
+        /** 手动重测（探针在独立进程跑，主进程不会崩）。 */
+        override fun retestVlc() {
+            _vlcUsable.value = null
+            ioScope.launch { runCatching { ensureVlcReady() } }
+        }
 
         /**
          * 时间戳重建（R3/R11）：当前后端随机读 → FFmpeg `-fflags +genpts -c copy` 重写 → 落缓存，
@@ -1084,22 +1125,48 @@ class AppContainer(context: Context) :
          * 调用方（播放页 ViewModel）在主线程上调用，所以这里是真的在主线程构造播放器——两个内核都要求如此。
          */
         override suspend fun createEngine(kind: EngineKind): PlayerEngine {
-            // **2026-10-15 用户拍板：只保留原有引擎（Media3）**——自研引擎在真机上不出画面，
-            // LibVLC 会把 App 整个带走。这里对下线的内核**回落**而不是抛异常：
-            // 万一偏好里还存着旧值（老版本切过），播放也不能受影响。
-            if (kind != EngineKind.MEDIA3) {
-                AppLog.w(TAG, "请求的内核已下线（" + kind.label + "），改用原有引擎")
-                Breadcrumbs.mark("内核已下线：" + kind.label + " → Media3")
+            // **2026-11-12 用户要求：视频引擎改为 LibVLC + 硬解 + 按 LAN/WAN 调缓存。**
+            // Media3 只作为兜底：LibVLC 独立进程探针失败 / 构造抛异常时回落，保证 App 仍能播。
+            if (kind == EngineKind.VLC) {
+                if (ensureVlcReady()) {
+                    return try {
+                        val cache = currentVlcCache()
+                        AppLog.i(
+                            TAG,
+                            "创建 LibVLC 内核：硬解，网络缓存 " + cache.networkCachingMs + " ms（" +
+                                (remoteNetworkLabel ?: "本地") + "）",
+                        )
+                        Breadcrumbs.mark("创建 LibVLC 内核：网络缓存 " + cache.networkCachingMs + " ms")
+                        VlcEngine(
+                            context = appContext,
+                            proxy = requireVideoProxy(),
+                            // 用偏好里的档位构造，避免 ViewModel 随后 setDecoderMode 又重建一次管线；
+                            // VlcEngine 对“自动/强制硬解”都按硬解走（用户要求硬解）。
+                            initialDecoderMode = videoPreferences.decoderMode.value,
+                            cache = cache,
+                            // VLC 的画面挂在外部 SurfaceView 上；Compose 的 AndroidView 会把它挂进页面
+                            videoView = SurfaceView(appContext),
+                        )
+                    } catch (t: Throwable) {
+                        AppLog.e(TAG, "LibVLC 内核创建失败，回落 Media3", t)
+                        Breadcrumbs.mark("LibVLC 内核创建失败 → Media3")
+                        showVlcFallbackNotice()
+                        buildMedia3Engine()
+                    }
+                }
+                AppLog.w(TAG, "LibVLC 探针未通过，本次回落 Media3")
+                Breadcrumbs.mark("LibVLC 探针未通过 → Media3")
+                showVlcFallbackNotice()
             }
-            return ExoPlayerEngine(
-                appContext,
-                BackendDataSourceFactory { _root.value?.backend },
-                bufferSeconds = { videoPreferences.bufferSeconds.value },
-            )
+            return buildMedia3Engine()
         }
 
-        // VLC 与自研引擎的构造代码已在 2026-10-15 随用户拍板删除（见上面的 createEngine）。
-        // 真要复活：git 历史里搜 "VlcEngine(" / "NativeEnginePlayer("，设计留档在 docs/方案-播放引擎重写.md。
+        /** Media3 兜底内核（LibVLC 起不来时用；不再是默认视频内核）。 */
+        private fun buildMedia3Engine(): PlayerEngine = ExoPlayerEngine(
+            appContext,
+            BackendDataSourceFactory { videoBackend.value },
+            bufferSeconds = { videoPreferences.bufferSeconds.value },
+        )
 
         /**
          * 列出 [path] 所在目录里的视频与音频（R1 上下集队列）。
@@ -1210,14 +1277,95 @@ class AppContainer(context: Context) :
 
     /** 关闭回环代理、远端后端与网络监听（应用退出时由 MainActivity 调用）；幂等。 */
     fun close() {
+        videoProxy?.let { proxy ->
+            videoProxy = null
+            runCatching { proxy.close() }
+        }
         remoteRoot?.let { state ->
             remoteRoot = null
             remoteSignature = null
             _remoteRootLabel.value = null
             runCatching { state.backend.close() }
         }
+        remoteNetworkLabel = null
         // 没初始化过就别为了 stop 去初始化（lazy 的 isInitialized）
         if (networkMonitorLazy.isInitialized()) runCatching { networkMonitor.stop() }
+    }
+
+    /**
+     * 取回环代理（懒建）。
+     *
+     * 代理被 [close] 关掉、进程又被系统拉回前台时要重建一个，否则手里会拿着一个死端口，
+     * LibVLC 会一直打不开。
+     */
+    private fun requireVideoProxy(): LoopbackHttpProxy {
+        val existing = videoProxy
+        if (existing != null && existing.isRunning) return existing
+        return synchronized(this) {
+            val current = videoProxy
+            if (current != null && current.isRunning) {
+                current
+            } else {
+                // 用 videoBackend（含“时间戳修复根目录”）而不是 _root：修复版播放时两者的后端不同
+                LoopbackHttpProxy { videoBackend.value }.also { videoProxy = it }
+            }
+        }
+    }
+
+    /** 当前该用的 LibVLC 缓存档位：远端连接按 LAN/WAN，本地按默认。 */
+    private fun currentVlcCache(): VlcCacheConfig =
+        VlcCachePolicy.forNetwork(if (currentRemoteRecord != null) remoteNetworkLabel else null)
+
+    /**
+     * 确保 LibVLC 能在本机初始化。
+     *
+     * **绝不在主进程直接试**：LibVLC 的 .so 初始化可能把进程整个带走（2026-10-03 真机实证），
+     * 所以先拉起独立进程 `:vlcprobe`，主进程只看它留下的 start / ok / done 文件；
+     * 探针挂了也只带走它自己，本次播放回落 Media3。
+     */
+    private suspend fun ensureVlcReady(): Boolean {
+        _vlcUsable.value?.let { return it }
+        return vlcProbeMutex.withLock {
+            _vlcUsable.value?.let { return@withLock it }
+            val verdict = runVlcProbe()
+            val usable = verdict == VlcProbeVerdict.OK
+            _vlcUsable.value = usable
+            usable
+        }
+    }
+
+    /** 跑一次独立进程探针并判定（主进程不加载 libvlc）。 */
+    private suspend fun runVlcProbe(): VlcProbeVerdict {
+        VlcProbeService.reset(appContext)
+        withContext(Dispatchers.Main) { VlcProbeService.start(appContext) }
+        val deadline = System.currentTimeMillis() + VLC_PROBE_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline &&
+            !VlcProbeService.succeeded(appContext) &&
+            !VlcProbeService.finished(appContext)
+        ) {
+            delay(VLC_PROBE_POLL_MS)
+        }
+        val verdict = vlcProbeVerdict(
+            started = VlcProbeService.started(appContext),
+            succeeded = VlcProbeService.succeeded(appContext),
+            finished = VlcProbeService.finished(appContext),
+        )
+        AppLog.i(TAG, "LibVLC 启动探针：" + verdict.name)
+        Breadcrumbs.mark("LibVLC 启动探针：" + verdict.name)
+        return verdict
+    }
+
+    /** LibVLC 起不来时给用户一句解释（每个进程只弹一次，别每个视频都弹）。 */
+    private fun showVlcFallbackNotice() {
+        if (vlcFallbackNoticeShown) return
+        vlcFallbackNoticeShown = true
+        runCatching {
+            Toast.makeText(
+                appContext,
+                "LibVLC 内核在本机起不来，已自动改用 Media3 播放",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
 
@@ -1673,6 +1821,7 @@ class AppContainer(context: Context) :
 
         remoteRoot = next
         currentRemoteRecord = if (next == null) null else record
+        remoteNetworkLabel = if (next == null) null else address.label.id
         remoteSignature = if (next == null) null else signature
         _remoteRootLabel.value = next?.label
         if (previous?.backend !== next?.backend) runCatching { previous?.backend?.close() }
@@ -1805,6 +1954,7 @@ class AppContainer(context: Context) :
         val previous = remoteRoot ?: return
         remoteRoot = null
         currentRemoteRecord = null
+        remoteNetworkLabel = null
         remoteSignature = null
         _remoteRootLabel.value = null
         runCatching { previous.backend.close() }
@@ -1870,6 +2020,12 @@ class AppContainer(context: Context) :
 
     private companion object {
         const val TAG = "app-container"
+
+        /** LibVLC 启动探针最长等多久（主进程只读文件；等不到就按“不可用”回落 Media3）。 */
+        const val VLC_PROBE_TIMEOUT_MS = 8_000L
+
+        /** 探针轮询间隔。 */
+        const val VLC_PROBE_POLL_MS = 120L
 
 
 

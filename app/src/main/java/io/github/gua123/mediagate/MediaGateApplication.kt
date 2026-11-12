@@ -67,7 +67,8 @@ class MediaGateApplication : Application(), PlaybackHost, VideoSessionHost {
         // 面包屑落盘（原生崩溃时内存日志会没，只有它留得下）
         Breadcrumbs.sink = { text -> CrashReporter.breadcrumb(this, text) }
         Breadcrumbs.mark("应用启动（versionName " + runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() + "）")
-        // 容器一建好就会自己把 LibVLC 启动探针跑起来（在 AppContainer 的 init 里，见那边的注释）——
+        // LibVLC 启动探针不再在启动瞬间跑：第一次起播视频时由 AppContainer 拉起 `:vlcprobe`
+        // （独立进程，主进程只读文件），避免启动期多一个可能原生崩溃的子进程。
         // **不要在这里调 container 的任何方法**：`container` 是 lateinit，写在赋值之前会
         // 直接抛 UninitializedPropertyAccessException，表现就是"更新后打不开"（0.1.22 起踩过）。
         stage = "容器构造"

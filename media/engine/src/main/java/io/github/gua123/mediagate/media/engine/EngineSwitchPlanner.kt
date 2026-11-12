@@ -65,12 +65,13 @@ object EngineSelection {
     /**
      * **当前在用的内核清单**（界面据此决定要不要显示「内核」按钮；也是"能不能切"的唯一判据）。
      *
-     * **2026-10-15 用户拍板：只保留原有引擎（Media3）**——
-     * 原话「画面全没有，所以我想切回原先的引擎，将自研引擎和 libvlc 都去掉吧，原有引擎就可以」。
-     * 背景：自研引擎在真机上能切过去但**不出画面**；LibVLC 在这台机器上会把 App 整个带走（历史面包屑为证）。
-     * 两个都不再出现在任何入口里；代码与设计留档见 docs/方案-播放引擎重写.md（真要复活有据可查）。
+     * **2026-11-12 用户要求：视频播放引擎改为 LibVLC，并设为硬解模式**——
+     * 原话「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
+     * 因此这里只列 LibVLC：界面不再出现「内核」切换按钮（用户 2026-10-15 也明确不要来回切）。
+     * Media3 仍保留为**内部兜底**：LibVLC 独立进程探针失败 / 构造抛异常时由 :app 回落到它，
+     * 不进入用户可选清单，也不会让页面出现第二个内核入口。
      */
-    fun availableEngines(): List<EngineKind> = listOf(EngineKind.MEDIA3)
+    fun availableEngines(): List<EngineKind> = listOf(EngineKind.VLC)
 
     /** 现在只能有一个内核（界面据此隐藏切换入口）。 */
     fun canSwitchEngine(): Boolean = availableEngines().size > 1
@@ -88,10 +89,10 @@ object EngineSelection {
     /**
      * 某个解码模式「倾向」用哪个内核。
      *
-     * Media3 三种档位都支持（[DecoderMode.FORCE_SW] 走 softwareOnly 解码器筛选，
-     * 见 ExoPlayerEngine.codecSelectorFor），所以**一律 Media3**，不再靠 LibVLC 软解。
+     * 2026-11-12 起视频内核固定 LibVLC（[availableEngines] 只有它），三种解码档位都由
+     * VlcEngine 落地；Media3 只在探针失败时内部兜底。
      */
-    fun preferredFor(decoderMode: DecoderMode): EngineKind = EngineKind.MEDIA3
+    fun preferredFor(decoderMode: DecoderMode): EngineKind = EngineKind.VLC
 
     /**
      * 用户点「内核」按钮时的**下一档**。
@@ -113,12 +114,16 @@ object EngineSelection {
     }
 
     /**
-     * 出错后的降级目标：**没有别的内核可退 ⇒ null**（界面因此不显示「改用 X 续播」）。
+     * 出错后的降级目标（**2026-11-12**）。
      *
-     * 2026-10-15 之前这里是 Media3 → VLC → 自研引擎 的降级链；VLC 与自研引擎下线后链路为空。
+     * - 视频默认内核是 LibVLC；它出错时退回 Media3（内部兜底，不进入 [availableEngines] 的切换入口）；
+     * - Media3 已经是兜底，再退没有意义 ⇒ null；
+     * - 自研引擎已下线 ⇒ null。
      */
-    fun fallbackFrom(current: EngineKind): EngineKind? =
-        availableEngines().firstOrNull { it != current && it != EngineKind.MEDIA3 } ?: null
+    fun fallbackFrom(current: EngineKind): EngineKind? = when (current) {
+        EngineKind.VLC -> EngineKind.MEDIA3
+        else -> null
+    }
 }
 
 /**

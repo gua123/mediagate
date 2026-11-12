@@ -569,9 +569,9 @@ class VideoPlayerViewModel(
     }
 
     /**
-     * 一键切 LibVLC 续播（plan 4.6 自动降级）。
+     * 出错后的一键降级（2026-11-12：LibVLC 出错 → 退回 Media3 兜底）。
      *
-     * 判定与 PlayerEngineSwitcher.fallbackFromFailure() 相同（LibVLC → 无处可退；代理不可用则不给动作），
+     * 判定与 PlayerEngineSwitcher.fallbackFromFailure() 相同（Media3 已是兜底，不再有下一级），
      * 位置用 UI 最后观测到的值兜底，避免出错的内核把进度报成 0。
      */
     fun fallbackFromFailure() {

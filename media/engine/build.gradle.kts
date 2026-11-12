@@ -34,6 +34,9 @@ dependencies {
     implementation(project(":core:model"))
     implementation(project(":data:storage-api"))
     // LoopbackHttpProxy 出现在 VlcEngine 的公开构造签名（App 层创建并注入），故用 api 暴露
+    api(project(":media:proxy"))
+    // 视频默认内核：LibVLC 3.7.7（自带解码/解复用，Media3 仅保留为起不来的兜底）
+    implementation(libs.libvlc.all)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)

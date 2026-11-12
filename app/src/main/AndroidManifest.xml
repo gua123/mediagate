@@ -107,6 +107,17 @@
         </service>
 
         <!--
+          LibVLC 启动探针（2026-11-12）：**必须跑在独立进程**。libvlc.so 初始化在这台真机上
+          可能直接把进程带走（2026-10-03 实证），放在 :vlcprobe 里崩的只是探针自己；
+          主进程只读 start / ok / done 三个文件，据此决定用 LibVLC 还是回落 Media3。
+        -->
+        <service
+            android:name="io.github.gua123.mediagate.media.engine.VlcProbeService"
+            android:exported="false"
+            android:process=":vlcprobe"
+            android:stopWithTask="true" />
+
+        <!--
           应用内更新（R20）：把下载到 filesDir/updates 的 APK 通过 content:// 交给系统安装器
           （Android 7 起禁止 file:// 直接外传）。authorities 用 applicationId 前缀，debug 包也不会冲突。
         -->

@@ -33,10 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.83 热修：Media3 LoadControl 的 minBufferMs 必须 >= bufferForPlaybackMs；
-        // 0.1.82 的缓冲策略把 min 设成目标的一半，真机播放直接报错（播放失败：minBufferMs...）。
-        versionCode = 84
-        versionName = "0.1.83"
+        // 0.1.84：视频内核改为 LibVLC 3.7.7 + 硬解 + LAN/WAN 缓存（2026-11-12 用户要求）。
+        versionCode = 85
+        versionName = "0.1.84"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

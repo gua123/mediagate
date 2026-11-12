@@ -3,10 +3,10 @@ package io.github.gua123.mediagate.media.engine
 /**
  * 播放内核种类（plan 4.6 引擎对照表，R9 多内核 / R10 硬软解）。
  *
- * - [MEDIA3]：默认内核，ProgressiveMediaSource + BackendDataSource（本地/远端同一套），
- *   MediaCodec 硬解优先，seek/字幕/缩略图联动最顺；
- * - [VLC]：兜底内核，LibVLC 3.7.6，媒体源走本机回环 HTTP 代理复用同一数据层，
- *   覆盖畸形 TS / 冷门编码，并能用 `avcodec-hw` 真正关掉硬解（R10）。
+ * - [VLC]：**默认视频内核（2026-11-12 起）**，LibVLC 3.7.7，媒体源走本机回环 HTTP 代理复用同一数据层；
+ *   硬解由 `Media.setHWDecoderEnabled` 落地（R10），缓存按连接 LAN/WAN 取；
+ * - [MEDIA3]：**内部兜底**，`:vlcprobe` 探针失败或 LibVLC 构造异常时由 :app 回落；
+ *   不再作为视频默认内核，也不进入用户可选清单。
  */
 enum class EngineKind(val label: String) {
 

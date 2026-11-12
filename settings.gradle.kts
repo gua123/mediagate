@@ -37,9 +37,11 @@ include(
     ":data:storage-ftp",
 )
 
-// 媒体层：播放内核（历史双内核 + **自研单内核**）、回环代理、抽帧、TS 索引、FFmpeg、字幕
+// 媒体层：播放内核（**LibVLC 3.7.x**，Media3 作为内部兜底）、回环代理、抽帧、TS 索引、FFmpeg
 include(
     ":media:engine",
+    // LibVLC 只认 URL：回环 HTTP 代理把同一份 StorageBackend 字节喂给它（Range/拖拽 seek 也靠它）
+    ":media:proxy",
     // 自研视频播放引擎的 native 内核（**2026-10-06 用户拍板：视频引擎只采用一套，不要来回切换**）
     ":media:playback",
     ":media:thumbnail",

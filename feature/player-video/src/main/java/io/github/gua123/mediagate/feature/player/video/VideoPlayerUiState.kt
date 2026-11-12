@@ -51,8 +51,8 @@ data class VideoPlayerUiState(
     val path: String = "",
     /** 当前条目的展示名（文件名）。 */
     val title: String = "",
-    /** 当前内核（R9）。 */
-    val engineKind: EngineKind = EngineKind.MEDIA3,
+    /** 当前内核（R9）；2026-11-12 起默认 LibVLC。 */
+    val engineKind: EngineKind = EngineKind.VLC,
     /** 当前解码档位（R10）。 */
     val decoderMode: DecoderMode = DecoderMode.AUTO_HW,
     /** 当前画面缩放档位。 */

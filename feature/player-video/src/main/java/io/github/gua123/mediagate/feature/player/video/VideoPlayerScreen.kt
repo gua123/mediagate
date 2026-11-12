@@ -1242,7 +1242,7 @@ private fun ErrorPanel(
             Button(onClick = onRetry) {
                 Text(stringResource(R.string.video_retry))
             }
-            // 只有还能降级时才给按钮：LibVLC 是链条末端，且需要回环代理（plan 4.6）
+            // 只有还能降级时才给按钮：目前是 LibVLC 出错 → 退回 Media3 兜底
             if (state.canFallback) {
                 Button(onClick = onFallback) {
                     Text(stringResource(R.string.video_fallback))

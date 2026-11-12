@@ -130,18 +130,17 @@ class EngineSwitchPlannerTest {
     }
 
     @Test
-    fun `三种解码档位都在原有引擎上生效`() {
-        // 2026-10-15 用户拍板只保留 Media3 之后：强制软解不再靠 LibVLC，
-        // Media3 自己按 softwareOnly 筛解码器（ExoPlayerEngine.codecSelectorFor）
-        assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.FORCE_SW))
-        assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.AUTO_HW))
-        assertEquals(EngineKind.MEDIA3, EngineSelection.preferredFor(DecoderMode.FORCE_HW))
+    fun `三种解码档位都落在_LibVLC`() {
+        // 2026-11-12 起视频默认内核是 LibVLC：硬/软解都由 VlcEngine 落地
+        assertEquals(EngineKind.VLC, EngineSelection.preferredFor(DecoderMode.FORCE_SW))
+        assertEquals(EngineKind.VLC, EngineSelection.preferredFor(DecoderMode.AUTO_HW))
+        assertEquals(EngineKind.VLC, EngineSelection.preferredFor(DecoderMode.FORCE_HW))
     }
 
     @Test
-    fun `没有别的内核可退`() {
-        assertEquals("只剩一个内核时降级链为空", null, EngineSelection.fallbackFrom(EngineKind.MEDIA3))
-        assertEquals(null, EngineSelection.fallbackFrom(EngineKind.VLC))
+    fun `LibVLC_出错时退回_Media3`() {
+        assertEquals("LibVLC 出错可退回内部兜底", EngineKind.MEDIA3, EngineSelection.fallbackFrom(EngineKind.VLC))
+        assertEquals(null, EngineSelection.fallbackFrom(EngineKind.MEDIA3))
         assertEquals(null, EngineSelection.fallbackFrom(EngineKind.NATIVE))
     }
 

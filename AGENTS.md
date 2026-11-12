@@ -14,7 +14,9 @@
 ## 2. 方案要点
 
 - minSdk 33 / targetSdk 36 / compileSdk 37.2；界面简体中文单语。
-- 播放：**只有 Media3 ExoPlayer**，硬解优先；统一 `PlayerEngine` 抽象保留；三种解码档位都在 Media3 内部实现。
+- **视频播放：LibVLC 3.7.7 内核**（2026-11-12 用户要求「将视频播放引擎更改为 libvlc，并设置为硬解模式」）；媒体源经本机回环 HTTP 代理复用同一 `StorageBackend`（WebDAV/SFTP/FTP/本地都走它），代理支持 Range 拖拽。
+- **硬解**：`Media.setHWDecoderEnabled(true, true)`（Android 上落成 `:codec=mediacodec_ndk,all`）；**Media3 只作内部兜底**（独立进程 `:vlcprobe` 探针失败/构造异常时回落，不进入切换入口），音频仍用 Media3 ExoPlayer。
+- **LibVLC 网络缓存按连接地址类型**：局域网 1500 ms、公网 4000 ms、本地/未知 1000 ms（`VlcCachePolicy`，2026-11-12 用户要求）。
 - 数据层：统一 `StorageBackend` → `RandomAccessSource`；Media3 `BackendDataSource` 实现远端拖拽 seek；.ts 索引缓存。
 - 字幕已整条移除；FFmpeg 只做抽帧兜底、时间戳重建。
 - 后台播放：MediaSessionService + 前台服务。
@@ -35,7 +37,8 @@
 
 ## 5. 当前进度
 
-- 正式版 0.1.83 / versionCode 84；Media3 单内核。
+- 正式版 0.1.83 / versionCode 84；**工作区已改为 LibVLC 视频内核**（候选 0.1.84，未发布）。
 - 2026-11 完成连接模型简化：单地址/单网络类型、全量复制连接（复制后打开副本编辑器）。
+- 2026-11-12 视频内核改为 LibVLC 3.7.7 + 硬解 + LAN/WAN 缓存；`:media:proxy` 回环代理恢复，`:vlcprobe` 独立进程探针把关，失败自动回落 Media3。
 - 本机无安卓设备，真机验收靠用户。
 - 下一步：真机验证单地址连接、复制连接、公网/局域网目录与播放；其它加载/设置/5 缓存方案待拍板。
