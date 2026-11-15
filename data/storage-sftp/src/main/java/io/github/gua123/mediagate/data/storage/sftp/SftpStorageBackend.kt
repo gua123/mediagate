@@ -93,7 +93,10 @@ class SftpStorageBackend(
         ensureOpen()
         val base = normalizeSftpPath(dir)
         val absDir = absoluteSftpPath(config.rootPath, base)
-        val entries = pool.use { channel ->
+        // 目录列表走**元数据专用通道**：返回上级目录时，上一条 list/缩略图可能还占着
+        // 数据通道，pool.use 会一直排队 → 界面永远“正在加载…”（2026-11-15 用户反馈：
+        // 返回上级目录后公网目录打不开）。元数据通道不占 maxChannels，用完即断。
+        val entries = pool.useMetadata { channel ->
             // 先 stat：既能立刻分辨「不存在 / 不是目录 / 无权限」，又避免 ls 对文件返回单条
             val attrs = statOrThrow(channel, absDir, dir)
             if (!attrs.isDir) throw StorageException.NotSupported("不是目录：" + dir)
