@@ -169,9 +169,24 @@ class SegmentedCacheBackend(
      */
     override val caps: Caps get() = delegate.caps.copy(randomAccess = true)
 
-    override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = delegate.list(dir, page)
+    override suspend fun list(dir: String, page: Page?): List<RemoteEntry> =
+        delegate.list(dir, page).also { entries -> rememberSizes(entries) }
 
-    override suspend fun stat(path: String): RemoteEntry = delegate.stat(path)
+    override suspend fun stat(path: String): RemoteEntry =
+        delegate.stat(path).also { entry -> rememberSizes(listOf(entry)) }
+
+    /** 代理可以不联网直接拿到的文件大小（列目录/stat/openRead 时缓存）。 */
+    override fun cachedSize(path: String): Long? =
+        synchronized(stampCache) { stampCache[path]?.size }
+
+    private fun rememberSizes(entries: List<RemoteEntry>) {
+        for (entry in entries) {
+            if (entry.isDirectory || entry.size < 0L) continue
+            synchronized(stampCache) {
+                stampCache[entry.path] = FileStamp(entry.size, entry.mtime, entry.etag)
+            }
+        }
+    }
 
     /**
      * **绕过分段缓存直读**（Media3 兼容兜底用，2026-11-15）。

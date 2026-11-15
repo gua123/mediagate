@@ -1,7 +1,30 @@
-# 0.1.93 发布说明（候选，待真机验证）
+# 0.1.97 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.97 代理响应头立即 flush（2026-11-15 真机定位）
+
+- **真机**：cachedSize 已命中（379,850,513），代理不再 stat，但 `curl` 25 秒仍 0 字节；VLC 12 秒后报 `cannot seek`、`no moov`。
+- **根因**：`LoopbackHttpProxy` 的 `BufferedOutputStream` 在写响应头后没有 flush，头被 64 KiB 缓冲压住；body 第一段（SFTP 分段读）慢时，VLC 根本看不到 `Content-Range/Content-Length`。
+- **修**：`writeHead()` 写完立即 `flush()`，头先到、body 后到。
+
+## 0.1.96 代理用 cachedSize 跳过 stat（2026-11-15 真机验证）
+
+- 0.1.94/0.1.95 后仍复现代理 504：VLC 每个 Range 前 `backend.stat`，SFTP 元数据通道在播放分段读下仍可能被 JSch/Session 阻塞。
+- **修**：`StorageBackend.cachedSize(path)`；`SegmentedCacheBackend` 在 `list`/`stat`/`openRead` 时把文件大小记入 stampCache；回环代理命中 cachedSize 就**完全跳过 stat**，直接用缓存大小算 Range/Content-Range/Content-Length。
+- 目录列表已经拿到的 362.3 MB 现在直接用于 VLC 的尾部 moov Range，不再发 SFTP 属性请求。
+
+## 0.1.95 SFTP 元数据独立通道（2026-11-15 真机验证）
+
+- 0.1.94 给 stat 加了 attrs 缓存，但首次 stat 仍可能被播放中的 4 条分段读通道饿死，代理 504 复现。
+- **修**：`SftpChannelPool.useMetadata()`——元数据在同一 SSH Session 上开一条**不占 maxChannels 许可**的临时通道，用完即断；`attrsOf` 走它。数据流仍受 maxChannels 限制，stat/list/属性查询不再被饿死。
+
+## 0.1.94 SFTP stat 缓存（2026-11-15 真机定位）
+
+- **真机日志**：VLC 报 `cannot seek (to offset 375146658)`、`MP4 plugin discarded (no moov...)`；代理随后 `504`，`MG/storage-timeout` 报「取属性 ... 硬超时 15000ms」。
+- **根因**：`SftpStorageBackend.stat()` 没走 `attrsOf` 缓存，VLC 每个 Range 请求前都 stat 一次；播放中的分段读占满 4 条 SFTP 通道，stat 拿不到通道，15s 超时，代理 504，VLC 拿不到 MP4 尾部 moov。
+- **修**：`stat()` 改用 `attrsOf`（128 条 LRU，openRead 早已在用），重复 stat 不再借通道。
 
 ## 0.1.93 后台回前台自动重建远端连接（2026-11-15 反馈）
 

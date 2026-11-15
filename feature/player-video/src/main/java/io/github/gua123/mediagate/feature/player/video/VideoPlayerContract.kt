@@ -142,6 +142,13 @@ interface VideoPlayerEnvironment {
      */
     val proxyBaseUrl: String? get() = null
 
+    /**
+     * 播放页是否还开着（2026-11-15：前台恢复重建远端连接时不能拆正在用的后端）。
+     *
+     * 默认空实现：JVM 单测/没有宿主的场景行为不变。
+     */
+    fun setPlayerVisible(visible: Boolean) = Unit
+
     /** 上次切 LibVLC 崩溃过（历史接口；LibVLC 已删除，恒 false）。 */
     val vlcPreviouslyCrashed: Boolean get() = false
 

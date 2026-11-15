@@ -98,6 +98,35 @@ internal class SftpChannelPool(
         }
     }
 
+    /**
+     * **元数据专用通道**：不占 [permits]，直接在同一 SSH 会话上新开一条通道，用完即断。
+     *
+     * 为什么需要：VLC 每个 Range 请求前都会 stat；播放中的 [SftpRangeStream] 会把
+     * maxChannels 条通道全部占住，stat 等 15s 超时 → 回环代理 504 → VLC 拿不到 MP4
+     * 尾部 moov（2026-11-15 真机 #Akari 实证）。元数据不能被数据流饿死。
+     */
+    suspend fun <T> useMetadata(block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
+        val channel = openEphemeralChannel()
+        try {
+            block(channel)
+        } finally {
+            runCatching { channel.disconnect() }
+        }
+    }
+
+    /** 开一条不经过空闲池/许可池的临时通道（仍复用同一个 SSH Session）。 */
+    private fun openEphemeralChannel(): ChannelSftp {
+        val session = ensureSession()
+        return try {
+            val channel = session.openChannel(SFTP_CHANNEL) as ChannelSftp
+            channel.connect(config.connectTimeoutMs.toInt())
+            channel
+        } catch (e: JSchException) {
+            invalidateSession(session)
+            throw mapJschFailure(e, config, lastHostKeyCheck, "打开 SFTP 元数据通道")
+        }
+    }
+
     /** 归还通道：健康的放回池子，脏的（或池已关）直接断开。 */
     internal fun recycle(channel: ChannelSftp, discard: Boolean) {
         val healthy = !discard && !closed && channel.isConnected

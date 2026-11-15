@@ -137,6 +137,7 @@ class VideoPlayerViewModel(
     private var endedSaved: Boolean = false
 
     init {
+        environment.setPlayerVisible(true)
         attachHosts()
         load(initialPath)
     }
@@ -681,6 +682,7 @@ class VideoPlayerViewModel(
     }
 
     override fun onCleared() {
+        environment.setPlayerVisible(false)
         val ref = source
         val position = _state.value.positionMs
         val duration = _state.value.durationMs

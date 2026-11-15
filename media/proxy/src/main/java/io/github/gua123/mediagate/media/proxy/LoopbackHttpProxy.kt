@@ -191,17 +191,23 @@ class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Cl
             writeSimple(out, 404, "Not Found", "后端不匹配：代理当前后端为 " + backend.id)
             return
         }
-        val entry = try {
-            runBlocking { backend.stat(target.path) }
-        } catch (e: StorageException) {
-            writeSimple(out, statusOf(e), "Storage Error", describe(e))
-            return
+        // 列目录/openRead 缓存过大小就直接用：VLC 每个 Range 都 stat 会打爆 SFTP 元数据通道
+        val cachedSize = backend.cachedSize(target.path)
+        val entry = if (cachedSize == null) {
+            try {
+                runBlocking { backend.stat(target.path) }
+            } catch (e: StorageException) {
+                writeSimple(out, statusOf(e), "Storage Error", describe(e))
+                return
+            }
+        } else {
+            null
         }
-        if (entry.isDirectory) {
+        if (entry?.isDirectory == true) {
             writeSimple(out, 404, "Not Found", "目标是目录，不能作为媒体流：" + target.path)
             return
         }
-        val size = entry.size
+        val size = cachedSize ?: entry!!.size
         val spec = HttpRanges.resolve(head.header("range"), size)
         if (spec is HttpRanges.RangeSpec.Unsatisfiable) {
             writeSimple(
@@ -282,6 +288,10 @@ class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Cl
         for ((name, value) in headers) head.append(name).append(": ").append(value).append(CRLF)
         head.append("Connection: close").append(CRLF).append(CRLF)
         out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+        // **立即把响应头发出去**：out 是 64 KiB BufferedOutputStream，若不 flush，
+        // 头会压到 body 第一次写出之后。SFTP/远端第一段慢时，VLC 在 12 s 内看不到
+        // Content-Range/Content-Length，就报 "cannot seek / no moov"（2026-11-15 真机）。
+        out.flush()
     }
 
     /** 读请求头行（到空行为止）；超过上限抛 [IOException]（由 [serve] 兜住）。 */

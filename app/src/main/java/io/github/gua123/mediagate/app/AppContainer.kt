@@ -213,6 +213,10 @@ class AppContainer(context: Context) :
     /** 前台恢复重建远端后端的任务（避免重复并发）。 */
     private var foregroundReconnectJob: kotlinx.coroutines.Job? = null
 
+    /** 播放页是否还开着（播放页 init/onCleared 设置；开着时前台恢复不重建后端）。 */
+    @Volatile
+    private var videoPlayerVisible: Boolean = false
+
     /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
     val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
 
@@ -239,7 +243,7 @@ class AppContainer(context: Context) :
         if (pausedAt == 0L) return
         if (android.os.SystemClock.elapsedRealtime() - pausedAt < FOREGROUND_RECONNECT_MIN_BG_MS) return
         val record = currentRemoteRecord ?: return
-        if (videoSession.videoSessionSource != null || playbackActive.value) return
+        if (videoPlayerVisible || videoSession.videoSessionSource != null || playbackActive.value) return
         foregroundReconnectJob?.cancel()
         foregroundReconnectJob = ioScope.launch {
             AppLog.i(TAG, "前台恢复：重建远端连接 " + record.name)
@@ -939,6 +943,10 @@ class AppContainer(context: Context) :
         override val playback: VideoPlaybackHost get() = videoSession
 
         override val backend: StateFlow<StorageBackend?> get() = videoBackend
+
+        override fun setPlayerVisible(visible: Boolean) {
+            videoPlayerVisible = visible
+        }
 
         override val preferences: VideoPlayerPreferences get() = videoPreferences
 

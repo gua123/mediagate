@@ -61,7 +61,8 @@ class SftpStorageBackend(
     /** 取属性：先查缓存，未命中才走一次网络。 */
     private suspend fun attrsOf(abs: String, display: String): SftpATTRS {
         synchronized(attrsCache) { attrsCache[abs] }?.let { return it }
-        val attrs = pool.use { channel -> statOrThrow(channel, abs, display) }
+        // 元数据走独立通道：不能被播放中的分段读占满通道池而饿死
+        val attrs = pool.useMetadata { channel -> statOrThrow(channel, abs, display) }
         synchronized(attrsCache) { attrsCache[abs] = attrs }
         return attrs
     }
@@ -105,10 +106,10 @@ class SftpStorageBackend(
         ensureOpen()
         val relative = normalizeSftpPath(path)
         val abs = absoluteSftpPath(config.rootPath, relative)
-        pool.use { channel ->
-            val attrs = statOrThrow(channel, abs, path)
-            toEntry(relative, attrs)
-        }
+        // **必须走 attrsOf 缓存**：VLC 每个 Range 请求前都会 stat 一次；如果每次都借 SFTP
+        // 通道，播放中的分段读会把 4 条通道占满，stat 等 15s 超时 → 代理回 504，
+        // VLC 报 "cannot seek / no moov"（2026-11-15 真机 #Akari 复现）。
+        toEntry(relative, attrsOf(abs, path))
     }
 
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream = withContext(Dispatchers.IO) {

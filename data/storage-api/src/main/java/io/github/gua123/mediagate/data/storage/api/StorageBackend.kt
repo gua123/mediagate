@@ -46,6 +46,15 @@ interface StorageBackend : Closeable {
     suspend fun stat(path: String): RemoteEntry
 
     /**
+     * 已缓存的文件大小（**不产生任何网络/IO 请求**；null = 不知道）。
+     *
+     * 回环代理在服务 VLC 的每个 Range 前都要知道总长度；如果每次都 stat，SFTP 的
+     * metadata 请求可能被播放通道饿死（2026-11-15 真机 504）。列目录/首次 stat/openRead
+     * 时顺手记下大小，代理就能跳过这次 stat。
+     */
+    fun cachedSize(path: String): Long? = null
+
+    /**
      * 打开 [path] 的一段字节流（R4 拖拽 seek 的入口）。
      *
      * @param offset 起始偏移；0 表示从头。
