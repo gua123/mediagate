@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.107：播放页底栏只留“更多”，高级项收进播放设置弹层。
-        versionCode = 108
-        versionName = "0.1.107"
+        // 0.1.108：恢复播放时校验 backendId，避免拿本地后端读远端路径（404）。
+        versionCode = 109
+        versionName = "0.1.108"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

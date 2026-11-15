@@ -43,6 +43,9 @@ interface VideoSessionSource {
     /** 后端内路径（mediaId，便于排查）。 */
     val path: String
 
+    /** 播放源所属后端 id；用于回前台/通知恢复时校验当前连接，避免拿本地后端去读远端路径。 */
+    val backendId: String get() = ""
+
     /** 是否正在播放。 */
     val isPlaying: Boolean
 
@@ -321,6 +324,7 @@ class VideoPlaybackService : MediaSessionService() {
                 ),
             )
             intent.putExtra("mg_open_token", System.currentTimeMillis())
+            intent.putExtra("mg_backend_id", source.backendId)
         }
         return PendingIntent.getActivity(
             this,

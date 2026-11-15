@@ -198,6 +198,8 @@ class VideoSessionController(
 
         override val path: String get() = session.path
 
+        override val backendId: String get() = session.backendId
+
         override val isPlaying: Boolean get() = runCatching { session.engine.isPlaying }.getOrDefault(false)
 
         override val positionMs: Long get() = runCatching { session.engine.positionMs() }.getOrDefault(0L)

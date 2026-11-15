@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import io.github.gua123.mediagate.app.AppContainer
 import io.github.gua123.mediagate.app.VideoPipController
 import io.github.gua123.mediagate.ui.MediaGateApp
 import io.github.gua123.mediagate.ui.theme.MediaGateTheme
@@ -34,9 +35,31 @@ class MainActivity : ComponentActivity() {
     private lateinit var pip: VideoPipController
 
     /** 后台播放通知点回前台时要重开的视频路径；token 让同一路径也能再次触发导航。 */
-    private data class DebugOpenRequest(val path: String, val token: Long)
+    private data class DebugOpenRequest(
+        val path: String,
+        val token: Long,
+        val backendId: String = "",
+    )
 
     private val debugOpen = MutableStateFlow<DebugOpenRequest?>(null)
+
+    /**
+     * 只接受当前后端能解析的恢复请求。
+     *
+     * 真实故障：播放中切回本地目录后，通知栏还带着远端路径；回到前台时拿
+     * `local-file:/storage/emulated/0` 去读 `home/nas1/...`，代理直接 404。
+     * 带 backendId 的请求必须和当前后端一致；调试入口不带 backendId 时保持兼容。
+     */
+    private fun acceptedDebugOpen(container: AppContainer, request: DebugOpenRequest?): DebugOpenRequest? {
+        if (request == null) return null
+        val current = container.videoPlayerEnvironment.backend.value?.id
+        if (request.backendId.isBlank() || current == null || request.backendId == current) return request
+        android.util.Log.w(
+            "MG/MediaGate",
+            "忽略跨后端恢复：path=" + request.path + " backend=" + request.backendId + " current=" + current,
+        )
+        return null
+    }
 
     private fun readDebugOpen(intent: Intent?): DebugOpenRequest? {
         val path = intent?.getStringExtra("mg_open_path_b64")?.let {
@@ -48,6 +71,7 @@ class MainActivity : ComponentActivity() {
         return DebugOpenRequest(
             path,
             intent?.getLongExtra("mg_open_token", SystemClock.uptimeMillis()) ?: SystemClock.uptimeMillis(),
+            intent?.getStringExtra("mg_backend_id").orEmpty(),
         )
     }
 
@@ -65,9 +89,18 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.i("MG/MediaGate", "调试清空分段缓存：释放 " + freed + " 字节")
             }
         }
-        debugOpen.value = readDebugOpen(intent) ?: container.videoSession.videoSessionSource
-            ?.takeIf { it.path.isNotBlank() }
-            ?.let { DebugOpenRequest(it.path, SystemClock.uptimeMillis()) }
+        debugOpen.value = acceptedDebugOpen(
+            container,
+            readDebugOpen(intent) ?: container.videoSession.videoSessionSource
+                ?.takeIf { it.path.isNotBlank() }
+                ?.let {
+                    DebugOpenRequest(
+                        it.path,
+                        SystemClock.uptimeMillis(),
+                        it.backendId,
+                    )
+                },
+        )
         setContent {
             val debugRequest by debugOpen.collectAsState()
             MediaGateTheme {
@@ -112,7 +145,8 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        readDebugOpen(intent)?.let { debugOpen.value = it }
+        val container = (application as MediaGateApplication).container
+        acceptedDebugOpen(container, readDebugOpen(intent))?.let { debugOpen.value = it }
     }
 
     /**
