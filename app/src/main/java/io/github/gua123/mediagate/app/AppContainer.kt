@@ -505,6 +505,21 @@ class AppContainer(context: Context) :
     }
 
     /**
+     * 浏览器列目录失败时自愈：重建当前远端后端。
+     *
+     * 2026-11-15 用户反馈：公网重新打开软件后目录读不出来、连接显示断开；手动在连接页
+     * “重新连接”就好。这里把同一动作自动化，避免用户每次手动操作。
+     */
+    override suspend fun recoverRemoteRoot(): Boolean {
+        val record = currentRemoteRecord ?: return false
+        AppLog.w(TAG, "浏览器目录读取失败，自动重建远端连接：" + record.name)
+        Breadcrumbs.mark("浏览器自愈：重建远端连接 " + record.name)
+        remoteSignature = null
+        applyCurrentConnection(record, networkMonitor.context.value)
+        return remoteRoot != null
+    }
+
+    /**
      * **打开文件夹时自动缓存**（**2026-10-14 用户要求**：「可否单文件多线程，并且同时加载多个文件，
      * 定在同文件夹下，连接连接并且在打开文件夹时自动进行缓存」）。
      *
@@ -952,7 +967,10 @@ class AppContainer(context: Context) :
 
         /** 回环代理基址：没有它 LibVLC 没法把字节喂给播放器（起不来时返回 null）。 */
         override val proxyBaseUrl: String?
-            get() = runCatching { requireVideoProxy().baseUrl }.getOrNull()
+            get() = runCatching {
+                AppLog.i(TAG, "proxyBaseUrl：开始取回环代理")
+                requireVideoProxy().baseUrl.also { AppLog.i(TAG, "proxyBaseUrl：OK " + it) }
+            }.onFailure { AppLog.w(TAG, "proxyBaseUrl 失败", it) }.getOrNull()
 
         /** LibVLC 探针结论；null = 还没测（第一次起播会现场测一次）。 */
         override val vlcUsable: Boolean? get() = _vlcUsable.value
@@ -1368,8 +1386,14 @@ class AppContainer(context: Context) :
             if (current != null && current.isRunning) {
                 current
             } else {
+                AppLog.i(TAG, "回环代理：准备创建")
                 // 用 videoBackend（含“时间戳修复根目录”）而不是 _root：修复版播放时两者的后端不同
-                LoopbackHttpProxy { videoBackend.value }.also { videoProxy = it }
+                LoopbackHttpProxy(
+                    backendProvider = { videoBackend.value },
+                    // 直读：绕过分段缓存。公网 SFTP 上分段缓存会卡在 SegmentJob/通道池，
+                    // VLC 的 Range 请求本身已经够精确；先保证公网能播，再单独优化缓存。
+                    directRead = { true },
+                ).also { videoProxy = it }.also { AppLog.i(TAG, "回环代理：创建完成 " + it.baseUrl) }
             }
         }
     }
@@ -1387,6 +1411,11 @@ class AppContainer(context: Context) :
      */
     private suspend fun ensureVlcReady(): Boolean {
         _vlcUsable.value?.let { return it }
+        // 上一次进程/上一次播放已经探针成功：直接复用，避免每次换网络都重新起探针进程。
+        if (VlcProbeService.succeeded(appContext)) {
+            _vlcUsable.value = true
+            return true
+        }
         return vlcProbeMutex.withLock {
             _vlcUsable.value?.let { return@withLock it }
             val verdict = runVlcProbe()
@@ -1399,7 +1428,10 @@ class AppContainer(context: Context) :
     /** 跑一次独立进程探针并判定（主进程不加载 libvlc）。 */
     private suspend fun runVlcProbe(): VlcProbeVerdict {
         VlcProbeService.reset(appContext)
-        withContext(Dispatchers.Main) { VlcProbeService.start(appContext) }
+        AppLog.i(TAG, "开始 LibVLC 探针进程")
+        // 不要占主线程：主线程正在等 createEngine，起服务本身不需要 Main。
+        withContext(Dispatchers.Default) { VlcProbeService.start(appContext) }
+        AppLog.i(TAG, "已请求启动 LibVLC 探针进程")
         val deadline = System.currentTimeMillis() + VLC_PROBE_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline &&
             !VlcProbeService.succeeded(appContext) &&
@@ -1651,6 +1683,20 @@ class AppContainer(context: Context) :
                 .collect { (id, records, network) ->
                     applyCurrentConnection(records.firstOrNull { it.id == id }, network)
                 }
+        }
+        // 冷启动自愈：DataStore/网络现场/连接表是三条异步流，首帧可能还没齐，
+        // 只发一次 null 就停在本地根目录（2026-11-15 用户反馈：公网重开软件连接断开）。
+        // 前 12 秒每秒补一次，直到远端 root 真正建起来。
+        ioScope.launch {
+            repeat(12) {
+                delay(1_000L)
+                if (remoteRoot != null) return@launch
+                val id = currentConnectionId.value ?: return@launch
+                val record = connectionRepository.connections.first().firstOrNull { it.id == id } ?: return@repeat
+                AppLog.i(TAG, "冷启动补连远端：" + record.name)
+                remoteSignature = null
+                applyCurrentConnection(record, networkMonitor.context.value)
+            }
         }
     }
 

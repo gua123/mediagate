@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.Breadcrumbs
 import io.github.gua123.mediagate.media.engine.DecoderMode
@@ -111,8 +112,6 @@ class VideoPlayerViewModel(
     private var loadJob: Job? = null
     private var engineJob: Job? = null
 
-    /** LibVLC 起播看门狗：LAN 读不动时不至于永远转圈，超时自动回退 Media3。 */
-    private var vlcStartJob: Job? = null
     private var tickJob: Job? = null
     private var switchJob: Job? = null
     private var blackoutJob: Job? = null
@@ -696,7 +695,6 @@ class VideoPlayerViewModel(
         unbindSession()
         loadJob?.cancel()
         engineJob?.cancel()
-        vlcStartJob?.cancel()
         tickJob?.cancel()
         switchJob?.cancel()
         blackoutJob?.cancel()
@@ -728,7 +726,9 @@ class VideoPlayerViewModel(
         loadJob?.cancel()
         _state.update { it.reduce(VideoPlayerEvent.LoadStarted(path)) }
         loadJob = viewModelScope.launch {
-            proxyAvailable = withContext(io) { runCatching { environment.proxyBaseUrl }.getOrNull() != null }
+            // 代理是本地同步对象，不占 IO：公网预取可能把 IO 线程全占住时，这里再 hop 一次
+            // 会让 load 停在建内核之前（2026-11-15 真机公网 0:00 的根因之一）。
+            proxyAvailable = runCatching { environment.proxyBaseUrl }.getOrNull() != null
             val backendId = environment.backend.value?.id
             if (backendId == null) {
                 fail(VideoErrorKind.ACCESS_DENIED, NO_ROOT_MESSAGE)
@@ -811,7 +811,6 @@ class VideoPlayerViewModel(
             return
         }
         _state.update { it.reduce(VideoPlayerEvent.EngineAttached(created.kind, mode)) }
-        if (created.kind == EngineKind.VLC) startVlcStartWatchdog(path)
         // R18：会话（通知栏/锁屏）跟着当前这条视频走；会话起不来不该影响播放本身
         bindSession(created, ref, view)
         msSinceSave = 0L
@@ -865,6 +864,18 @@ class VideoPlayerViewModel(
         }
         val position = record?.positionMs ?: return
         if (position <= 0L) return
+        // **不能在 play() 后立刻 seek**：LibVLC 在首个 Vout 之前 setTime，会停在断点位置
+        // 不出画面（2026-11-15 真机：37:04 黑屏、无 decoder）。等第一帧/时间真正开始走再 seek。
+        val started = withTimeoutOrNull(5_000L) {
+            while (!target.isPlaying) {
+                if (target.state.value is EngineState.Error) return@withTimeoutOrNull false
+                delay(100L)
+            }
+            true
+        } ?: false
+        if (!started) return
+        // 给首个 Vout 一点时间：LibVLC 在 Vout 前 setTime 会停在断点不出画面
+        delay(1_200L)
         target.seekTo(position)
         _state.update { it.reduce(VideoPlayerEvent.ResumeAvailable(position)) }
         resumeJob?.cancel()
@@ -1166,42 +1177,12 @@ class VideoPlayerViewModel(
         }
     }
 
-    /**
-     * LibVLC 起播超时兜底（2026-11-15 真机：LAN 一直“正在缓冲…” 0:00）。
-     *
-     * VLC 在远端数据/代理这条链上可能长时间停在 buffering 且不报错；12 秒还没出画面就
-     * 自动换 Media3（走自己的 BackendDataSource，不经过回环代理），并明确提示原因。
-     * 只做一次；本地/已出画面的情况不会触发。
-     */
-    private fun startVlcStartWatchdog(path: String) {
-        vlcStartJob?.cancel()
-        vlcStartJob = viewModelScope.launch {
-            delay(VLC_START_TIMEOUT_MS)
-            val s = _state.value
-            if (source?.path != path || engine?.kind != EngineKind.VLC) return@launch
-            if (s.status == VideoPlayerStatus.ERROR || s.switching || s.playing || s.positionMs > 0L) return@launch
-            if (!s.buffering || autoFallbackDone) return@launch
-            val dst = VideoEngineSwitch.fallbackTarget(EngineKind.VLC, proxyAvailable) ?: return@launch
-            autoFallbackDone = true
-            _state.update {
-                it.reduce(
-                    VideoPlayerEvent.EngineFallbackNoticeRaised(
-                        "LibVLC 起播超时（12 秒没出画面），已自动改用 " + dst.label + " 直读继续",
-                    ),
-                )
-            }
-            Breadcrumbs.mark("LibVLC 起播超时 → 自动回退 " + dst.label)
-            launchSwitch(target = dst, reason = SwitchReason.ERROR_FALLBACK)
-        }
-    }
-
     private fun fail(kind: VideoErrorKind, detail: String?) {
         val fallback = VideoEngineSwitch.fallbackTarget(_state.value.engineKind, proxyAvailable) != null
         _state.update { it.reduce(VideoPlayerEvent.Failed(kind, detail, fallback)) }
     }
 
     private fun releaseEngine() {
-        vlcStartJob?.cancel()
         val current = engine
         engine = null
         _videoOutput.value = null
@@ -1229,9 +1210,6 @@ class VideoPlayerViewModel(
 
         /** LibVLC 重测的轮询间隔。 */
         const val VLC_RETEST_POLL_MS = 400L
-
-        /** LibVLC 起播看门狗：12 秒还没出画面就自动回退 Media3（LAN 卡 buffering 的兜底）。 */
-        const val VLC_START_TIMEOUT_MS = 12_000L
 
         /** 进度采样间隔：500 ms 足够跟手，也不会把主线程吵醒得太频繁。 */
         const val TICK_MS = 500L

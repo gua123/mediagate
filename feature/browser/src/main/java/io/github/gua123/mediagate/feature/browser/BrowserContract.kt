@@ -95,6 +95,12 @@ interface BrowserEnvironment {
     suspend fun setSort(sort: EntrySort)
 
     /**
+     * 远端后端疑似静默断开（公网 SFTP 重新打开软件时的 0x：目录一直转圈/连接显示断开）：
+     * 让宿主重建一次当前连接，成功返回 true。默认空实现，单测/预览不需要。
+     */
+    suspend fun recoverRemoteRoot(): Boolean = false
+
+    /**
      * **把一个文件的"开头字节"先缓存下来**（**2026-10-14 用户要求**：「同时加载多个文件，
      * 定在同文件夹下…在打开文件夹时自动进行缓存」）。
      *

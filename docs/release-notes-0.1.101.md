@@ -1,7 +1,32 @@
-# 0.1.97 发布说明（候选，待真机验证）
+# 0.1.101 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.101 公网冷启动/目录自愈（2026-11-15 用户反馈）
+
+- **现象**：公网重开软件后目录读不出、连接显示断开；手动在连接页重连即恢复。
+- **冷启动补连**：DataStore/连接表/网络现场三条异步流首帧可能不齐，只在本地根目录停住；启动后 12 秒内每秒补一次 applyCurrentConnection，直到远端 root 建立。
+- **目录自愈**：浏览器 list 加 15s 硬超时；TIMEOUT/UNKNOWN 时调 `recoverRemoteRoot()` 重建当前连接并保留当前目录（同一 label 不跳根），同一目录只自愈一次。
+- **全网络直读**：`LoopbackHttpProxy(directRead = { true })`，LAN/WAN 都绕过分段缓存，避免 SFTP SegmentJob/通道池卡死。
+
+## 0.1.100 回退 TextureView（2026-11-15 真机）
+
+- 0.1.99 的 SurfaceView 方案在 HyperOS 上 `player.play()` 后没有 Opening/Vout 事件，代理 Broken pipe，无法起播；已回退 TextureView。
+- 0.1.98 的“只用 LibVLC / 切连接不继承本地目录”保留；LAN 数据层的 header flush / cachedSize / SFTP 元数据修复保留。
+- TextureView 的偶发 Opaque Vout 失败仍存在，后续单独处理；本版先恢复可播状态。
+
+## 0.1.99 视频输出切回 SurfaceView（2026-11-15 真机 Vout 失败）
+
+- **真机**：0.1.98 在 HyperOS 上偶发 `libvlc video output: video output creation failed` / `Opaque Vout request failed`，随后一直缓冲。
+- **依据**：官方 java_sample 的 `USE_TEXTURE_VIEW` 默认 false（SurfaceView）；TextureView 走 GL 合成，硬解/Vout 兼容性更差。
+- **修**：`VlcVideoSurface` 从 TextureView 改回 SurfaceView；FIT/CROP/STRETCH/ORIGINAL 通过 SurfaceView 布局尺寸实现，容器 clipChildren；窗口尺寸/onNewVideoLayout 逻辑保留。
+
+## 0.1.98 用户三条验收口径（2026-11-15）
+
+- **只用 LibVLC 硬解**：移除 12 秒起播看门狗→Media3 自动切换；LAN 播放保持 LibVLC（探针失败才内部兜底）。
+- **切换连接不继承本地目录**：`BrowserViewModel` 首帧遇到远端 root（RootModeKind.NONE）时忽略 `lastPlayed/lastBrowsed`，只用路由显式路径或根目录；本地 root 仍恢复记忆目录。
+- **拖动尽快续播**：0.1.97 已修代理响应头 flush / SFTP 元数据通道 / cachedSize；本条继续真机测 seek。
 
 ## 0.1.97 代理响应头立即 flush（2026-11-15 真机定位）
 

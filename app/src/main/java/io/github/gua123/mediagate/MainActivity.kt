@@ -1,9 +1,12 @@
 package io.github.gua123.mediagate
 
 import android.os.Bundle
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,10 +35,24 @@ class MainActivity : ComponentActivity() {
         // R13：PIP 比例按视频真实尺寸定档（Media3 的 PlayerView 能报 videoSize；取不到回落 16:9）
         pip = VideoPipController(this) { container.videoSession.videoSize() }
         container.attachPipBridge(pip)
+        // 调试入口：adb shell am start -n .../.MainActivity --ez mg_clear_cache true
+        if (intent?.getBooleanExtra("mg_clear_cache", false) == true) {
+            lifecycleScope.launch {
+                val freed = container.clearRemoteCache()
+                android.util.Log.i("MG/MediaGate", "调试清空分段缓存：释放 " + freed + " 字节")
+            }
+        }
         setContent {
             MediaGateTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    MediaGateApp(container = container)
+                    MediaGateApp(
+                        container = container,
+                        debugOpenPath = intent?.getStringExtra("mg_open_path_b64")?.let {
+                            runCatching {
+                                String(Base64.decode(it, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)
+                            }.getOrNull()
+                        } ?: intent?.getStringExtra("mg_open_path"),
+                    )
                 }
             }
         }

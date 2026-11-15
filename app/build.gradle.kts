@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.97：代理写完响应头立即 flush，修 VLC 看不到 Content-Range 的 cannot seek。
-        versionCode = 98
-        versionName = "0.1.97"
+        // 0.1.101：公网冷启动补连 + 目录自愈；代理全网络直读。
+        versionCode = 102
+        versionName = "0.1.101"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

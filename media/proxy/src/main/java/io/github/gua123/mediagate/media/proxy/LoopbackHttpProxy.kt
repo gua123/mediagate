@@ -3,6 +3,7 @@ package io.github.gua123.mediagate.media.proxy
 import kotlinx.coroutines.runBlocking
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.data.storage.api.RangeStream
+import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import java.io.BufferedOutputStream
@@ -45,7 +46,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * @param backendProvider 现取当前后端；返回 null 表示尚未选择根目录（R12），此时代理回 503。
  */
-class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Closeable {
+class LoopbackHttpProxy(
+    private val backendProvider: () -> StorageBackend?,
+    private val directRead: () -> Boolean = { false },
+) : Closeable {
 
     /** 固定后端的便捷构造。 */
     constructor(backend: StorageBackend) : this({ backend })
@@ -219,7 +223,15 @@ class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Cl
         val start = if (spec is HttpRanges.RangeSpec.Partial) spec.start else 0L
         val length = if (spec is HttpRanges.RangeSpec.Partial) spec.length else -1L
         val stream = try {
-            runBlocking { backend.openRead(target.path, start, length) }
+            runBlocking {
+                // 局域网直读：绕过分段缓存，避免冷缓存/后台任务把 SFTP 通道占死；
+                // VLC 自己的 Range 请求已经足够精确。公网仍走缓存吸收高延迟。
+                if (directRead() && backend is SegmentedCacheBackend) {
+                    backend.openReadDirect(target.path, start, length)
+                } else {
+                    backend.openRead(target.path, start, length)
+                }
+            }
         } catch (e: StorageException) {
             writeSimple(out, statusOf(e), "Storage Error", describe(e))
             return

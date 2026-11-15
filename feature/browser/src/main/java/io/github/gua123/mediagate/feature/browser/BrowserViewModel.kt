@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.data.storage.api.StorageException
@@ -78,6 +79,9 @@ class BrowserViewModel(
 
     /** 正在进行的列目录任务；新请求先取消它。 */
     private var loadJob: Job? = null
+
+    /** 同一目录只自愈一次，避免重建后仍失败时无限递归。 */
+    private var recoveredPath: String? = null
 
     /** 封面空闲预热的协程（用户一操作就取消，见 [scheduleCoverWarmup]）。 */
     private var warmupJob: Job? = null
@@ -157,7 +161,8 @@ class BrowserViewModel(
     // ------------------------------------------------------------------ 内部
 
     private fun onRootChanged(root: BrowserRootState?) {
-        val previousBackend = currentRoot?.backend
+        val previousRoot = currentRoot
+        val previousBackend = previousRoot?.backend
         currentRoot = root
         if (root == null) {
             loadJob?.cancel()
@@ -165,10 +170,16 @@ class BrowserViewModel(
             return
         }
         val sameBackend = previousBackend === root.backend
+        // 自愈重建后 backend 实例会换，但连接 label 不变：保留当前目录，不要突然跳回根。
+        val sameConnection = previousRoot?.label == root.label && previousRoot.mode == root.mode
         val path = when {
+            // 首帧：远端连接不能套用本地记住的目录（2026-11-15 用户反馈：
+            // 切到 LAN 后路径变成 "本地视频文件夹/..."）。远端只认路由显式带来的路径，
+            // 没带就回根目录；本地仍按记住的起始目录恢复。
+            awaitingFirstRoot && root.mode == RootModeKind.NONE -> initialPath
             // 首帧用**算好的**起始目录（曾经这里写成 initialPath ⇒ 路由没带路径时永远回根目录）
             awaitingFirstRoot -> startPath
-            sameBackend -> _state.value.path
+            sameBackend || sameConnection -> _state.value.path
             else -> ""
         }
         awaitingFirstRoot = false
@@ -192,11 +203,24 @@ class BrowserViewModel(
         loadJob = viewModelScope.launch {
             val outcome = withContext(io) {
                 try {
-                    LoadOutcome.Success(root.backend.list(target, null))
+                    // 列目录必须有上限：公网 SFTP 的 native 读可能卡住，15s 超时后走自愈重建，
+                    // 不能让界面无限“正在加载…”（2026-11-15 用户反馈）。
+                    withTimeout(15_000L) { root.backend.list(target, null) }.let { LoadOutcome.Success(it) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
                     LoadOutcome.Failure(classify(t), t.message)
+                }
+            }
+            // 超时/未知错误先自愈一次：公网 SFTP 静默断开时重建连接再重列，避免用户手动去连接页重连。
+            if (outcome is LoadOutcome.Failure &&
+                (outcome.kind == BrowserErrorKind.TIMEOUT || outcome.kind == BrowserErrorKind.UNKNOWN) &&
+                recoveredPath != target
+            ) {
+                recoveredPath = target
+                if (environment.recoverRemoteRoot()) {
+                    load(target, refreshing = false)
+                    return@launch
                 }
             }
             _state.update { state ->
@@ -206,7 +230,10 @@ class BrowserViewModel(
                 }
             }
             // 列表出来了：空闲预热"视频开头封面"（用户 2026-10-14 的要求）
-            if (outcome is LoadOutcome.Success) scheduleCoverWarmup(root, target)
+            if (outcome is LoadOutcome.Success) {
+                recoveredPath = null
+                scheduleCoverWarmup(root, target)
+            }
         }
     }
 

@@ -181,6 +181,9 @@ class VideoPlayerViewModelTest {
         val env = environment(progress = progress)
         val vm = player(env, "Movies/b.mp4")
         settle()
+        // 起播后要等首个 Vout 再 seek（避免 VLC 在 Vout 前 setTime 停住）
+        advanceTimeBy(1_500L)
+        runCurrent()
 
         val engine = env.last!!
         assertTrue(engine.seekCalls.contains(45_000L))

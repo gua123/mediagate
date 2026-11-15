@@ -160,8 +160,18 @@ private enum class TopLevelDestination(
  * @param container 应用级依赖容器（由 [io.github.gua123.mediagate.MediaGateApplication] 持有）。
  */
 @Composable
-fun MediaGateApp(container: AppContainer, modifier: Modifier = Modifier) {
+fun MediaGateApp(
+    container: AppContainer,
+    modifier: Modifier = Modifier,
+    debugOpenPath: String? = null,
+) {
     val navController = rememberNavController()
+    LaunchedEffect(debugOpenPath) {
+        val path = debugOpenPath?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        runCatching {
+            navController.navigate(VideoPlayerRoutes.route(path)) { launchSingleTop = true }
+        }
+    }
 
     // **2026-10-03 用户要求**：「退出视频播放…而不是返回下方菜单栏中的首页，这样我还要重新选择文件夹」
     // ⇒ 记住浏览页当前所在目录；播放/看图退出时回到这个文件夹（而不是首页）。
