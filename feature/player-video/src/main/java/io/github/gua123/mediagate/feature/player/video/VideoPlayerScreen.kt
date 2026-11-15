@@ -777,6 +777,15 @@ private fun Controls(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            state.engineFallbackNotice?.let { notice ->
+                Text(
+                    text = notice,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             if (state.buffering && state.status != VideoPlayerStatus.ERROR) {
                 Text(
                     text = stringResource(R.string.video_buffering),

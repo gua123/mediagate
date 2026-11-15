@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.89：先起播再补同目录队列，修 LAN 列目录慢导致一直 LOADING。
-        versionCode = 90
-        versionName = "0.1.89"
+        // 0.1.90：LibVLC 起播 12 秒无画面自动回退 Media3，兜底 LAN buffering。
+        versionCode = 91
+        versionName = "0.1.90"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

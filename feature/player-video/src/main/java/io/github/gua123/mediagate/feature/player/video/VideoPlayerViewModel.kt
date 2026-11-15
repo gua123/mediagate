@@ -110,6 +110,9 @@ class VideoPlayerViewModel(
 
     private var loadJob: Job? = null
     private var engineJob: Job? = null
+
+    /** LibVLC 起播看门狗：LAN 读不动时不至于永远转圈，超时自动回退 Media3。 */
+    private var vlcStartJob: Job? = null
     private var tickJob: Job? = null
     private var switchJob: Job? = null
     private var blackoutJob: Job? = null
@@ -691,6 +694,7 @@ class VideoPlayerViewModel(
         unbindSession()
         loadJob?.cancel()
         engineJob?.cancel()
+        vlcStartJob?.cancel()
         tickJob?.cancel()
         switchJob?.cancel()
         blackoutJob?.cancel()
@@ -805,6 +809,7 @@ class VideoPlayerViewModel(
             return
         }
         _state.update { it.reduce(VideoPlayerEvent.EngineAttached(created.kind, mode)) }
+        if (created.kind == EngineKind.VLC) startVlcStartWatchdog(path)
         // R18：会话（通知栏/锁屏）跟着当前这条视频走；会话起不来不该影响播放本身
         bindSession(created, ref, view)
         msSinceSave = 0L
@@ -1159,12 +1164,42 @@ class VideoPlayerViewModel(
         }
     }
 
+    /**
+     * LibVLC 起播超时兜底（2026-11-15 真机：LAN 一直“正在缓冲…” 0:00）。
+     *
+     * VLC 在远端数据/代理这条链上可能长时间停在 buffering 且不报错；12 秒还没出画面就
+     * 自动换 Media3（走自己的 BackendDataSource，不经过回环代理），并明确提示原因。
+     * 只做一次；本地/已出画面的情况不会触发。
+     */
+    private fun startVlcStartWatchdog(path: String) {
+        vlcStartJob?.cancel()
+        vlcStartJob = viewModelScope.launch {
+            delay(VLC_START_TIMEOUT_MS)
+            val s = _state.value
+            if (source?.path != path || engine?.kind != EngineKind.VLC) return@launch
+            if (s.status == VideoPlayerStatus.ERROR || s.switching || s.playing || s.positionMs > 0L) return@launch
+            if (!s.buffering || autoFallbackDone) return@launch
+            val dst = VideoEngineSwitch.fallbackTarget(EngineKind.VLC, proxyAvailable) ?: return@launch
+            autoFallbackDone = true
+            _state.update {
+                it.reduce(
+                    VideoPlayerEvent.EngineFallbackNoticeRaised(
+                        "LibVLC 起播超时（12 秒没出画面），已自动改用 " + dst.label + " 继续",
+                    ),
+                )
+            }
+            Breadcrumbs.mark("LibVLC 起播超时 → 自动回退 " + dst.label)
+            launchSwitch(target = dst, reason = SwitchReason.ERROR_FALLBACK)
+        }
+    }
+
     private fun fail(kind: VideoErrorKind, detail: String?) {
         val fallback = VideoEngineSwitch.fallbackTarget(_state.value.engineKind, proxyAvailable) != null
         _state.update { it.reduce(VideoPlayerEvent.Failed(kind, detail, fallback)) }
     }
 
     private fun releaseEngine() {
+        vlcStartJob?.cancel()
         val current = engine
         engine = null
         _videoOutput.value = null
@@ -1192,6 +1227,9 @@ class VideoPlayerViewModel(
 
         /** LibVLC 重测的轮询间隔。 */
         const val VLC_RETEST_POLL_MS = 400L
+
+        /** LibVLC 起播看门狗：12 秒还没出画面就自动回退 Media3（LAN 卡 buffering 的兜底）。 */
+        const val VLC_START_TIMEOUT_MS = 12_000L
 
         /** 进度采样间隔：500 ms 足够跟手，也不会把主线程吵醒得太频繁。 */
         const val TICK_MS = 500L
