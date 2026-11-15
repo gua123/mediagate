@@ -113,6 +113,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
@@ -162,6 +165,17 @@ fun VideoPlayerScreen(
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val output by viewModel.videoOutput.collectAsStateWithLifecycle()
+
+    // 后台回前台：系统可能已经销毁 Surface；通知 VLC 重新 detach/attach 输出，
+    // 否则声音继续但画面全黑（2026-11-15 用户反馈「只能后台播放」）。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onHostResume()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     /** 记忆操作（旋转方向之类）用；不涉及界面状态，失败也只记日志。 */
     val scope = rememberCoroutineScope()

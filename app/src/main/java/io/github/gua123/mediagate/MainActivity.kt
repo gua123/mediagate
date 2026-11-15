@@ -1,7 +1,12 @@
 package io.github.gua123.mediagate
 
+import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Base64
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +33,24 @@ class MainActivity : ComponentActivity() {
     /** 画中画控制器（R13）；[onCreate] 建、[onDestroy] 摘。 */
     private lateinit var pip: VideoPipController
 
+    /** 后台播放通知点回前台时要重开的视频路径；token 让同一路径也能再次触发导航。 */
+    private data class DebugOpenRequest(val path: String, val token: Long)
+
+    private val debugOpen = MutableStateFlow<DebugOpenRequest?>(null)
+
+    private fun readDebugOpen(intent: Intent?): DebugOpenRequest? {
+        val path = intent?.getStringExtra("mg_open_path_b64")?.let {
+            runCatching {
+                String(Base64.decode(it, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)
+            }.getOrNull()
+        } ?: intent?.getStringExtra("mg_open_path")
+        if (path.isNullOrBlank()) return null
+        return DebugOpenRequest(
+            path,
+            intent?.getLongExtra("mg_open_token", SystemClock.uptimeMillis()) ?: SystemClock.uptimeMillis(),
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -42,16 +65,17 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.i("MG/MediaGate", "调试清空分段缓存：释放 " + freed + " 字节")
             }
         }
+        debugOpen.value = readDebugOpen(intent) ?: container.videoSession.videoSessionSource
+            ?.takeIf { it.path.isNotBlank() }
+            ?.let { DebugOpenRequest(it.path, SystemClock.uptimeMillis()) }
         setContent {
+            val debugRequest by debugOpen.collectAsState()
             MediaGateTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MediaGateApp(
                         container = container,
-                        debugOpenPath = intent?.getStringExtra("mg_open_path_b64")?.let {
-                            runCatching {
-                                String(Base64.decode(it, Base64.URL_SAFE or Base64.NO_WRAP), Charsets.UTF_8)
-                            }.getOrNull()
-                        } ?: intent?.getStringExtra("mg_open_path"),
+                        debugOpenPath = debugRequest?.path,
+                        debugOpenToken = debugRequest?.token ?: 0L,
                     )
                 }
             }
@@ -76,12 +100,19 @@ class MainActivity : ComponentActivity() {
      */
     override fun onResume() {
         super.onResume()
-        (application as MediaGateApplication).container.onHostResumed()
+        val container = (application as MediaGateApplication).container
+        container.onHostResumed()
     }
 
     override fun onPause() {
         (application as MediaGateApplication).container.onHostPaused()
         super.onPause()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readDebugOpen(intent)?.let { debugOpen.value = it }
     }
 
     /**

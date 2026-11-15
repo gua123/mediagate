@@ -164,10 +164,14 @@ fun MediaGateApp(
     container: AppContainer,
     modifier: Modifier = Modifier,
     debugOpenPath: String? = null,
+    debugOpenToken: Long = 0L,
 ) {
     val navController = rememberNavController()
-    LaunchedEffect(debugOpenPath) {
+    LaunchedEffect(debugOpenToken) {
         val path = debugOpenPath?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        // 已经在播放页就不要重复 navigate：后台回前台时重建播放页会把正在播的实例
+        // 换掉，进度归零/黑屏。只有从浏览器/首页回来才需要导航。
+        if (navController.currentDestination?.route == VideoPlayerRoutes.ROUTE) return@LaunchedEffect
         runCatching {
             navController.navigate(VideoPlayerRoutes.route(path)) { launchSingleTop = true }
         }

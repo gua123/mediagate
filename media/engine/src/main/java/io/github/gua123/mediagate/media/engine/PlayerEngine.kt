@@ -107,6 +107,12 @@ interface PlayerEngine {
     /** 媒体总时长（毫秒）；未知返回 0。 */
     fun durationMs(): Long
 
+    /**
+     * App 从后台回前台：视频 Surface 可能已被系统销毁，重新挂一次输出。
+     * 默认空实现（Media3 的 PlayerView 自己处理）；LibVLC 需要显式 detach/attach。
+     */
+    fun recoverVideoOutput() = Unit
+
     /** 释放所有资源（幂等）。 */
     fun release()
 

@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.103：退出播放页先强制竖屏再交还系统，修横屏无法还原。
-        versionCode = 104
-        versionName = "0.1.103"
+        // 0.1.104：后台视频会话回前台时自动拉回播放页（通知/图标都生效）。
+        versionCode = 105
+        versionName = "0.1.104"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

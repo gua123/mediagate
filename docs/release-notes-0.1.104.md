@@ -1,7 +1,15 @@
-# 0.1.103 发布说明（候选，待真机验证）
+# 0.1.104 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.104 后台视频回前台（2026-11-15 用户反馈）
+
+- **现象**：视频切后台后只能继续后台播放，点通知/App 图标回到前台仍是浏览器，回不到播放页。
+- **通知点击**：`VideoPlaybackService.openAppIntent()` 带上当前视频路径 + token；服务轮询到 source 变化时 `setSessionActivity()` 刷新 PendingIntent。
+- **App 图标/最近任务**：`MainActivity.onResume` 检查 `videoSessionSource`，有会话就把路径转成 `debugOpen` 请求，导航回播放页。
+- `MainActivity.onNewIntent` + `MediaGateApp` token 驱动，保证同一路径再次点击也能触发导航。
+- **Surface 重建**：`PlayerEngine.recoverVideoOutput()`；播放页 `ON_RESUME` 时 VLC detach/attach 视频输出并续播，解决回前台后“声音在、画面黑”。
 
 ## 0.1.103 播放后方向还原（2026-11-15 用户反馈）
 

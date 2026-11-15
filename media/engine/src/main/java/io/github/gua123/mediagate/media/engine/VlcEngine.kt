@@ -564,6 +564,19 @@ class VlcEngine(
 
     override fun durationMs(): Long = player.length.coerceAtLeast(0L)
 
+    override fun recoverVideoOutput() {
+        val view = attachedView ?: return
+        val wasPlaying = player.isPlaying
+        AppLog.i(TAG, "后台回前台：重新挂载视频输出（wasPlaying=" + wasPlaying + "）")
+        runCatching { player.detachViews() }
+        videoOutputAttached = false
+        pendingPlay = wasPlaying
+        when (view) {
+            is VLCVideoLayout -> attachLayoutIfReady(view)
+            is VlcVideoSurface -> attachSurfaceIfReady(view)
+        }
+    }
+
     override fun release() {
         pendingPlay = false
         attachedView?.removeCallbacks(outputRetryRunnable)

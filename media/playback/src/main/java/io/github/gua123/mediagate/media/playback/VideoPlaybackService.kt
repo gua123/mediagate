@@ -127,6 +127,9 @@ class VideoPlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
+    /** 已经写进通知点击 PendingIntent 的视频路径（源变了才重写）。 */
+    private var lastSessionPath: String? = null
+
     private var wakeLock: PowerManager.WakeLock? = null
 
     /**
@@ -143,6 +146,12 @@ class VideoPlaybackService : MediaSessionService() {
                 AppLog.i(TAG, "视频会话已收掉，服务退场（R18）")
                 stopSelf()
                 return
+            }
+            // 通知点击的 PendingIntent 在 onCreate 时 source 可能还没建；源路径变化时补写一次，
+            // 保证从通知栏/锁屏点回来能直接回到当前视频播放页，而不是只回到浏览器。
+            if (source.path != lastSessionPath) {
+                lastSessionPath = source.path
+                runCatching { mediaSession?.setSessionActivity(openAppIntent()) }
             }
             syncWakeLock(source.isPlaying)
             sessionPlayer?.refresh()
@@ -297,11 +306,22 @@ class VideoPlaybackService : MediaSessionService() {
         }
     }
 
-    /** 通知栏点回 App（单实例，不新建 Activity）。 */
+    /** 通知栏点回 App（单实例，不新建 Activity）；带上当前视频路径，直接回播放页。 */
     private fun openAppIntent(): PendingIntent {
         val intent = packageManager.getLaunchIntentForPackage(packageName)
             ?: Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(packageName)
         intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val source = currentSource()
+        if (!source?.path.isNullOrBlank()) {
+            intent.putExtra(
+                "mg_open_path_b64",
+                android.util.Base64.encodeToString(
+                    source.path.toByteArray(Charsets.UTF_8),
+                    android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP,
+                ),
+            )
+            intent.putExtra("mg_open_token", System.currentTimeMillis())
+        }
         return PendingIntent.getActivity(
             this,
             0,

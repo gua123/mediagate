@@ -241,6 +241,13 @@ class VideoPlayerViewModel(
 
     // ------------------------------------------------------------------ 页面动作
 
+    /** Activity 回前台：重新挂载 VLC 输出，必要时续播。 */
+    fun onHostResume() {
+        val current = engine ?: return
+        current.recoverVideoOutput()
+        if (_state.value.playing && !current.isPlaying) current.play()
+    }
+
     /** 失败后重试（释放现有内核，按当前路径重新来一遍）。 */
     fun retry() {
         reload(_state.value.path.ifEmpty { initialPath })
