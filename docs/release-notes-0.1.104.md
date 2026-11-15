@@ -7,9 +7,11 @@
 
 - **现象**：视频切后台后只能继续后台播放，点通知/App 图标回到前台仍是浏览器，回不到播放页。
 - **通知点击**：`VideoPlaybackService.openAppIntent()` 带上当前视频路径 + token；服务轮询到 source 变化时 `setSessionActivity()` 刷新 PendingIntent。
-- **App 图标/最近任务**：`MainActivity.onResume` 检查 `videoSessionSource`，有会话就把路径转成 `debugOpen` 请求，导航回播放页。
+- **App 图标/最近任务**：`MainActivity.onCreate` 检查 `videoSessionSource`，有会话就把路径转成 `debugOpen` 请求，导航回播放页；已在播放页时不重复 navigate。
 - `MainActivity.onNewIntent` + `MediaGateApp` token 驱动，保证同一路径再次点击也能触发导航。
 - **Surface 重建**：`PlayerEngine.recoverVideoOutput()`；播放页 `ON_RESUME` 时 VLC detach/attach 视频输出并续播，解决回前台后“声音在、画面黑”。
+- **只在真正后台后恢复**：`ON_PAUSE` 置位，首次 `ON_RESUME` 不 detach，避免打断起播（真机 `wasPlaying=false` 时重新挂载导致 cannot peek）。
+- **自愈先关旧会话**：`recoverRemoteRoot()` 先 `closeRemoteRoot()` 再重建，避免新 SFTP 撞上已卡死的旧会话。
 
 ## 0.1.103 播放后方向还原（2026-11-15 用户反馈）
 

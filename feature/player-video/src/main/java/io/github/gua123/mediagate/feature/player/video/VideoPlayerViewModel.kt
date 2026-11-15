@@ -241,8 +241,17 @@ class VideoPlayerViewModel(
 
     // ------------------------------------------------------------------ 页面动作
 
-    /** Activity 回前台：重新挂载 VLC 输出，必要时续播。 */
+    /** 是否真的经历过一次后台（避免播放页首次 ON_RESUME 就 detach/attach 打断起播）。 */
+    private var hostPaused = false
+
+    fun onHostPause() {
+        hostPaused = true
+    }
+
+    /** Activity 回前台：只有真正从后台回来才重新挂载 VLC 输出。 */
     fun onHostResume() {
+        if (!hostPaused) return
+        hostPaused = false
         val current = engine ?: return
         current.recoverVideoOutput()
         if (_state.value.playing && !current.isPlaying) current.play()

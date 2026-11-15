@@ -514,8 +514,11 @@ class AppContainer(context: Context) :
         val record = currentRemoteRecord ?: return false
         AppLog.w(TAG, "浏览器目录读取失败，自动重建远端连接：" + record.name)
         Breadcrumbs.mark("浏览器自愈：重建远端连接 " + record.name)
+        // 先真正关掉旧 SFTP 会话/通道，否则新后端会撞上同一个已卡死的会话。
+        closeRemoteRoot()
         remoteSignature = null
         applyCurrentConnection(record, networkMonitor.context.value)
+        AppLog.i(TAG, "浏览器自愈结果：remoteRoot=" + (remoteRoot != null))
         return remoteRoot != null
     }
 
