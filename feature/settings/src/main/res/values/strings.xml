@@ -31,12 +31,16 @@
     <string name="settings_group_expand">展开</string>
     <string name="settings_group_collapse">收起</string>
     <string name="settings_notes_title">说明</string>
+    <string name="settings_notes_show">查看说明</string>
+    <string name="settings_notes_hide">收起说明</string>
 
     <!-- 后台与保活（M8-A / R18：澎湃 OS 首次运行引导） -->
     <string name="settings_keep_alive">后台与保活</string>
     <string name="settings_keep_alive_summary">已就绪 %1$d / %2$d 项</string>
     <string name="settings_keep_alive_hint">澎湃 OS 会限制后台应用。下面几项就绪后，切后台 / 息屏播放与批量字幕生成才不会被系统掐断；每项状态能查的自动查，查不到的请你手动确认。</string>
     <string name="settings_keep_alive_all_ready">四项都已就绪，可以放心后台播放。</string>
+    <string name="settings_keep_alive_show">查看 %1$d 项</string>
+    <string name="settings_keep_alive_hide">收起详情</string>
     <string name="keep_alive_status_ready">已就绪</string>
     <string name="keep_alive_status_action">待开启</string>
     <string name="keep_alive_status_manual">需手动确认</string>

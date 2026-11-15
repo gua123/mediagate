@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -87,6 +88,7 @@ fun SettingsScreen(
                 if (group !in visibleGroups) return@forEach
                 // 折叠状态按会话记住（转屏不丢；重进设置页回到默认——只有诊断组默认折叠）
                 var expanded by rememberSaveable(group.name) { mutableStateOf(!group.collapsedByDefault) }
+                var notesExpanded by rememberSaveable(group.name + "_notes") { mutableStateOf(false) }
                 SettingsGroupHeader(
                     group = group,
                     expanded = expanded,
@@ -112,8 +114,18 @@ fun SettingsScreen(
                         SettingsGroup.SECURITY -> sections.security?.invoke(this)
                         SettingsGroup.DIAGNOSTICS -> sections.diagnostics?.invoke(this)
                     }
-                    // 说明贴在它解释的那一组里（R21：不再把 4 条不同主题的说明塞进一张「网络策略」卡）
-                    NotesBlock(notes = settingsNotesFor(notes, group))
+                    // 长说明默认收起：设置页先给“能操作的东西”，解释按需展开。
+                    val groupNotes = settingsNotesFor(notes, group)
+                    if (groupNotes.isNotEmpty()) {
+                        TextButton(onClick = { notesExpanded = !notesExpanded }) {
+                            Text(
+                                stringResource(
+                                    if (notesExpanded) R.string.settings_notes_hide else R.string.settings_notes_show,
+                                ),
+                            )
+                        }
+                        if (notesExpanded) NotesBlock(notes = groupNotes)
+                    }
                 }
             }
 
@@ -274,11 +286,6 @@ private fun KeepAliveCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-            Text(
-                text = stringResource(R.string.settings_keep_alive_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             if (guide.allReady) {
                 Text(
                     text = stringResource(R.string.settings_keep_alive_all_ready),
@@ -286,8 +293,24 @@ private fun KeepAliveCard(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
-            guide.items.forEach { item ->
-                KeepAliveRow(item = item, onAction = onAction, onConfirm = onConfirm)
+            var detailsExpanded by rememberSaveable { mutableStateOf(!guide.allReady) }
+            TextButton(onClick = { detailsExpanded = !detailsExpanded }) {
+                Text(
+                    stringResource(
+                        if (detailsExpanded) R.string.settings_keep_alive_hide else R.string.settings_keep_alive_show,
+                        guide.items.size,
+                    ),
+                )
+            }
+            if (detailsExpanded) {
+                Text(
+                    text = stringResource(R.string.settings_keep_alive_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                guide.items.forEach { item ->
+                    KeepAliveRow(item = item, onAction = onAction, onConfirm = onConfirm)
+                }
             }
         }
     }

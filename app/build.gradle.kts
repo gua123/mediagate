@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.104：后台视频会话回前台时自动拉回播放页（通知/图标都生效）。
-        versionCode = 105
-        versionName = "0.1.104"
+        // 0.1.105：设置页低频组默认折叠，说明/保活详情按需展开。
+        versionCode = 106
+        versionName = "0.1.105"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

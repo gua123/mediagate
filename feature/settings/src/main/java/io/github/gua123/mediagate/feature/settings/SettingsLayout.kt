@@ -28,9 +28,21 @@ enum class SettingsGroup(
 ) {
     CONNECTION(R.string.settings_group_connection, R.string.settings_group_subtitle_connection),
     PLAYBACK(R.string.settings_group_playback, R.string.settings_group_subtitle_playback),
-    NETWORK(R.string.settings_group_network, R.string.settings_group_subtitle_network),
-    UPDATE(R.string.settings_group_update, R.string.settings_group_subtitle_update),
-    SECURITY(R.string.settings_group_security, R.string.settings_group_subtitle_security),
+    NETWORK(
+        R.string.settings_group_network,
+        R.string.settings_group_subtitle_network,
+        collapsedByDefault = true,
+    ),
+    UPDATE(
+        R.string.settings_group_update,
+        R.string.settings_group_subtitle_update,
+        collapsedByDefault = true,
+    ),
+    SECURITY(
+        R.string.settings_group_security,
+        R.string.settings_group_subtitle_security,
+        collapsedByDefault = true,
+    ),
     DIAGNOSTICS(
         R.string.settings_group_diagnostics,
         R.string.settings_group_subtitle_diagnostics,

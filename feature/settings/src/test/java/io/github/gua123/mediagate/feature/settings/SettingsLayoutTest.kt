@@ -36,9 +36,18 @@ class SettingsLayoutTest {
     }
 
     @Test
-    fun 只有诊断组默认折叠() {
+    fun 低频组默认折叠() {
         val collapsed = settingsGroupOrder().filter { it.collapsedByDefault }
-        assertEquals("排障用的那组才默认折叠", listOf(SettingsGroup.DIAGNOSTICS), collapsed)
+        assertEquals(
+            "网络/更新/安全/诊断默认折叠，页面先给高频操作",
+            listOf(
+                SettingsGroup.NETWORK,
+                SettingsGroup.UPDATE,
+                SettingsGroup.SECURITY,
+                SettingsGroup.DIAGNOSTICS,
+            ),
+            collapsed,
+        )
     }
 
     @Test
