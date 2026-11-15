@@ -5,6 +5,10 @@
 -->
 <resources>
     <string name="connections_title">连接</string>
+    <string name="connections_section_my">我的连接</string>
+    <string name="connections_section_local">本地目录</string>
+    <string name="connections_local_toggle_show">本地目录设置</string>
+    <string name="connections_local_toggle_hide">收起本地目录设置</string>
     <string name="connections_action_new">新建连接</string>
     <string name="connections_action_test_all">测试全部</string>
 

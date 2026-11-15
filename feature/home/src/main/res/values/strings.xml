@@ -8,6 +8,17 @@
     <string name="home_subtitle">从本地目录开始浏览与播放</string>
 
     <string name="home_section_media">媒体入口</string>
+    <string name="home_entry_open">打开</string>
+    <string name="home_continue_title">继续播放</string>
+    <string name="home_continue_desc">从上次位置继续</string>
+    <string name="home_storage_title">存储位置</string>
+    <string name="home_storage_chip_remote">远端</string>
+    <string name="home_storage_chip_local">本地</string>
+    <string name="home_storage_remote_desc">远端连接优先；本地目录保留为备用</string>
+    <string name="home_storage_manage">管理连接</string>
+    <string name="home_storage_local_show">本地目录设置</string>
+    <string name="home_storage_local_hide">收起本地目录设置</string>
+    <string name="home_storage_local_title">备用本地目录</string>
     <string name="home_entry_video">视频</string>
     <string name="home_entry_video_desc">浏览并播放视频</string>
     <string name="home_entry_audio">音乐</string>

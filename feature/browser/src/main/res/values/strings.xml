@@ -44,6 +44,8 @@
     <string name="browser_meta">%1$s · %2$s</string>
     <string name="browser_crumb_separator">›</string>
     <string name="browser_filter_active">筛选：%1$s</string>
+    <string name="browser_filter_title">筛选类型</string>
+    <string name="browser_filter_all">全部</string>
     <string name="browser_filter_clear">清除筛选</string>
 
     <string name="browser_open_todo_image">图片查看器尚未提供，将在后续版本加入</string>

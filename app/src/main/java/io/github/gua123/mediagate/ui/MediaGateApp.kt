@@ -320,6 +320,19 @@ fun MediaGateApp(
                             }
                         },
                         onPickSafDirectory = { safPicker.launch(null) },
+                        onOpenLastPlayed = { path ->
+                            when (MediaKindGuesser.guess(path)) {
+                                MediaKind.VIDEO -> navController.navigate(VideoPlayerRoutes.route(path))
+                                MediaKind.AUDIO -> navController.navigate(AudioPlayerRoutes.route(path))
+                                MediaKind.IMAGE -> navController.navigate(ViewerRoutes.route(path))
+                                else -> navController.navigate(
+                                    BrowserRoutes.route(path = path.substringBeforeLast('/', "")),
+                                )
+                            }
+                        },
+                        onOpenConnections = {
+                            navController.switchTopLevel(TopLevelDestination.CONNECTIONS)
+                        },
                     )
                 }
 
@@ -651,10 +664,13 @@ private fun HomeRoute(
     container: AppContainer,
     onOpenKind: (MediaKind) -> Unit,
     onPickSafDirectory: () -> Unit,
+    onOpenLastPlayed: (String) -> Unit,
+    onOpenConnections: () -> Unit,
 ) {
     val config by container.rootConfig.collectAsStateWithLifecycle()
     val allFilesGranted by container.allFilesGranted.collectAsStateWithLifecycle()
     val remoteLabel by container.remoteRootLabel.collectAsStateWithLifecycle()
+    val lastPlayed by container.lastPlayedPathFlow.collectAsStateWithLifecycle()
     HomeScreen(
         root = HomeRootUi(
             mode = config?.mode ?: RootModeKind.NONE,
@@ -667,6 +683,9 @@ private fun HomeRoute(
         onUseAllFilesRoot = container::useAllFilesRoot,
         onRequestAllFilesAccess = container::requestAllFilesAccess,
         onClearRoot = container::clearRoot,
+        lastPlayedPath = lastPlayed,
+        onOpenLastPlayed = onOpenLastPlayed,
+        onOpenConnections = onOpenConnections,
     )
 }
 

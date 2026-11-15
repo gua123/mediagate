@@ -33,8 +33,10 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
@@ -182,6 +184,10 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
+                    FilterMenu(
+                        current = state.filter,
+                        onPick = viewModel::setFilter,
+                    )
                     // 排序（2026-10-03 用户要求）：方式 + 升降序，选择落盘，换页/重启都记得
                     SortMenu(
                         sort = state.sort,
@@ -261,6 +267,35 @@ private fun BreadcrumbRow(crumbs: List<BrowserCrumb>, onCrumbClick: (BrowserCrum
                     .clickable { onCrumbClick(crumb) }
                     .padding(horizontal = 6.dp, vertical = 4.dp),
             )
+        }
+    }
+}
+
+/** 浏览页内的类型筛选菜单（全部 / 视频 / 音频 / 图片），不用退回首页重进。 */
+@Composable
+private fun FilterMenu(current: MediaKind?, onPick: (MediaKind?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.FilterList, contentDescription = stringResource(R.string.browser_filter_title))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.browser_filter_all)) },
+                onClick = { open = false; onPick(null) },
+                trailingIcon = if (current == null) {
+                    { Icon(Icons.Default.Check, contentDescription = null) }
+                } else null,
+            )
+            listOf(MediaKind.VIDEO, MediaKind.AUDIO, MediaKind.IMAGE).forEach { kind ->
+                DropdownMenuItem(
+                    text = { Text(kindLabel(kind)) },
+                    onClick = { open = false; onPick(kind) },
+                    trailingIcon = if (current == kind) {
+                        { Icon(Icons.Default.Check, contentDescription = null) }
+                    } else null,
+                )
+            }
         }
     }
 }

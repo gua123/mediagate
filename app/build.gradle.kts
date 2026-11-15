@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.105：设置页低频组默认折叠，说明/保活详情按需展开。
-        versionCode = 106
-        versionName = "0.1.105"
+        // 0.1.106：首页/连接页/浏览页结构重组，设置页继续收敛。
+        versionCode = 107
+        versionName = "0.1.106"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

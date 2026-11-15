@@ -173,21 +173,10 @@ fun ConnectionsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { NetworkCard(state) }
-                item {
-                    LocalRootCard(
-                        localRoot = localRoot,
-                        remoteActive = state.currentConnectionId != null,
-                        onPickSafDirectory = onPickSafDirectory,
-                        onUseAllFilesRoot = onUseAllFilesRoot,
-                        onRequestAllFilesAccess = onRequestAllFilesAccess,
-                        onClearRoot = onClearRoot,
-                        // 改用本地目录 = 取消当前连接（本页 ViewModel 直接落库）
-                        onUseLocalRoot = viewModel::clearCurrent,
-                    )
-                }
                 state.summary?.let { summary ->
                     item { SummaryCard(summary) }
                 }
+                item { ConnectionsSectionHeader(stringResource(R.string.connections_section_my)) }
                 if (state.loadError != null) {
                     item { HintCard(state.loadError!!) }
                 }
@@ -203,6 +192,19 @@ fun ConnectionsScreen(
                         onEdit = { viewModel.openEdit(card.id) },
                         onDuplicate = { viewModel.duplicate(card.id) },
                         onDelete = { viewModel.requestDelete(card.id) },
+                    )
+                }
+                item { ConnectionsSectionHeader(stringResource(R.string.connections_section_local)) }
+                item {
+                    LocalRootCard(
+                        localRoot = localRoot,
+                        remoteActive = state.currentConnectionId != null,
+                        onPickSafDirectory = onPickSafDirectory,
+                        onUseAllFilesRoot = onUseAllFilesRoot,
+                        onRequestAllFilesAccess = onRequestAllFilesAccess,
+                        onClearRoot = onClearRoot,
+                        // 改用本地目录 = 取消当前连接（本页 ViewModel 直接落库）
+                        onUseLocalRoot = viewModel::clearCurrent,
                     )
                 }
                 item { Spacer(modifier = Modifier.height(72.dp)) }
@@ -228,6 +230,18 @@ fun ConnectionsScreen(
             },
         )
     }
+}
+
+/** 列表分组标题：连接页从“网络 → 我的连接 → 本地目录”三段读下来。 */
+@Composable
+private fun ConnectionsSectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }
 
 /** 当前网络现场卡片（R7 判定顺序的第一环：网络能力）。 */
@@ -271,6 +285,7 @@ private fun LocalRootCard(
     onClearRoot: () -> Unit,
     onUseLocalRoot: () -> Unit,
 ) {
+    var expanded by remember { mutableStateOf(!remoteActive) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -300,53 +315,61 @@ private fun LocalRootCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPickSafDirectory) {
-                    Text(stringResource(R.string.connections_local_pick_saf))
-                }
-                OutlinedButton(
-                    onClick = {
-                        when (localRoot.allFilesAction) {
-                            AllFilesAction.USE -> onUseAllFilesRoot()
-                            AllFilesAction.REQUEST_PERMISSION -> onRequestAllFilesAccess()
-                        }
-                    },
-                ) {
-                    Text(
-                        stringResource(
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(
+                    stringResource(
+                        if (expanded) R.string.connections_local_toggle_hide
+                        else R.string.connections_local_toggle_show,
+                    ),
+                )
+            }
+            if (expanded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onPickSafDirectory) {
+                        Text(stringResource(R.string.connections_local_pick_saf))
+                    }
+                    OutlinedButton(
+                        onClick = {
                             when (localRoot.allFilesAction) {
-                                AllFilesAction.USE -> R.string.connections_local_use_all_files
-                                AllFilesAction.REQUEST_PERMISSION -> R.string.connections_local_request_all_files
-                            },
-                        ),
-                    )
-                }
-                if (localRoot.canClear) {
-                    TextButton(onClick = onClearRoot) {
-                        Text(stringResource(R.string.connections_local_clear))
+                                AllFilesAction.USE -> onUseAllFilesRoot()
+                                AllFilesAction.REQUEST_PERMISSION -> onRequestAllFilesAccess()
+                            }
+                        },
+                    ) {
+                        Text(
+                            stringResource(
+                                when (localRoot.allFilesAction) {
+                                    AllFilesAction.USE -> R.string.connections_local_use_all_files
+                                    AllFilesAction.REQUEST_PERMISSION -> R.string.connections_local_request_all_files
+                                },
+                            ),
+                        )
+                    }
+                    if (localRoot.canClear) {
+                        TextButton(onClick = onClearRoot) {
+                            Text(stringResource(R.string.connections_local_clear))
+                        }
                     }
                 }
-            }
-            if (remoteActive) {
-                Spacer(modifier = Modifier.height(8.dp))
+                if (remoteActive) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.connections_local_current_remote),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Button(onClick = onUseLocalRoot, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.connections_local_use_local))
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = stringResource(R.string.connections_local_current_remote),
+                    text = stringResource(R.string.connections_local_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                // 远端优先是既有口径；没有这个按钮，用户根本回不到本地目录（2026-10-03 真机反馈）
-                Button(onClick = onUseLocalRoot, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.connections_local_use_local))
-                }
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.connections_local_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

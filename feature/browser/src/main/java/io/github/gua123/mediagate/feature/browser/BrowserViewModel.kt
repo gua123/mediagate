@@ -158,6 +158,11 @@ class BrowserViewModel(
         _state.update { it.reduce(BrowserEvent.FilterChanged(null)) }
     }
 
+    /** 在浏览页内切换类型过滤（全部 / 视频 / 音频 / 图片）。 */
+    fun setFilter(filter: MediaKind?) {
+        _state.update { it.reduce(BrowserEvent.FilterChanged(filter)) }
+    }
+
     // ------------------------------------------------------------------ 内部
 
     private fun onRootChanged(root: BrowserRootState?) {

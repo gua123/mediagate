@@ -1,5 +1,6 @@
 package io.github.gua123.mediagate.feature.home
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,47 +10,49 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 
 /**
- * 首页（R1 三类媒体入口 / R12 根目录引导 / R16 全中文）。
+ * 首页：先给“继续播放”，再给媒体库入口，最后才是存储/连接设置。
  *
- * 三张入口卡片分别跳到浏览页并带上类型过滤（视频 / 音乐 / 图片，路由常量来自 :feature:browser）；
- * 「当前根目录」卡片展示模式 + 路径，并给出两种模式的入口与清除操作。
- *
- * **首次进入未选择根目录时，本页显示引导卡片，不是空白也不会崩**（R12）。
- *
- * 所有回调都由 :app 注入（目录选择器要 Activity 的 ActivityResultLauncher，
- * 不能放在 library 模块里）：
- *
- * @param onOpenKind 点入口卡片（带 [MediaKind] 过滤跳浏览页）。
- * @param onPickSafDirectory 拉起系统目录选择器（SAF 授权）。
- * @param onUseAllFilesRoot 已授权时切到全盘访问模式。
- * @param onRequestAllFilesAccess 未授权时跳系统「所有文件访问」设置页。
- * @param onClearRoot 清除当前根目录（回到未选择状态）。
+ * 视觉层级：
+ * 1. 顶部只保留标题与当前来源；
+ * 2. 有播放记录时第一张卡是“继续播放”；
+ * 3. 媒体入口改成整行列表（手机上比三张窄卡片更好点、说明也放得下）；
+ * 4. 存储与连接收成一张卡；远端生效时本地目录设置默认折叠。
  */
 @Composable
 fun HomeScreen(
@@ -60,6 +63,9 @@ fun HomeScreen(
     onRequestAllFilesAccess: () -> Unit,
     onClearRoot: () -> Unit,
     modifier: Modifier = Modifier,
+    lastPlayedPath: String? = null,
+    onOpenLastPlayed: (String) -> Unit = {},
+    onOpenConnections: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -67,212 +73,267 @@ fun HomeScreen(
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 20.dp),
     ) {
+        Text(text = stringResource(R.string.home_title), style = MaterialTheme.typography.headlineSmall)
         Text(
-            text = stringResource(R.string.home_title),
-            style = MaterialTheme.typography.headlineSmall,
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = stringResource(R.string.home_subtitle),
+            text = root.remoteLabel?.takeIf { it.isNotBlank() } ?: stringResource(R.string.home_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        lastPlayedPath?.takeIf { it.isNotBlank() }?.let { path ->
+            Spacer(Modifier.height(20.dp))
+            ContinueCard(path = path, onClick = { onOpenLastPlayed(path) })
+        }
+
+        Spacer(Modifier.height(24.dp))
         Text(
             text = stringResource(R.string.home_section_media),
             style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
         )
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            MediaEntryCard(
+        Spacer(Modifier.height(8.dp))
+        Card(modifier = Modifier.fillMaxWidth()) {
+            MediaEntryRow(
                 icon = Icons.Default.VideoLibrary,
                 title = stringResource(R.string.home_entry_video),
                 description = stringResource(R.string.home_entry_video_desc),
                 onClick = { onOpenKind(MediaKind.VIDEO) },
-                modifier = Modifier.weight(1f),
             )
-            MediaEntryCard(
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            MediaEntryRow(
                 icon = Icons.Default.MusicNote,
                 title = stringResource(R.string.home_entry_audio),
                 description = stringResource(R.string.home_entry_audio_desc),
                 onClick = { onOpenKind(MediaKind.AUDIO) },
-                modifier = Modifier.weight(1f),
             )
-            MediaEntryCard(
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            MediaEntryRow(
                 icon = Icons.Default.PhotoLibrary,
                 title = stringResource(R.string.home_entry_image),
                 description = stringResource(R.string.home_entry_image_desc),
                 onClick = { onOpenKind(MediaKind.IMAGE) },
-                modifier = Modifier.weight(1f),
             )
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-        RootCard(
+        Spacer(Modifier.height(24.dp))
+        StorageCard(
             root = root,
             onPickSafDirectory = onPickSafDirectory,
             onUseAllFilesRoot = onUseAllFilesRoot,
             onRequestAllFilesAccess = onRequestAllFilesAccess,
             onClearRoot = onClearRoot,
+            onOpenConnections = onOpenConnections,
         )
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(Modifier.height(24.dp))
     }
 }
 
-/** 一张媒体入口卡片（图标 + 名称 + 一句话说明）。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MediaEntryCard(
-    icon: ImageVector,
-    title: String,
-    description: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(onClick = onClick, modifier = modifier) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+private fun ContinueCard(path: String, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = icon,
+                imageVector = Icons.Default.PlayCircle,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp),
+                modifier = Modifier.size(40.dp),
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.home_continue_title),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = path.substringAfterLast('/'),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(R.string.home_continue_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
 
-/**
- * 「当前根目录」卡片（R12）。
- *
- * 未选择时它就是引导卡片（引导文案 + 两个模式入口）；已选择时展示模式与路径，并允许随时切换。
- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RootCard(
+private fun MediaEntryRow(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(28.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun StorageCard(
     root: HomeRootUi,
     onPickSafDirectory: () -> Unit,
     onUseAllFilesRoot: () -> Unit,
     onRequestAllFilesAccess: () -> Unit,
     onClearRoot: () -> Unit,
+    onOpenConnections: () -> Unit,
 ) {
+    var localExpanded by rememberSaveable { mutableStateOf(!root.remoteActive || !root.configured) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                text = stringResource(R.string.home_root_title),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 远端优先（R8）：有当前连接时先说清楚"现在用的是远端"，否则用户会以为在看本地目录
-            if (root.remoteActive) {
-                Text(
-                    text = stringResource(R.string.home_root_remote_active, root.remoteLabel.orEmpty()),
-                    style = MaterialTheme.typography.bodyLarge,
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Storage,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    text = stringResource(
-                        if (root.localStandby) {
-                            R.string.home_root_remote_local_standby
-                        } else {
-                            R.string.home_root_remote_no_local
-                        },
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = stringResource(R.string.home_storage_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            if (root.configured) {
-                Text(
-                    text = stringResource(
-                        if (root.remoteActive) R.string.home_root_mode_label_standby else R.string.home_root_mode_label,
-                        modeLabel(root.mode),
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = stringResource(R.string.home_root_path_label, root.displayPath),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                Text(
-                    text = stringResource(R.string.home_root_guide_title),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = stringResource(R.string.home_root_guide_message),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onPickSafDirectory, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.home_action_pick_saf))
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            // 两种模式都要有入口：已授权 → 直接切；未授权 → 跳系统设置页
-            OutlinedButton(
-                onClick = if (root.allFilesGranted) onUseAllFilesRoot else onRequestAllFilesAccess,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    stringResource(
-                        if (root.allFilesGranted) {
-                            R.string.home_action_use_all_files
-                        } else {
-                            R.string.home_action_grant_all_files
-                        },
-                    ),
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(
-                    if (root.allFilesGranted) {
-                        R.string.home_all_files_granted
-                    } else {
-                        R.string.home_all_files_not_granted
+                AssistChip(
+                    onClick = { },
+                    label = {
+                        Text(
+                            stringResource(
+                                if (root.remoteActive) R.string.home_storage_chip_remote
+                                else R.string.home_storage_chip_local,
+                            ),
+                        )
                     },
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                )
+            }
 
-            if (root.configured) {
-                TextButton(onClick = onClearRoot) {
-                    Text(stringResource(R.string.home_action_clear_root))
+            if (root.remoteActive) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = root.remoteLabel.orEmpty(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = stringResource(R.string.home_storage_remote_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onOpenConnections, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.home_storage_manage))
+                }
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = { localExpanded = !localExpanded }) {
+                    Text(
+                        stringResource(
+                            if (localExpanded) R.string.home_storage_local_hide
+                            else R.string.home_storage_local_show,
+                        ),
+                    )
+                }
+            }
+
+            if (localExpanded) {
+                if (root.remoteActive) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.home_storage_local_title),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                if (root.configured) {
+                    Text(
+                        text = stringResource(R.string.home_root_mode_label_standby, modeLabel(root.mode)),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Text(
+                        text = stringResource(R.string.home_root_path_label, root.displayPath),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.home_root_guide_title),
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        text = stringResource(R.string.home_root_guide_message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onPickSafDirectory, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.home_action_pick_saf))
+                }
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = if (root.allFilesGranted) onUseAllFilesRoot else onRequestAllFilesAccess,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        stringResource(
+                            if (root.allFilesGranted) R.string.home_action_use_all_files
+                            else R.string.home_action_grant_all_files,
+                        ),
+                    )
+                }
+                if (root.configured) {
+                    TextButton(onClick = onClearRoot) {
+                        Text(stringResource(R.string.home_action_clear_root))
+                    }
                 }
             }
         }
     }
 }
 
-/** 模式 → 中文名（R16：文案全在 res 里）。 */
 @Composable
 private fun modeLabel(mode: RootModeKind): String = stringResource(
     when (mode) {
