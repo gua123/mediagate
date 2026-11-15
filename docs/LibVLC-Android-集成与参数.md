@@ -190,6 +190,32 @@
 - attachViews 之后等 VLC 的 onSurfacesCreated 回调再 play 最稳（Surface 可以晚于 attachViews 创建，VLC 自己会接 SurfaceHolder 回调）；退出页面先 detachViews 再 release，避免回调打到已销毁的 View。
 - 屏切/分屏/PiP 时 Surface 会重建，需要按 VLC 的 Callback（onSurfacesCreated/onSurfacesDestroyed）重新挂。
 
+### 3.3.1 官方 sample 的窗口尺寸与 onNewVideoLayout（2026-11-15 补）
+
+官方 java_sample 的 `JavaActivity`（VLCVideoLayout 版本，commit 3ee4daad）在 `onStart` 里：
+
+```java
+mMediaPlayer.attachViews(mVideoLayout, null, ENABLE_SUBTITLES, USE_TEXTURE_VIEW); // 默认 USE_TEXTURE_VIEW=false
+mMediaPlayer.play();
+```
+
+它的 `updateVideoSurfaces()` 在每次布局变化/onNewVideoLayout 时做两件本项目以前漏掉的事：
+
+1. `mMediaPlayer.getVLCVout().setWindowSize(sw, sh)`——把当前显示窗口尺寸告诉 VLC；
+2. 用 `onNewVideoLayout(vlcVout, width, height, visibleWidth, visibleHeight, sarNum, sarDen)`
+   拿 visible 尺寸和 SAR，再算 View 的布局尺寸（FIT/CROP/ORIGINAL 都是在这里算）。
+
+低层 `IVLCVout` 路径对应的是 `vlcVout.attachViews(this)`（带 `OnNewVideoLayoutListener`），
+而不是只 `attachViews()`。只 attach 不 setWindowSize，部分机型的 TextureView/硬解 vout
+可能拿不到窗口尺寸，表现为一直 buffering/0:00（2026-11-15 真机 LAN 截图）。
+
+本项目 0.1.91 起在 `VlcVideoSurface` 布局变化时调用 `setWindowSize(w,h)`，并用
+`vout.attachViews(newVideoLayoutListener)` 接收 visibleW/H + SAR，再走自算缩放。
+来源：
+- https://code.videolan.org/kansas1/libvlc-android-samples/-/commit/3ee4daad61a62cd291086a7136837dc047a6c598
+- https://code.videolan.org/videolan/vlc-android/-/commit/b6d6c2608d9d1f6b5eece4d1652314949f4aa16b
+
+
 ### 3.4 事件与状态映射
 
 | MediaPlayer.Event | 含义 | 我们旧实现的映射（VlcEngine） |

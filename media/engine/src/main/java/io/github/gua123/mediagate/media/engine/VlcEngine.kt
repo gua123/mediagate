@@ -16,6 +16,7 @@ import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import org.videolan.libvlc.interfaces.IMedia
+import org.videolan.libvlc.interfaces.IVLCVout
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
 import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
@@ -37,9 +38,11 @@ import kotlin.math.roundToInt
  *    改档位时重建 LibVLC 实例（选项是实例级的），位置/倍速/播放状态由本类恢复。
  * 3. **缓存**：按连接网络（LAN / WAN）取 [VlcCacheConfig]，见 [VlcCachePolicy]——局域网 1500 ms、
  *    公网 4000 ms；这是 LibVLC 的时间型预缓冲，不是磁盘缓存。
- * 4. **视频输出**：优先用 libvlc-android 官方的 [VLCVideoLayout]（FrameLayout 封装，内部处理
- *    视频尺寸/等比缩放/居中）；未传入视图时本类自己建一个。低层 [SurfaceView] / [TextureView]
- *    仍兼容，但**不要再拿裸 SurfaceView 当全屏容器**——实测会按视频原始像素画在左上角。
+ * 4. **视频输出**：默认用 [VlcVideoSurface]（TextureView 容器，App 自己算 FIT/CROP/STRETCH/ORIGINAL）；
+ *    官方 [VLCVideoLayout] 仍兼容。按官方 sample 补了 `IVLCVout.setWindowSize` 与
+ *    `attachViews(OnNewVideoLayoutListener)`（visibleW/H + SAR），否则部分机型/硬解 vout
+ *    可能拿不到窗口尺寸而停在 buffering。低层 [SurfaceView] 只兼容，**不要拿裸 SurfaceView
+ *    当全屏容器**——实测会按视频原始像素画在左上角。
  *
  * 线程：所有公开方法都在主线程调用（LibVLC 约定），[MediaPlayer] 的事件回调也在主线程。
  *
@@ -140,6 +143,37 @@ class VlcEngine(
         }
     }
 
+    /** 容器尺寸变化时把窗口尺寸告诉 VLC（官方 sample 的 updateVideoSurfaces 同款做法）。 */
+    private val surfaceLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+        updateVideoWindowSize()
+    }
+
+    /** 官方 onNewVideoLayout：拿 visibleWidth/Height + SAR，比自己从 currentVideoTrack 推更准。 */
+    private val newVideoLayoutListener = object : IVLCVout.OnNewVideoLayoutListener {
+        override fun onNewVideoLayout(
+            vlcVout: IVLCVout,
+            width: Int,
+            height: Int,
+            visibleWidth: Int,
+            visibleHeight: Int,
+            sarNum: Int,
+            sarDen: Int,
+        ) {
+            val surface = attachedView as? VlcVideoSurface ?: return
+            val visibleW = if (visibleWidth > 0) visibleWidth else width
+            val visibleH = if (visibleHeight > 0) visibleHeight else height
+            if (visibleW <= 0 || visibleH <= 0) return
+            // 显示宽高按 SAR 修正（官方 sample 的 ar 计算同源）
+            val displayW = if (sarNum > 0 && sarDen > 0) {
+                (visibleW.toLong() * sarNum / sarDen).toInt().coerceAtLeast(1)
+            } else {
+                visibleW
+            }
+            surface.setVideoSize(displayW, visibleH)
+            updateVideoWindowSize()
+        }
+    }
+
     /** VLCVideoLayout 从 Compose 树里 attach 上来时再挂给 VLC（此时内部 SurfaceView 才有窗口）。 */
     private val attachStateListener = object : View.OnAttachStateChangeListener {
         override fun onViewAttachedToWindow(v: View) {
@@ -171,6 +205,7 @@ class VlcEngine(
      */
     fun attachVideoOutput(view: View?) {
         (attachedView as? VLCVideoLayout)?.removeOnAttachStateChangeListener(attachStateListener)
+        (attachedView as? VlcVideoSurface)?.removeOnLayoutChangeListener(surfaceLayoutListener)
         val vout = player.vlcVout
         videoOutputAttached = false
         when (view) {
@@ -184,9 +219,12 @@ class VlcEngine(
             is VlcVideoSurface -> {
                 attachedView = view
                 view.setResizeMode(resize)
+                view.addOnLayoutChangeListener(surfaceLayoutListener)
                 vout.setVideoView(view.textureView)
-                if (!vout.areViewsAttached()) vout.attachViews()
+                // 官方 sample：attachViews(listener) 才能收到 onNewVideoLayout（visibleW/H + SAR）
+                if (!vout.areViewsAttached()) vout.attachViews(newVideoLayoutListener)
                 videoOutputAttached = true
+                updateVideoWindowSize()
                 return
             }
 
@@ -240,6 +278,15 @@ class VlcEngine(
             AppLog.i(TAG, "视频视图已挂载，开始起播（之前收到过 play）")
             player.play()
         }
+    }
+
+    /** 把当前容器尺寸告诉 VLC（官方 sample 在 updateVideoSurfaces 里先 setWindowSize）。 */
+    private fun updateVideoWindowSize() {
+        val view = attachedView ?: return
+        val width = view.width
+        val height = view.height
+        if (width <= 0 || height <= 0) return
+        runCatching { player.vlcVout.setWindowSize(width, height) }
     }
 
     /** 把当前缩放档位重新套给 VLC（Vout/attach 后再套一次，避免拿到 0 尺寸时算错）。 */
@@ -436,7 +483,10 @@ class VlcEngine(
 
     override fun release() {
         pendingPlay = false
-        (attachedView as? VlcVideoSurface)?.removeCallbacks(pendingPlayRunnable)
+        (attachedView as? VlcVideoSurface)?.let { surface ->
+            surface.removeCallbacks(pendingPlayRunnable)
+            surface.removeOnLayoutChangeListener(surfaceLayoutListener)
+        }
         videoOutputAttached = false
         (attachedView as? VLCVideoLayout)?.removeOnAttachStateChangeListener(attachStateListener)
         try {

@@ -1,7 +1,21 @@
-# 0.1.90 发布说明（候选，待真机验证）
+# 0.1.91 发布说明（候选，待真机验证）
 
 > 2026-11-12 用户要求：「将视频播放引擎更改为libvlc，并设置为硬解模式，然后根据连接的局域网或公网改变缓存的配置」。
 > 本次为**候选包**：代码、单测、构建都过了，但 LibVLC 在这台 Xiaomi / Android 17 真机上能否初始化还需要你装一次验证。
+
+## 0.1.91 按官方 sample 补窗口尺寸/布局回调（2026-11-15）
+
+对照 VideoLAN 官方 LibVLC Android sample（java_sample 的 `mMediaPlayer.attachViews(mVideoLayout, ...)` 与 `updateVideoSurfaces()`）：
+
+- 官方在播放前/布局变化时调用 `IVLCVout.setWindowSize(sw, sh)`；
+- 官方用 `attachViews(OnNewVideoLayoutListener)` 接收 `visibleWidth/visibleHeight/sar`，再按 View 尺寸布局；
+- 本项目之前只 `setVideoView(textureView)` + `attachViews()`，**没有 setWindowSize，也没有 onNewVideoLayout**，部分机型/硬解路径可能因此拿不到窗口尺寸而停在 buffering/0:00。
+
+本次补齐：
+
+- `VlcVideoSurface` 每次布局变化 → `player.vlcVout.setWindowSize(w, h)`；
+- `attachViews(newVideoLayoutListener)` 接收官方回调，按 visibleW/H + SAR 更新自算缩放；
+- 保留自算 FIT/CROP/STRETCH/ORIGINAL，不依赖 VLC 的 setScale。
 
 ## 0.1.90 LibVLC 起播超时自动兜底（2026-11-15 反馈）
 
