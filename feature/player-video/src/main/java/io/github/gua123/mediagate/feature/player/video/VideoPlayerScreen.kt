@@ -58,12 +58,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -90,6 +92,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -683,6 +686,7 @@ private fun playerChipBorder(): BorderStroke = AssistChipDefaults.assistChipBord
 )
 
 /** 控制层：顶栏（返回 / 标题 / 内核）＋ 底栏（进度、播放暂停、上下集、倍速、解码、缩放、字幕）。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Controls(
     state: VideoPlayerUiState,
@@ -697,6 +701,7 @@ private fun Controls(
     // 横屏是"看电影"的场景：同样的控件在 2.17:1 的屏幕上显得又高又占地
     //（2026-10-03 用户反馈："播放过程中的这个页面占地方太大了"）→ 横屏统一用更紧凑的尺寸
     val compact = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var optionsVisible by rememberSaveable { mutableStateOf(false) }
     // 极简模式（2026-10-03 用户要求）：只留进度条 + 播放键 + 一个「完整」出口，
     // 顶栏（标题/内核/旋转）与整排档位芯片都不画。
     if (state.simpleMode) {
@@ -755,6 +760,14 @@ private fun Controls(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            // 播放设置（循环/列表/倍速/解码/缩放/极简）收进顶部“更多”，底栏不再铺芯片
+            IconButton(onClick = { optionsVisible = true }) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = stringResource(R.string.video_more),
+                    tint = Color.White,
+                )
+            }
             // 旋转（2026-10-03 用户要求）：点一下在横屏/竖屏之间切换；退出播放页恢复"跟随系统"
             RotateButton(onRotated = onRotated)
             // 只有一个内核时不给「内核」按钮（2026-10-15：自研引擎与 LibVLC 下线，只剩 Media3）
@@ -821,11 +834,6 @@ private fun Controls(
                 compact = compact,
             )
             PlaybackRow(state = state, viewModel = viewModel, compact = compact)
-            ChipsRow(
-                state = state,
-                viewModel = viewModel,
-                onOpenPlaylist = onOpenPlaylist,
-            )
 
             // 时间戳重建（R3/R11）：进度 + 结束提示
             if (state.timestampRepairRunning) {
@@ -875,6 +883,17 @@ private fun Controls(
                 }
             }
         }
+    }
+    if (optionsVisible) {
+        PlayerOptionsSheet(
+            state = state,
+            viewModel = viewModel,
+            onOpenPlaylist = {
+                optionsVisible = false
+                onOpenPlaylist()
+            },
+            onDismiss = { optionsVisible = false },
+        )
     }
 }
 
@@ -1093,7 +1112,130 @@ private fun PlaybackRow(state: VideoPlayerUiState, viewModel: VideoPlayerViewMod
     }
 }
 
-/** 倍速 / 解码档位 / 缩放 / 字幕 / 集数（点一下换一档）。 */
+/** 底栏只保留“更多”入口和集数；高级项收进弹层，避免一排芯片挤在画面上。 */
+@Composable
+private fun PlayerBottomBar(
+    state: VideoPlayerUiState,
+    onOpenOptions: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (state.count > 1) {
+            Text(
+                text = stringResource(R.string.video_queue_position, state.position, state.count),
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = onOpenOptions) {
+            Icon(
+                imageVector = Icons.Default.Tune,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(stringResource(R.string.video_more), color = Color.White)
+        }
+    }
+}
+
+/** 播放设置弹层：循环、列表、倍速、解码、缩放、极简、时间戳修复。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlayerOptionsSheet(
+    state: VideoPlayerUiState,
+    viewModel: VideoPlayerViewModel,
+    onOpenPlaylist: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.video_options_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            PlayerOptionRow(stringResource(R.string.video_loop), state.loopMode.zhText, viewModel::cycleLoopMode)
+            PlayerOptionRow(
+                stringResource(R.string.video_playlist),
+                stringResource(R.string.video_playlist_count, state.count),
+                onOpenPlaylist,
+            )
+            if (state.canChangeSpeed) {
+                PlayerOptionRow(stringResource(R.string.video_speed_label), state.speedLabel, viewModel::cycleSpeed)
+            }
+            if (state.canChangeDecoder) {
+                PlayerOptionRow(stringResource(R.string.video_decoder_label), state.decoderLabel, viewModel::cycleDecoderMode)
+            }
+            PlayerOptionRow(stringResource(R.string.video_resize_label), state.resizeLabel, viewModel::cycleResizeMode)
+            PlayerOptionRow(
+                stringResource(R.string.video_simple_label),
+                stringResource(if (state.simpleMode) R.string.video_simple_on_state else R.string.video_simple_off_state),
+                {
+                    viewModel.toggleSimpleMode()
+                    onDismiss()
+                },
+            )
+            if (state.canRepairTimestamps) {
+                PlayerOptionRow(
+                    stringResource(R.string.video_repair_timestamps),
+                    stringResource(R.string.video_repair_timestamps_hint),
+                    {
+                        viewModel.repairTimestamps()
+                        onDismiss()
+                    },
+                )
+            }
+            state.capsNotice?.let { notice ->
+                Text(
+                    text = notice,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerOptionRow(title: String, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** 旧版芯片排（保留给预览/未来横向布局，不再在播放页默认使用）。 */
 @Composable
 private fun ChipsRow(
     state: VideoPlayerUiState,

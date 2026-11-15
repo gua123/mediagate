@@ -4,6 +4,16 @@
   约定：文案一律走资源文件，Kotlin 里不硬编码中文；格式化占位符用 %1$d / %2$s。
 -->
 <resources>
+    <string name="video_more">更多</string>
+    <string name="video_options_title">播放设置</string>
+    <string name="video_loop">循环方式</string>
+    <string name="video_playlist_count">共 %1$d 个</string>
+    <string name="video_speed_label">播放倍速</string>
+    <string name="video_decoder_label">解码模式</string>
+    <string name="video_resize_label">画面缩放</string>
+    <string name="video_simple_label">极简模式</string>
+    <string name="video_simple_on_state">已开启</string>
+    <string name="video_simple_off_state">已关闭</string>
     <string name="video_title">视频播放</string>
     <string name="video_back">返回</string>
     <string name="video_play">播放</string>
