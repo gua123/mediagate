@@ -504,7 +504,7 @@ private fun ConnectionCard(
                     IconButton(onClick = onDuplicate) {
                         Icon(
                             Icons.Default.ContentCopy,
-                            contentDescription = "复制连接",
+                            contentDescription = stringResource(R.string.connections_action_duplicate_desc),
                             modifier = Modifier.size(18.dp),
                         )
                     }

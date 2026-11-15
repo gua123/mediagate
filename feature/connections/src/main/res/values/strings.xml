@@ -47,6 +47,7 @@
     <string name="connections_action_retest">重新测试</string>
     <string name="connections_action_edit">编辑</string>
     <string name="connections_action_duplicate">复制连接</string>
+    <string name="connections_action_duplicate_desc">复制连接</string>
     <string name="connections_action_delete">删除</string>
     <string name="connections_action_set_current">设为当前连接</string>
     <string name="connections_current">当前</string>
@@ -65,7 +66,7 @@
 
     <string name="connections_network_title">当前网络</string>
     <string name="connections_network_offline">当前没有可用网络</string>
-    <string name="connections_network_policy">选路顺序：先内网后外网——先试局域网地址，连不上自动改用公网；网络变化后重新判断，测试结果缓存 60 秒。</string>
+    <string name="connections_network_policy">一条连接只有一个地址、一种网络类型（局域网或公网）：只用这一个地址，不会在内网与外网之间自动切换。</string>
 
     <string name="connections_summary_title">测试全部结果</string>
     <string name="connections_summary_failed_first">失败的连接排在最前面，方便直接排查。</string>
@@ -76,7 +77,7 @@
     <string name="connections_field_protocol">协议</string>
     <string name="connections_field_base_path">WebDAV 根路径（例如 /media）</string>
     <string name="connections_field_local_path">本地目录（绝对路径）</string>
-    <string name="connections_section_addresses">地址（局域网 + 公网可各配一个）</string>
+    <string name="connections_section_addresses">地址（一条连接只配一个）</string>
     <string name="connections_action_add_address">添加地址</string>
     <string name="connections_action_add_paired">再加一条同一服务器的另一条网络</string>
     <string name="connections_action_add_missing">补一条%1$s地址</string>
