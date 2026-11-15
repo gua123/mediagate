@@ -377,17 +377,18 @@ class VideoPlayerViewModelTest {
     }
 
     @Test
-    fun siblingsFailureIsClassifiedInsteadOfCrashing() = playerTest {
+    fun siblingsFailureDoesNotBlockPlayback() = playerTest {
         val env = environment()
         env.failSiblings["Movies"] = StorageException.AccessDenied("没有访问权限")
 
         val vm = player(env, "Movies/b.mp4")
         settle()
 
-        assertEquals(VideoPlayerStatus.ERROR, vm.state.value.status)
-        assertEquals(VideoErrorKind.ACCESS_DENIED, vm.state.value.errorKind)
-        assertEquals("没有访问权限", vm.state.value.errorDetail)
-        assertTrue(env.createCalls.isEmpty())
+        // 队列只影响上下集；列目录失败不该把已经能播的视频卡在 LOADING
+        assertEquals(VideoPlayerStatus.READY, vm.state.value.status)
+        assertTrue(vm.state.value.errorKind == null)
+        assertTrue("内核应该已经创建并起播", env.createCalls.isNotEmpty())
+        assertEquals(listOf("Movies/b.mp4"), vm.state.value.siblingPaths)
     }
 
     @Test

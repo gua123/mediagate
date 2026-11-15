@@ -113,7 +113,8 @@ class VideoPlayerHostTest {
     @Test
     fun autoEnterIsOffWhileLoading() = hostTest {
         val env = environment()
-        env.failSiblings["Movies"] = io.github.gua123.mediagate.data.storage.api.StorageException.NotFound("没有这个目录")
+        // 列目录失败不再阻断播放（2026-11-15）；这里改成"内核建不起来"才代表真正的加载失败
+        env.failCreateFor = { IllegalStateException("内核起不来") }
 
         player(env)
         settle()

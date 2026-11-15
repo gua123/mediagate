@@ -710,7 +710,14 @@ class VideoPlayerViewModel(
 
     // ------------------------------------------------------------------ 加载与起播
 
-    /** 进入页面/重试：列同目录 → 建内核 → 装载 → 准备 → 起播（R9 默认内核来自偏好）。 */
+    /**
+     * 进入页面/重试：**先起播，再补同目录队列**。
+     *
+     * 2026-11-15 真机反馈：局域网播放一直转圈。根因之一是 [load] 旧顺序把
+     * [VideoPlayerEnvironment.siblings]（远端列目录）放在建内核之前；LAN/WebDAV
+     * 目录慢或卡住时，播放页会一直停在 LOADING，根本轮不到 LibVLC。
+     * 队列只影响上一集/下一集，不该阻塞起播：先给单文件队列，起播后再补。
+     */
     private fun load(path: String) {
         loadJob?.cancel()
         _state.update { it.reduce(VideoPlayerEvent.LoadStarted(path)) }
@@ -725,20 +732,24 @@ class VideoPlayerViewModel(
             // 偏好里可能存着已下线的内核（LibVLC / 自研引擎）：交给契约层解析成实际要用的那个
             val kind = EngineSelection.resolvePreference(preferences.engine.value)
             val mode = preferences.decoderMode.value
+            // 单文件队列先顶上：上一集/下一集稍后补，绝不为了列目录卡住起播
+            _state.update { it.reduce(VideoPlayerEvent.SiblingsLoaded(listOf(path), 0)) }
+            open(path, backendId, kind, mode)
+            // 起播后再补同目录队列；失败只记日志，不影响已起来的播放
             val entries = try {
                 withContext(io) { environment.siblings(path) }
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "列出同目录文件失败：" + path, t)
-                fail(VideoPlayerErrors.classify(t), t.message)
+                AppLog.w(TAG, "列出同目录文件失败（不影响播放）：" + path, t)
                 return@launch
             }
+            if (source?.path != path) return@launch
             val paths = entries.map { it.path }
+            if (paths.isEmpty()) return@launch
             val index = VideoPlayerMath.indexOfPath(paths, path)
             val queue = if (index >= 0) paths else listOf(path)
             _state.update { it.reduce(VideoPlayerEvent.SiblingsLoaded(queue, index.coerceAtLeast(0))) }
-            open(queue.getOrNull(index.coerceAtLeast(0)) ?: path, backendId, kind, mode)
         }
     }
 
