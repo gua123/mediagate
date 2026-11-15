@@ -43,8 +43,8 @@ object VlcCachePolicy {
     /** 公网：4 秒，足够覆盖常见的移动网络抖动，又不至于让 seek 等太久。 */
     const val WAN_NETWORK_CACHING_MS: Int = 4000
 
-    /** 未知网络：取中间值，避免把公网当本地、也不把本地拖慢。 */
-    const val UNKNOWN_NETWORK_CACHING_MS: Int = 3000
+    /** 未知网络：与本地同档 1000 ms（LibVLC 默认值）。 */
+    const val UNKNOWN_NETWORK_CACHING_MS: Int = 1000
 
     /** 本地文件：LibVLC 默认。 */
     const val FILE_CACHING_MS: Int = 1000

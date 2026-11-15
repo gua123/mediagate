@@ -232,11 +232,12 @@
 - 连通性测试三段计时：DNS 解析 / TCP 握手 / 协议握手（WebDAV PROPFIND 期望 207 或 200，401=账号密码错；SFTP banner + 认证 + 列目录，主机密钥变更红色告警；FTP 220 + 登录 + PASV）。
 - 验收：公网连接与局域网连接各建一条（或编辑现有连接地址），确认目录与播放正常。
 
-### 4.6 播放内核：Media3 单内核 + 硬解/软解（R9/R10）
+### 4.6 播放内核：LibVLC 3.7.7 硬解 + 解码档位（R9/R10，2026-11-12 换核）
 
-- **播放内核只有 Media3 ExoPlayer**；统一 `PlayerEngine` 抽象保留，但 `EngineSelection.availableEngines()` 只含 Media3。
-- 三种解码档位都在 Media3 内部实现：AUTO_HW（默认，硬解优先）/ FORCE_HW / FORCE_SW（`softwareOnly` 筛选）。
-- 远端数据源统一走 `BackendDataSource`（映射 Range）；解码失败给中文原因，不静默降级。
+- **视频默认 LibVLC 3.7.7**：`Media.setHWDecoderEnabled(true, true)`（Android 上落成 `:codec=mediacodec_ndk,all`）实现硬解；`EngineSelection.availableEngines()` 只含 LibVLC，**Media3 ExoPlayer 只在 `:vlcprobe` 独立进程探针失败或 LibVLC 构造异常时内部兜底，不进入切换入口**；**音频仍用 Media3 ExoPlayer**。
+- **硬解开关与软解档位**（`DecoderMode`）：AUTO_HW（默认，硬解优先，`avcodec-hw=any`）/ FORCE_HW（`avcodec-hw=any` + `setHWDecoderEnabled(true, force = true)`）/ FORCE_SW（`avcodec-hw=none` + `setHWDecoderEnabled(false)` 真关硬解）；`avcodec-hw` 是实例级选项，切档位需重建 LibVLC 管线；解码失败给中文原因，不静默降级。
+- **取数统一经 `:media:proxy` 回环 HTTP 代理**：WebDAV / SFTP / FTP / 本地都走同一 `StorageBackend` → `RandomAccessSource`，代理支持 `Range`（206 / `Content-Range`），拖拽 seek 不必整段下载。
+- **缓存按 `AddressLabel` 分档**（`VlcCachePolicy`，时间型 PTS 预缓冲）：局域网 1500 ms / 公网 4000 ms / 本地与未知 1000 ms（LibVLC 默认）。
 
 
 ### 4.7 ~~字幕：外挂 + 本地小模型 CPU 音转字幕（R14，v2 新增）~~ **整条作废（2026-10-19 用户要求删除字幕部分）**

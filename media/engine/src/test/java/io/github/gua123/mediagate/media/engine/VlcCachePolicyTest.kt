@@ -23,8 +23,8 @@ class VlcCachePolicyTest {
     }
 
     @Test
-    fun unknownNetworkUsesMiddleValue() {
-        assertEquals(3000, VlcCachePolicy.forNetwork("SOMETHING").networkCachingMs)
+    fun unknownNetworkUsesLocalDefault1000Ms() {
+        assertEquals(1000, VlcCachePolicy.forNetwork("SOMETHING").networkCachingMs)
     }
 
     @Test
