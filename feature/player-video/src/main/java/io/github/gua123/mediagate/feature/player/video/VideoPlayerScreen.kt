@@ -25,6 +25,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.automirrored.filled.List
@@ -915,7 +917,15 @@ private fun ResetOrientationOnLeave() {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         onDispose {
-            context.findActivity()?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            val activity = context.findActivity() ?: return@onDispose
+            // 先强制回竖屏，触发一次真实旋转；800ms 后再交还系统。
+            // 只写 UNSPECIFIED 时，HyperOS 有时会保持播放页的横屏不动。
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (!activity.isFinishing) {
+                    activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+            }, 800L)
         }
     }
 }
