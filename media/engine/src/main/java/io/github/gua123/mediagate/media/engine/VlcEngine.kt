@@ -267,7 +267,7 @@ class VlcEngine(
     override fun setMedia(src: MediaSourceRef) {
         media = src
         // 伪 URI → 回环地址：VLC 只会吃 URL，数据层复用全靠这一步（plan 4.6）
-        val url = proxy.playUrl(src.backendId, src.path)
+        val url = proxy.playUrlSafe(src.backendId, src.path)
         AppLog.d(TAG, "LibVLC 播放地址：" + url)
         val vlcMedia = createMedia(url)
         try {

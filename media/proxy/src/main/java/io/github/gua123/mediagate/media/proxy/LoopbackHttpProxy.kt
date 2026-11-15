@@ -78,8 +78,11 @@ class LoopbackHttpProxy(private val backendProvider: () -> StorageBackend?) : Cl
         AppLog.i(TAG, "回环代理已启动：$baseUrl")
     }
 
-    /** 后端条目 → 可直接交给 LibVLC / 外部播放器的地址。 */
+    /** 后端条目 → 可直接交给 LibVLC / 外部播放器的地址（可读 legacy 形态）。 */
     fun playUrl(backendId: String, path: String): String = ProxyUrls.format(baseUrl, backendId, path)
+
+    /** LibVLC 专用：特殊字符路径改用 base64url token，避免 # 被当 fragment。 */
+    fun playUrlSafe(backendId: String, path: String): String = ProxyUrls.formatSafe(baseUrl, backendId, path)
 
     /** `mediagate://` 伪 URI → 回环播放地址；伪 URI 非法时返回 null。 */
     fun playUrlFor(mediaUri: String): String? = ProxyUrls.formatFor(baseUrl, mediaUri)

@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.media.proxy
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -160,6 +161,29 @@ class ProxyPureLogicTest {
         )
         assertEquals(url, ProxyUrls.formatFor(base, MediaUriCodec.format("local-file:/storage/emulated/0", "Music/歌曲 01.mp3")))
         assertNull(ProxyUrls.formatFor(base, "not-a-media-uri"))
+    }
+
+    @Test
+    fun `特殊字符路径改用 token 且可逆`() {
+        val base = "http://127.0.0.1:1"
+        val backendId = "webdav:https://dav.example.com/dav"
+        val path = "#Aki秋水/小年夜迟到的老公.mp4"
+        val url = ProxyUrls.formatSafe(base, backendId, path)
+        assertFalse("token 地址不能带 #", url.contains("#"))
+        assertFalse("token 地址不能带 ?", url.contains("?"))
+        assertFalse("token 地址不能带 %23", url.contains("%23"))
+        assertEquals(
+            MediaUriCodec.Parsed(backendId, path),
+            ProxyUrls.parse(url.removePrefix(base)),
+        )
+    }
+
+    @Test
+    fun `普通路径 formatSafe 保持可读 legacy`() {
+        val base = "http://127.0.0.1:1"
+        val url = ProxyUrls.formatSafe(base, "b", "p.mp4")
+        assertEquals(ProxyUrls.format(base, "b", "p.mp4"), url)
+        assertEquals(MediaUriCodec.Parsed("b", "p.mp4"), ProxyUrls.parse(url.removePrefix(base)))
     }
 
     @Test

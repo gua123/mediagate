@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.87：自算缩放（VlcVideoSurface/TextureView），不再依赖 VLC 的 fit/setVideoScale。
-        versionCode = 88
-        versionName = "0.1.87"
+        // 0.1.88：局域网特殊字符路径（#/?/%）改用 base64url token，修 LAN 播放 404。
+        versionCode = 89
+        versionName = "0.1.88"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

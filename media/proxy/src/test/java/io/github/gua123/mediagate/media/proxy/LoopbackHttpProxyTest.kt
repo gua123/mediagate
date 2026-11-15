@@ -99,6 +99,24 @@ class LoopbackHttpProxyTest {
     }
 
     @Test
+    fun `token 播放地址可播放含 # 的路径`() {
+        val dir = File(root, "#Aki")
+        assertTrue(dir.mkdirs())
+        val file = File(dir, "小年.mp4")
+        file.writePayload(small)
+        val url = proxy.playUrlSafe(backend.id, "#Aki/小年.mp4")
+        assertFalse("token 地址不能带 #", url.contains("#"))
+        val conn = open(url)
+        try {
+            assertEquals(200, conn.responseCode)
+            assertEquals(small.size.toString(), conn.getHeaderField("Content-Length"))
+            assertArrayEquals(small, conn.inputStream.readBytes())
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    @Test
     fun `按扩展名给出内容类型`() {
         val conn = open(proxy.playUrl(backend.id, "song.mp3"))
         try {
