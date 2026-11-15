@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.91：按官方 sample 补 setWindowSize + onNewVideoLayout，修 TextureView 的窗口尺寸。
-        versionCode = 92
-        versionName = "0.1.91"
+        // 0.1.92：Media3 兜底绕过分段缓存直读，避免 join 卡死的 SegmentJob。
+        versionCode = 93
+        versionName = "0.1.92"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

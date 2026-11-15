@@ -1184,7 +1184,7 @@ class VideoPlayerViewModel(
             _state.update {
                 it.reduce(
                     VideoPlayerEvent.EngineFallbackNoticeRaised(
-                        "LibVLC 起播超时（12 秒没出画面），已自动改用 " + dst.label + " 继续",
+                        "LibVLC 起播超时（12 秒没出画面），已自动改用 " + dst.label + " 直读继续",
                     ),
                 )
             }

@@ -48,6 +48,7 @@ import io.github.gua123.mediagate.data.storage.api.CacheBudget
 import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.data.storage.api.TimeoutStorageBackend
+import io.github.gua123.mediagate.data.storage.api.RangeStream
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import io.github.gua123.mediagate.data.storage.ftp.FtpStorageBackend
 import io.github.gua123.mediagate.data.storage.local.LocalBackends
@@ -1162,9 +1163,25 @@ class AppContainer(context: Context) :
         /** Media3 兜底内核（LibVLC 起不来时用；不再是默认视频内核）。 */
         private fun buildMedia3Engine(): PlayerEngine = ExoPlayerEngine(
             appContext,
-            BackendDataSourceFactory { videoBackend.value },
+            BackendDataSourceFactory { media3Backend() },
             bufferSeconds = { videoPreferences.bufferSeconds.value },
         )
+
+        /**
+         * Media3 兜底后端：**绕过分段缓存直读 delegate**。
+         *
+         * 2026-11-15 真机：LibVLC 卡住时切 Media3，Media3 也 0:00；缓存诊断 0/79、0.0 MB，
+         * 说明它 join 到了同一个卡死的 SegmentJob。Media3 直读后若正常，问题就锁定在分段缓存/代理；
+         * 若仍卡，问题在远端后端本身。
+         */
+        private fun media3Backend(): StorageBackend? {
+            val current = videoBackend.value ?: return null
+            if (current !is SegmentedCacheBackend) return current
+            return object : StorageBackend by current {
+                override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream =
+                    current.openReadDirect(path, offset, length)
+            }
+        }
 
         /**
          * 列出 [path] 所在目录里的视频与音频（R1 上下集队列）。

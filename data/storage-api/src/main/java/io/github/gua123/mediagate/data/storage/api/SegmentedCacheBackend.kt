@@ -173,6 +173,15 @@ class SegmentedCacheBackend(
 
     override suspend fun stat(path: String): RemoteEntry = delegate.stat(path)
 
+    /**
+     * **绕过分段缓存直读**（Media3 兼容兜底用，2026-11-15）。
+     *
+     * 当 LibVLC 在远端卡住、切到 Media3 后又 join 到同一个卡死的 SegmentJob 时，Media3 也会停在 0:00。
+     * 这个方法让 Media3 直接读 delegate（仍然有 TimeoutStorageBackend 的硬截止），用来看/绕过缓存层。
+     */
+    suspend fun openReadDirect(path: String, offset: Long, length: Long): RangeStream =
+        delegate.openRead(path, offset, length)
+
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
         // 记住"当前在读哪个文件"：淘汰时保护它的段（用户要求：保留单文件缓存，下次打开更快）
         activePath = path
