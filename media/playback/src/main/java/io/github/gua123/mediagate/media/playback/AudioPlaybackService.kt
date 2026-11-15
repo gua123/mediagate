@@ -98,6 +98,7 @@ class AudioPlaybackService : MediaSessionService() {
         exoPlayer.addListener(listener)
 
         val session = MediaSession.Builder(this, exoPlayer)
+            .setId("mediagate-audio-" + java.util.UUID.randomUUID())
             .setSessionActivity(openAppIntent())
             .setCallback(SessionCallback())
             .build()

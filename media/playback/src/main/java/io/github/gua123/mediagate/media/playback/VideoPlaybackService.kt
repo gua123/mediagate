@@ -169,6 +169,8 @@ class VideoPlaybackService : MediaSessionService() {
         val player = VideoSessionPlayer(::currentSource)
         val session = try {
             MediaSession.Builder(this, player)
+                // 空 ID 会和音频会话/上一轮未释放的会话撞车（真机报 “Session ID must be unique. ID=”）。
+                .setId("mediagate-video-" + java.util.UUID.randomUUID())
                 .setSessionActivity(openAppIntent())
                 // 通知栏/锁屏的「上一集 / 下一集」：用**自定义按钮 + 自定义命令**而不是 Media3 的
                 // playlist 语义——我们的"上一集/下一集"由播放页的队列决定（还要遵守排序与循环），

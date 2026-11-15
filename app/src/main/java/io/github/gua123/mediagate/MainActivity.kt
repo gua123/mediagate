@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -53,12 +54,38 @@ class MainActivity : ComponentActivity() {
     private fun acceptedDebugOpen(container: AppContainer, request: DebugOpenRequest?): DebugOpenRequest? {
         if (request == null) return null
         val current = container.videoPlayerEnvironment.backend.value?.id
-        if (request.backendId.isBlank() || current == null || request.backendId == current) return request
-        android.util.Log.w(
-            "MG/MediaGate",
-            "忽略跨后端恢复：path=" + request.path + " backend=" + request.backendId + " current=" + current,
-        )
+        if (request.backendId.isBlank() || request.backendId == current) return request
         return null
+    }
+
+    /**
+     * 冷启动时远端连接是异步建起来的：通知/调试恢复可能先于远端后端就绪，
+     * 此时直接打开会拿本地 backend 去读远端路径（VLC HTTP 404）。
+     *
+     * 带 backendId 的恢复请求先等这个后端最多 10 秒；等到才导航，等不到就放弃，
+     * 不把“播放失败”甩到用户脸上。
+     */
+    private fun restoreDebugOpen(container: AppContainer, request: DebugOpenRequest?) {
+        if (request == null) return
+        if (request.backendId.isBlank() || acceptedDebugOpen(container, request) != null) {
+            debugOpen.value = request
+            return
+        }
+        lifecycleScope.launch {
+            android.util.Log.i("MG/MediaGate", "等待播放后端就绪：" + request.backendId)
+            val matched = kotlinx.coroutines.withTimeoutOrNull(10_000L) {
+                container.videoPlayerEnvironment.backend.first { it?.id == request.backendId }
+                true
+            } ?: false
+            if (matched) {
+                debugOpen.value = request
+            } else {
+                android.util.Log.w(
+                    "MG/MediaGate",
+                    "恢复超时，已放弃：path=" + request.path + " backend=" + request.backendId,
+                )
+            }
+        }
     }
 
     private fun readDebugOpen(intent: Intent?): DebugOpenRequest? {
@@ -89,7 +116,7 @@ class MainActivity : ComponentActivity() {
                 android.util.Log.i("MG/MediaGate", "调试清空分段缓存：释放 " + freed + " 字节")
             }
         }
-        debugOpen.value = acceptedDebugOpen(
+        restoreDebugOpen(
             container,
             readDebugOpen(intent) ?: container.videoSession.videoSessionSource
                 ?.takeIf { it.path.isNotBlank() }
@@ -146,7 +173,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         val container = (application as MediaGateApplication).container
-        acceptedDebugOpen(container, readDebugOpen(intent))?.let { debugOpen.value = it }
+        restoreDebugOpen(container, readDebugOpen(intent))
     }
 
     /**
