@@ -207,8 +207,47 @@ class AppContainer(context: Context) :
      */
     private val addressFallbackProbe = AddressFallbackProbe()
 
+    /** 上次 Activity 进入后台的 elapsedRealtime；用于前台恢复时判断"离开够久"。 */
+    private var hostPausedAtElapsed: Long = 0L
+
+    /** 前台恢复重建远端后端的任务（避免重复并发）。 */
+    private var foregroundReconnectJob: kotlinx.coroutines.Job? = null
+
     /** 当前网络现场（R7：网络能力是判定顺序的第一环）。 */
     val networkContext: StateFlow<NetworkContext> get() = networkMonitor.context
+
+    /**
+     * Activity 进入后台（2026-11-15 用户反馈：后台再打开后远端连接断开，重启 App 才恢复）。
+     *
+     * 只记时间，不立刻拆连接——后台播放还要用。
+     */
+    fun onHostPaused() {
+        hostPausedAtElapsed = android.os.SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Activity 回到前台：离开超过 2 秒且没有音频/视频正在播时，**主动重建远端后端**。
+     *
+     * 为什么不只靠 NetworkCallback：VPN/系统休眠/后台冻结常常让 socket 静默死掉，
+     * 但网络现场没变，NetworkCallback 不会发；旧后端之后每次 list/read 都失败。
+     * 重建后浏览器会拿到新 backend 并自动重列当前目录；播放中（音频/视频会话）不动，
+     * 避免把正在播的流拆掉。
+     */
+    fun onHostResumed() {
+        val pausedAt = hostPausedAtElapsed
+        hostPausedAtElapsed = 0L
+        if (pausedAt == 0L) return
+        if (android.os.SystemClock.elapsedRealtime() - pausedAt < FOREGROUND_RECONNECT_MIN_BG_MS) return
+        val record = currentRemoteRecord ?: return
+        if (videoSession.videoSessionSource != null || playbackActive.value) return
+        foregroundReconnectJob?.cancel()
+        foregroundReconnectJob = ioScope.launch {
+            AppLog.i(TAG, "前台恢复：重建远端连接 " + record.name)
+            Breadcrumbs.mark("前台恢复：重建远端连接 " + record.name)
+            remoteSignature = null
+            applyCurrentConnection(record, networkMonitor.context.value)
+        }
+    }
 
     /** 当前连接 id（R8）；null = 用首页选择的本地根目录。 */
     private val currentConnectionId: StateFlow<Long?> =
@@ -2034,6 +2073,9 @@ class AppContainer(context: Context) :
     // "打开 App 就看到崩溃提示"（用户报的就是"更新后打不开"）。现在改成**按需**：
 
     private companion object {
+
+        /** 后台不足 2 秒（转屏/权限框/PIP 切换）不重建连接。 */
+        const val FOREGROUND_RECONNECT_MIN_BG_MS = 2_000L
         const val TAG = "app-container"
 
         /** LibVLC 启动探针最长等多久（主进程只读文件；等不到就按“不可用”回落 Media3）。 */

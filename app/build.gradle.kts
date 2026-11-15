@@ -33,9 +33,9 @@ android {
         applicationId = "io.github.gua123.mediagate"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        // 0.1.92：Media3 兜底绕过分段缓存直读，避免 join 卡死的 SegmentJob。
-        versionCode = 93
-        versionName = "0.1.92"
+        // 0.1.93：后台回前台主动重建远端后端，修连接静默断开。
+        versionCode = 94
+        versionName = "0.1.93"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

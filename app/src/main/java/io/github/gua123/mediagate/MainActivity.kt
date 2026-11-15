@@ -54,6 +54,20 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * 后台再回前台时主动检查/重建远端连接（2026-11-15 用户反馈：连接会断，重启才恢复）。
+     * 播放中（视频会话/音频）由容器内部跳过，不会拆正在播的流。
+     */
+    override fun onResume() {
+        super.onResume()
+        (application as MediaGateApplication).container.onHostResumed()
+    }
+
+    override fun onPause() {
+        (application as MediaGateApplication).container.onHostPaused()
+        super.onPause()
+    }
+
+    /**
      * PIP 模式变化（**R13**）。
      *
      * 用 Activity 回调而不是 `addOnPictureInPictureModeChangedListener`：两者等价，前者在
