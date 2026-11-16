@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.data.storage.api.StorageException
@@ -223,7 +224,10 @@ class BrowserViewModel(
                 recoveredPath != target
             ) {
                 recoveredPath = target
-                if (environment.recoverRemoteRoot()) {
+                // 自愈本身也必须限时：公网 SFTP 静默断开时重建连接会卡住，
+                // 之前没有上限导致界面永远停在「正在加载…」（2026-11-16 真机实测 5.5 分钟无返回）。
+                val recovered = withTimeoutOrNull(RECOVER_TIMEOUT_MS) { environment.recoverRemoteRoot() } ?: false
+                if (recovered) {
                     load(target, refreshing = false)
                     return@launch
                 }
@@ -294,3 +298,6 @@ class BrowserViewModel(
         data class Failure(val kind: BrowserErrorKind, val detail: String?) : LoadOutcome
     }
 }
+
+/** 自愈重建连接的硬上限：超过就当自愈失败，交给界面报错。 */
+private const val RECOVER_TIMEOUT_MS: Long = 10_000L
