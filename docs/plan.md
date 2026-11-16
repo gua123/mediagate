@@ -235,7 +235,8 @@
 ### 4.6 播放内核：LibVLC 3.7.7 硬解 + 解码档位（R9/R10，2026-11-12 换核）
 
 - **视频默认 LibVLC 3.7.7**：`Media.setHWDecoderEnabled(true, true)`（Android 上落成 `:codec=mediacodec_ndk,all`）实现硬解；`EngineSelection.availableEngines()` 只含 LibVLC，**Media3 ExoPlayer 只在 `:vlcprobe` 独立进程探针失败或 LibVLC 构造异常时内部兜底，不进入切换入口**；**音频仍用 Media3 ExoPlayer**。
-- **硬解开关与软解档位**（`DecoderMode`）：AUTO_HW（默认，硬解优先，`avcodec-hw=any`）/ FORCE_HW（`avcodec-hw=any` + `setHWDecoderEnabled(true, force = true)`）/ FORCE_SW（`avcodec-hw=none` + `setHWDecoderEnabled(false)` 真关硬解）；`avcodec-hw` 是实例级选项，切档位需重建 LibVLC 管线；解码失败给中文原因，不静默降级。
+- **硬解开关与软解档位**（`DecoderMode`，真正生效的只有 `Media.setHWDecoderEnabled`）：**AUTO_HW（默认）与 FORCE_HW 都走 `setHWDecoderEnabled(true, true)`**（Android 上落成 `:codec=mediacodec_ndk,all`；`force=true` 在正常机型上只影响极老机型的硬解黑名单，等价于硬解优先）；**FORCE_SW 走 `setHWDecoderEnabled(false, false)`**（落成 `:codec=all`，真正关掉 MediaCodec 硬解）。**切档位的现实行为**：`VlcEngine.setDecoderMode()` → `rebuildPipeline()`，把 `libVlc` 与 `MediaPlayer` 整条重建后再恢复位置/倍速/播放态（硬解开关本身是媒体级选项，技术上换一份 `Media` 就够，重建属于过度实现，待优化）。解码失败给中文原因，不静默降级。
+- **`DecoderMode` 里的 `avcodec-hw` 选项目前未接入（待做项，不是现状）**：`vlcAvcodecHwOption` / `vlcInstanceOption` 全仓只被 `DecoderMode` 自己与 `EngineSwitchPlannerTest` 引用，**从未传给 LibVLC**；`--avcodec-hw` 只是桌面 hw decoder 的模块选择，不控制 Android MediaCodec（见 `VlcEngine.kt` 头部注释与 `docs/LibVLC-Android-集成与参数.md` §5）。这两条属性要么接上、要么删掉，别当成已经在起作用的开关。
 - **取数统一经 `:media:proxy` 回环 HTTP 代理**：WebDAV / SFTP / FTP / 本地都走同一 `StorageBackend` → `RandomAccessSource`，代理支持 `Range`（206 / `Content-Range`），拖拽 seek 不必整段下载。
 - **缓存按 `AddressLabel` 分档**（`VlcCachePolicy`，时间型 PTS 预缓冲）：局域网 1500 ms / 公网 4000 ms / 本地与未知 1000 ms（LibVLC 默认）。
 

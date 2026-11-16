@@ -37,9 +37,14 @@ internal enum class HrefStyle { ABSOLUTE_PATH, FULL_URL }
  *
  * 内部路径模型：根是空串，其余形如 `dav/sub/a.txt`（无首尾斜杠）。
  */
-internal class FakeWebDavServer {
+internal class FakeWebDavServer(
+    /** 绑定地址：默认回环 127.0.0.1；跨主机重定向用例传 127.0.0.2，用不同 host 字符串模拟第三方主机。 */
+    private val bindHost: String = "127.0.0.1",
+    /** 对外广播的主机名（[baseUrl] 用）；默认与绑定地址一致。 */
+    private val advertisedHost: String = bindHost,
+) {
 
-    private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    private val server: HttpServer = HttpServer.create(InetSocketAddress(bindHost, 0), 0)
 
     /** 目录集合（一定含根 ""）。 */
     val dirs = linkedSetOf("")
@@ -76,8 +81,11 @@ internal class FakeWebDavServer {
     /** 每个响应前的固定延迟（毫秒），用于验证 probe 的握手计时真的在计时。 */
     var responseDelayMs: Long = 0L
 
-    /** rawPath → Location：命中则回 301。 */
+    /** rawPath → Location：命中则回 [redirectStatus]（默认 301）。 */
     val redirects = mutableMapOf<String, String>()
+
+    /** [redirects] 命中的重定向状态码；跨主机凭据用例用 302，补尾斜杠场景保持 301。 */
+    var redirectStatus: Int = 301
 
     /** "`METHOD rawPath`" → 状态码：命中则直接回该码（测 401/403/405/500 用）。 */
     val forcedStatus = mutableMapOf<String, Int>()
@@ -86,7 +94,7 @@ internal class FakeWebDavServer {
 
     val port: Int get() = server.address.port
 
-    val baseUrl: String get() = "http://127.0.0.1:$port"
+    val baseUrl: String get() = "http://$advertisedHost:$port"
 
     init {
         server.executor = Executors.newFixedThreadPool(4)
@@ -153,7 +161,7 @@ internal class FakeWebDavServer {
             }
             redirects[rawPath]?.let { location ->
                 exchange.responseHeaders.add("Location", location)
-                respond(exchange, 301, "text/plain", ByteArray(0))
+                respond(exchange, redirectStatus, "text/plain", ByteArray(0))
                 return
             }
             forcedStatus["${exchange.requestMethod.uppercase(Locale.US)} $rawPath"]?.let { code ->

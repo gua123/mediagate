@@ -107,6 +107,25 @@
         </service>
 
         <!--
+          预约缓存的后台下载（2026-10-19 用户要求「需要加前台服务」）：App 自己的前台服务
+          `CacheDownloadService`，只在用户点「预约缓存」时由本应用从**前台**拉起，不导出、也不需要系统 bind。
+
+          为什么必须在这里声明：没声明的服务 `startForegroundService` 会立刻抛
+          RuntimeException("Service not found …")，服务根本不会被创建（R22 预约缓存队列整条失效的真因）；
+          Android 14+ 还要求 `startForeground` 的类型与清单一致——服务里用的是
+          FOREGROUND_SERVICE_TYPE_DATA_SYNC，所以这里必须写 dataSync，且配套权限
+          FOREGROUND_SERVICE_DATA_SYNC（本清单上方已声明）；类型/权限对不上会抛
+          IllegalArgumentException 或 SecurityException。
+          服务本体返回 START_NOT_STICKY：dataSync 不允许被后台复活（Android 14+ 限制），
+          Android 15+ 另有 6 小时/24 小时配额，被系统杀掉就退回进程内下载，绝不后台重启。
+        -->
+        <service
+            android:name=".app.CacheDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
+
+        <!--
           LibVLC 启动探针（2026-11-12）：**必须跑在独立进程**。libvlc.so 初始化在这台真机上
           可能直接把进程带走（2026-10-03 实证），放在 :vlcprobe 里崩的只是探针自己；
           主进程只读 start / ok / done 三个文件，据此决定用 LibVLC 还是回落 Media3。

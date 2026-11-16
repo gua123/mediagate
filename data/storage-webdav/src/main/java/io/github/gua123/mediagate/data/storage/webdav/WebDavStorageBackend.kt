@@ -338,8 +338,10 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
     /**
      * 执行请求并**手动**跟随重定向。
      *
-     * 不能用 OkHttp 的自动跟随：它会把重定向后的 PROPFIND 降级成 GET（目录少了尾斜杠就会 301），
-     * 跨主机时还会摘掉 Authorization。这里保持原方法重发（303 按 HTTP 语义转 GET）。
+     * 不能用 OkHttp 的自动跟随：它会把重定向后的 PROPFIND 降级成 GET（目录少了尾斜杠就会 301）。
+     * 手动跟随就得**自己复刻它的安全语义**：跨主机（以及 https → http 降级）时摘掉 Authorization，
+     * 否则 Basic 凭据会被原样发给第三方主机、或走明文链路；同主机重定向保留（Apache 补尾斜杠那类 301
+     * 到处都是，摘了就得重新认证）。方法保持原样重发（303 按 HTTP 语义转 GET）。
      */
     private fun execute(request: Request, callClient: OkHttpClient = client): Response {
         var current = request
@@ -358,10 +360,22 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
             if (next == null) throw StorageException.Unknown("无法解析重定向地址：$location")
             val keepMethod = code != 303 || current.method == "GET" || current.method == "HEAD"
             val method = if (keepMethod) current.method else "GET"
-            current = current.newBuilder()
+            val builder = current.newBuilder()
                 .url(next)
                 .method(method, if (keepMethod) current.body else null)
-                .build()
+            // 凭据只在「同一主机且没降级成明文」时跟着走：newBuilder() 会连 Authorization 一起复制，
+            // 跨主机跳过去就等于把 Basic 账号密码送给第三方主机（https → http 还会明文上网）。
+            // 其它自定义头保留——不少 WebDAV 网关用 X-Auth-Token / X-API-Key 之类的专用头。
+            val sameHost = next.host.equals(current.url.host, ignoreCase = true)
+            val plaintextDowngrade = current.url.scheme == "https" && next.scheme != "https"
+            if (!sameHost || plaintextDowngrade) {
+                builder.removeHeader("Authorization")
+                AppLog.w(
+                    TAG,
+                    "重定向到其它主机或明文链路（" + current.url.host + " → " + next.host + "），已移除 Authorization 头：" + next,
+                )
+            }
+            current = builder.build()
         }
     }
 

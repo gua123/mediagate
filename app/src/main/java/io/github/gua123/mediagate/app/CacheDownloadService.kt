@@ -71,10 +71,12 @@ class CacheDownloadService : Service() {
                     if (current.pending == 0 && current.running == null) {
                         // 队列空了：先把最后一版状态写出去（用户能看到"已完成 N 个"），再退场
                         runCatching { notifyState(current) }
+                            .onFailure { AppLog.w(TAG, "写最后一版缓存下载通知失败（不致命，服务照常退场）", it) }
                         stopSelf()
                         return@collect
                     }
                     runCatching { notifyState(current) }
+                        .onFailure { AppLog.w(TAG, "更新缓存下载通知失败（不致命，队列继续跑）", it) }
                 }
             }
         }.onFailure { error ->
