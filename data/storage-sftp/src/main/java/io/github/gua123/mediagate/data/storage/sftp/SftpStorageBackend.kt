@@ -285,6 +285,15 @@ class SftpStorageBackend(
         else -> mapJschFailure(t, config, pool.lastHostKeyCheck, "probe").message ?: describeThrowable(t)
     }
 
+    /**
+     * 硬超时后作废 SSH 会话（2026-11-17 真机实证：不作废会让卡死的线程拖死后续所有请求）。
+     * 下次操作会自动重连，用户无需重启 App。
+     */
+    override fun onHardTimeout() {
+        AppLog.w("storage-sftp", "硬超时后作废 SSH 会话：" + config.host + ":" + config.port)
+        runCatching { pool.invalidateCurrentSession() }
+    }
+
     private fun ensureOpen() {
         if (closed) throw StorageException.Unknown("后端已关闭：" + id)
     }

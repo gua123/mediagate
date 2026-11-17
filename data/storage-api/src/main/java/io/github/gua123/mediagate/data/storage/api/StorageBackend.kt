@@ -80,4 +80,13 @@ interface StorageBackend : Closeable {
      * 本方法不抛异常，失败信息放在 [ProbeReport.message] 里，便于「测试全部」并行跑完。
      */
     suspend fun probe(): ProbeReport
+
+    /**
+     * 某次调用被**硬超时**放弃时的通知（默认空实现）。
+     *
+     * 硬超时只取消「等待」，底层阻塞线程往往还在跑（协程取消对阻塞 socket 无效）。
+     * 有长连接状态的后端（如 SFTP 的 SSH 会话）应在这里作废会话，
+     * 否则卡死的线程会一直占着会话/通道，后续请求全部排队（2026-11-17 真机实证：卡死 45 分钟）。
+     */
+    fun onHardTimeout() {}
 }

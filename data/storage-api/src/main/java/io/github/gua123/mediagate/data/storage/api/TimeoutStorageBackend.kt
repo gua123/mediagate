@@ -77,7 +77,14 @@ class TimeoutStorageBackend(
     }
 
     private suspend fun <T> guard(what: String, block: suspend () -> T): T =
-        withHardDeadline(hardDeadlineScope, operationTimeoutMs, what, block)
+        try {
+            withHardDeadline(hardDeadlineScope, operationTimeoutMs, what, block)
+        } catch (e: StorageException.Timeout) {
+            // 硬超时只放弃等待，底层阻塞线程还活着（JSch 没有自己的超时）。
+            // 通知后端作废会话，否则它会一直占着连接、把后续请求全拖死（2026-11-17 真机实证）。
+            runCatching { delegate.onHardTimeout() }
+            throw e
+        }
 
     companion object {
         private const val TAG = "storage-timeout"

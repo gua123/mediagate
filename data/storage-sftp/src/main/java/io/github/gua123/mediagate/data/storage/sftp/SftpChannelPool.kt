@@ -211,6 +211,11 @@ internal class SftpChannelPool(
         return session
     }
 
+    /** 作废当前 SSH 会话（硬超时后由后端调用）：下一个 [acquire] 会重连。 */
+    fun invalidateCurrentSession() {
+        sessionRef.get()?.let { invalidateSession(it) }
+    }
+
     /** 会话出问题时把它丢掉：下一个 [acquire] 会重连（断线重连的入口）。 */
     private fun invalidateSession(session: Session) {
         if (sessionRef.compareAndSet(session, null)) {
