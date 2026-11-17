@@ -3,6 +3,7 @@ package io.github.gua123.mediagate.feature.browser
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -212,6 +213,11 @@ class BrowserViewModel(
                     // 列目录必须有上限：公网 SFTP 的 native 读可能卡住，15s 超时后走自愈重建，
                     // 不能让界面无限“正在加载…”（2026-11-15 用户反馈）。
                     withTimeout(15_000L) { root.backend.list(target, null) }.let { LoadOutcome.Success(it) }
+                } catch (e: TimeoutCancellationException) {
+                    // withTimeout 抛的 TimeoutCancellationException 本身就是 CancellationException 的子类，
+                    // 若被下面的 CancellationException 分支原样 rethrow，就永远走不到 LoadFailed ——
+                    // 界面会永远停在「正在加载…」（2026-11-17 真机实测卡 45 分钟）。
+                    LoadOutcome.Failure(BrowserErrorKind.TIMEOUT, e.message)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
