@@ -35,3 +35,6 @@ dist/
 *.apk
 *.aab
 tests/docker/*.jar
+
+# Kotlin 编译缓存
+.kotlin/

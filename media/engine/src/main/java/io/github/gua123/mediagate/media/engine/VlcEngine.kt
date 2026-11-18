@@ -111,10 +111,21 @@ class VlcEngine(
     private var duckedByFocus = false
 
     private var media: MediaSourceRef? = null
+    /**
+     * 是否已 release（2026-11-18 真机崩溃后加）。
+     *
+     * LibVLC 的 MediaPlayer 被 release 后 native 对象就没了，但 Kotlin 侧字段还留着旧引用；
+     * 此时任何 isPlaying / setTime / time / length 都会抛
+     * IllegalStateException: can not get VLCObject instance（native use-after-release），
+     * 主线程直接被杀，表现为闪退回桌面。所以所有对外入口都要先看这个标志。
+     */
+    @Volatile
+    private var released = false
+
 
     override val currentMedia: MediaSourceRef? get() = media
 
-    override val isPlaying: Boolean get() = player.isPlaying
+    override val isPlaying: Boolean get() = !released && player.isPlaying
 
     /** 默认视频输出：官方 VLCVideoLayout（首帧/Vout 最稳，2026-11-15 真机验证）。 */
     private val defaultVideoLayout: VLCVideoLayout = VLCVideoLayout(appContext)
@@ -431,6 +442,7 @@ class VlcEngine(
     }
 
     override fun play() {
+        if (released) return
         if (!requestAudioFocus()) {
             _state.value = EngineState.Error("音频焦点被其它应用占用，暂时不能播放（可稍后再试）")
             return
@@ -457,6 +469,7 @@ class VlcEngine(
     }
 
     override fun pause() {
+        if (released) return
         pendingPlay = false
         attachedView?.removeCallbacks(outputRetryRunnable)
         (attachedView as? VlcVideoSurface)?.removeCallbacks(pendingPlayRunnable)
@@ -465,6 +478,7 @@ class VlcEngine(
     }
 
     override fun seekTo(positionMs: Long) {
+        if (released) return
         // 第二个参数 true = fast seek（关键帧对齐，VLC 自己选最近可解码点）
         player.setTime(positionMs.coerceAtLeast(0L), true)
     }
@@ -578,6 +592,8 @@ class VlcEngine(
     }
 
     override fun release() {
+        if (released) return
+        released = true
         pendingPlay = false
         attachedView?.removeCallbacks(outputRetryRunnable)
         (attachedView as? VlcVideoSurface)?.let { surface ->

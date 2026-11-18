@@ -256,6 +256,19 @@ class VideoPlayerViewModel(
      * - 按 HOME 回桌面、锁屏 → 走 ON_PAUSE，**保持后台播放**（那是用户要的后台行为）。
      */
     fun stop() {
+        // 必须先取消所有可能持有引擎引用的协程，再释放引擎（2026-11-18 真机崩溃实测）。
+        // 引擎释放后，resumeJob 里的 while (!target.isPlaying) 与 target.seekTo() 仍在跑，
+        // 会抛 IllegalStateException: can not get VLCObject instance（native use-after-release），
+        // 主线程直接被杀，表现为弹回桌面。
+        resumeJob?.cancel()
+        repairJob?.cancel()
+        tickJob?.cancel()
+        blackoutJob?.cancel()
+        tsIndexJob?.cancel()
+        loadJob?.cancel()
+        engineJob?.cancel()
+        switchJob?.cancel()
+        hostJob?.cancel()
         releaseEngine()
         _state.value = _state.value.copy(playing = false)
         environment.setPlayerVisible(false)
