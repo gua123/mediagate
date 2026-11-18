@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
  */
 enum class KeepAliveItemKind {
 
-    /** 通知权限（POST_NOTIFICATIONS）：后台播放/字幕生成的通知栏与锁屏控制需要它。 */
+    /** 通知权限（POST_NOTIFICATIONS）：后台播放的通知栏与锁屏控制需要它（字幕生成那条功能已整条移除）。 */
     NOTIFICATION,
 
     /** 省电策略「无限制」：澎湃 OS 息屏后限制后台应用，这一项决定能不能长时间后台播放。 */

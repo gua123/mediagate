@@ -48,10 +48,10 @@
     <string name="keep_alive_confirm">我已开启</string>
     <string name="keep_alive_open_details">打开应用详情页</string>
     <string name="keep_alive_notification_title">通知权限</string>
-    <string name="keep_alive_notification_detail">后台播放与字幕生成的通知栏、锁屏控制都要它。未授权时前台服务通知不会显示，但播放仍会继续。</string>
+    <string name="keep_alive_notification_detail">后台播放的通知栏、锁屏控制都要它。未授权时前台服务通知不会显示，但播放仍会继续。</string>
     <string name="keep_alive_notification_action">去授权</string>
     <string name="keep_alive_battery_title">省电策略：无限制</string>
-    <string name="keep_alive_battery_detail">澎湃 OS 默认在息屏后限制后台应用。把本应用的省电策略改为「无限制」，后台播放与字幕生成才不会被掐断（系统会弹一个确认框）。</string>
+    <string name="keep_alive_battery_detail">澎湃 OS 默认在息屏后限制后台应用。把本应用的省电策略改为「无限制」，后台播放才不会被掐断（系统会弹一个确认框）。</string>
     <string name="keep_alive_battery_action">去设置</string>
     <string name="keep_alive_autostart_title">自启动</string>
     <string name="keep_alive_autostart_detail">厂商设置里「自启动」没有开放查询接口，无法自动检测。请在 安全中心 → 应用管理 → 权限 → 自启动 里允许本应用，然后勾选下面的「我已开启」。</string>

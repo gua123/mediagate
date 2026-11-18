@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,8 +33,12 @@ import io.github.gua123.mediagate.data.storage.api.CacheTuning
  * 但"单条连接被人为限速"的服务器也存在——与其替他猜，不如把这几个参数摊开，
  * 让他自己按链路特点调，并写清每种调法的适用场景。
  *
- * 四项参数的生效口径：**并发块数 / 块大小 / 预读段数即时生效**；
- * **段大小在下次连接后生效**（它决定磁盘上段文件的切分方式，中途改等于缓存作废）。
+ * **三项参数的生效口径（2026-11-18 逐条核到消费点）**：
+ * - **段大小、缓存上限**：都在下次连接后生效——二者是 SegmentedCacheBackend 的构造参数
+ *   （AppContainer.kt:1917-1918），中途改会让磁盘上已有的段对不上号，所以只能重建时换；
+ * - **预读段数**：滑窗预读每次都现读设置（AppContainer.kt:1125）⇒ 改完立刻跟随；
+ *   但段内连带预读用的是连接时的快照（SegmentedCacheBackend.kt:68）⇒ 完全生效要等下次连接。
+ *   （旧的「并发块数 / 块大小即时生效」两项已随 2026-10-03 的单文件缓存简化删掉，注释一并更正。）
  */
 @Composable
 fun NetworkTuningSection(
@@ -60,7 +63,7 @@ fun NetworkTuningSection(
             Text("网络与缓冲", style = MaterialTheme.typography.titleMedium)
             Text(
                 text = "缓存按「段」存：正在看的这个文件的段不会被淘汰，所以下次打开同一个文件是直接读本地。" +
-                    "「段大小」在下次连接后生效，「预读段数」即时生效。",
+                    "「段大小」与「预读段数」都要等下次连接后才完全生效（滑窗预读每次都现读设置，改完立刻跟随）。",
                 style = MaterialTheme.typography.bodySmall,
             )
 
@@ -171,7 +174,7 @@ fun NetworkTuningSection(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onReset) { Text("恢复默认") }
                 Text(
-                    text = "默认 4 MB 段 · 预读 2 段",
+                    text = "默认 4 MB 段 · 预读 4 段",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
