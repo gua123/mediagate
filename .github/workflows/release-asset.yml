@@ -1,0 +1,84 @@
+name: release-asset
+
+# 只做一件事：把「承载分支上的 APK 分块」拼回原文件、校验 sha256、上传到已存在的 Release 资产。
+# 不构建、不改 versionCode、不改 update.json、不打 tag —— 发版脚本仍由人工在本机跑。
+#
+# 为什么这么绕：本机 -> uploads.github.com 上行 70-110 KB/s，且单请求在 8-10 MB 处被掐断，
+# 70 MB 的 APK 单发必挂。改由 CI 在 GitHub 侧组装并上传，走 GitHub 内网，绕开本机上行瓶颈。
+# APK 本体由 scripts/push-apk-carrier.sh 分块推到承载分支（每块一次 push，避开单请求天花板）。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "目标 Release tag（必须已存在）"
+        required: true
+        default: "v0.1.113"
+      carrier_ref:
+        description: "承载 APK 分块的 git ref（上传完成前不要删）"
+        required: true
+        default: "apk-carrier"
+      parts_dir:
+        description: "分块所在目录"
+        required: true
+        default: ".release-asset/parts"
+      asset_name:
+        description: "Release 资产名"
+        required: true
+        default: "mediagate-0.1.113.apk"
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout meta
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Fetch carrier ref
+        env:
+          CARRIER_REF: ${{ inputs.carrier_ref }}
+          PARTS_DIR: ${{ inputs.parts_dir }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$CARRIER_REF"
+          git checkout FETCH_HEAD -- "$PARTS_DIR"
+          ls -l "$PARTS_DIR"
+
+      - name: Reassemble and verify
+        env:
+          PARTS_DIR: ${{ inputs.parts_dir }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          MAN="$PARTS_DIR/MANIFEST.txt"
+          cat "$MAN"
+          want_size="$(sed -n 's/^size=//p' "$MAN")"
+          want_sha="$(sed -n 's/^sha256=//p' "$MAN")"
+          name="$(sed -n 's/^name=//p' "$MAN")"
+          [ "$name" = "$ASSET_NAME" ] || { echo "资产名不一致：$name vs $ASSET_NAME" >&2; exit 1; }
+          mkdir -p out
+          cat "$PARTS_DIR/$name".part* > "out/$name"
+          got_size="$(stat -c %s "out/$name")"
+          got_sha="$(sha256sum "out/$name" | awk '{print $1}')"
+          echo "size: want=$want_size got=$got_size"
+          echo "sha256: want=$want_sha got=$got_sha"
+          [ "$want_size" = "$got_size" ] || { echo "大小不符" >&2; exit 1; }
+          [ "$want_sha" = "$got_sha" ] || { echo "sha256 不符" >&2; exit 1; }
+
+      - name: Upload to existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          # 串行单次上传（不做并发，避免同名资产 422）
+          gh release upload "$TAG" "out/$ASSET_NAME" --clobber --repo "$GITHUB_REPOSITORY"
+          echo "--- assets after upload ---"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[] | "\(.name) \(.size)"'
