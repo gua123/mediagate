@@ -173,7 +173,6 @@ fun ConnectionsScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item { NetworkCard(state) }
                 state.summary?.let { summary ->
                     item { SummaryCard(summary) }
                 }
@@ -245,37 +244,6 @@ private fun ConnectionsSectionHeader(title: String) {
     )
 }
 
-/** 当前网络现场卡片（R7 判定顺序的第一环：网络能力）。 */
-@Composable
-private fun NetworkCard(state: ConnectionsUiState) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Dns, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.connections_network_title), style = MaterialTheme.typography.titleSmall)
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = if (state.network.online) state.network.display else stringResource(R.string.connections_network_offline),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = stringResource(R.string.connections_network_policy),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-/**
- * 本地目录卡片（**R12**）：模式 + 路径 + 三个入口。
- *
- * 与首页那张卡片同一套语义，但放在连接页——用户在这里管理"用哪台服务器/哪个目录"，
- * 本地目录不该只存在于首页。
- */
 @Composable
 private fun LocalRootCard(
     localRoot: LocalRootUi,
