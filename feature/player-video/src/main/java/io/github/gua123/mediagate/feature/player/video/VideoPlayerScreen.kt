@@ -212,7 +212,7 @@ fun VideoPlayerScreen(
     ApplyRememberedOrientation(environment.preferences.lastOrientationValue)
     ResetOrientationOnLeave()
 
-    BackHandler(enabled = true) { onBack() }
+    BackHandler(enabled = true) { viewModel.stop(); onBack() }
 
     // 进 PIP 就把控制层与字幕面板收掉：小窗里放不下，留着只会挡住画面（R13）
     LaunchedEffect(inPip) {
@@ -745,7 +745,7 @@ private fun Controls(
                 .padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 0.dp else 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = { viewModel.stop(); onBack() }) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.video_back),

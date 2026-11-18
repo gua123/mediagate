@@ -37,8 +37,9 @@
 
 ## 5. 当前进度
 
-- 正式版 0.1.83 / versionCode 84；**工作区已改为 LibVLC 视频内核**（候选 0.1.109，未发布）。
+- 线上正式版 **0.1.112 / versionCode 113**（0.1.109、0.1.110、0.1.111 已连续发布）。
 - 2026-11 完成连接模型简化：单地址/单网络类型、全量复制连接（复制后打开副本编辑器）。
-- 2026-11-12 视频内核改为 LibVLC 3.7.7 + 硬解 + LAN/WAN 缓存；`:media:proxy` 回环代理恢复，`:vlcprobe` 独立进程探针把关，失败自动回落 Media3。
-- 本机无安卓设备，真机验收靠用户。
-- 下一步：真机验证单地址连接、复制连接、公网/局域网目录与播放；其它加载/设置/5 缓存方案待拍板。
+- 2026-11-12 视频内核改为 LibVLC 3.7.7 + 硬解 + LAN/WAN 缓存；回环代理恢复，独立进程探针把关，失败自动回落 Media3。
+- 2026-11-17 修两处浏览器/存储层缺陷：① 超时被当成取消抛出 → 界面永久「正在加载…」（0.1.111）；② 硬超时后作废 SFTP 会话，避免卡死线程拖死后续请求（0.1.112）。
+- **2026-11-18 修复 SFTP 大文件播不出**（三个 bug）：① 存储层 newFixedThreadPool(12) 被永不返回的 JSch 阻塞读占满 → 后续 withContext 排队、连 openRead 第一行都进不去，改 newCachedThreadPool；② SftpRangeStream 里 absolute = pos 少加流起点 start → 任何偏移都从文件第 0 字节读，VLC 请求尾部拿到 ftyp、报 moov atom not found，改 absolute = start + pos；③ 播放页返回只导航不停播，新增 VideoPlayerViewModel.stop()（返回/左上角走它，HOME/锁屏仍保持后台播放）。新增 LoopbackProxyRealSftpTest（真 SFTP + 真代理）钉住大偏移读取，改存储层后务必跑它。
+- 本机无安卓设备，真机验收靠用户（adb over mDNS 可远程调试）。

@@ -12,7 +12,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.Executors
 import java.io.InputStream
 
 /**
@@ -52,7 +54,16 @@ class TimeoutStorageBackend(
      * 阻塞调用的**宿主作用域**：与调用方（浏览页/播放器）解耦，
      * 于是调用方到点或取消时能立刻返回，不用等阻塞调用自己结束。
      */
-    private val hardDeadlineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * 独立线程池 + SupervisorJob：**不能用 Dispatchers.IO，也不能随 close() 取消**。
+     * 2026-11-18 真机实证：close() 里 cancel 掉这个 scope 后，后续所有 guard 的 async 都不再执行，
+     * 每次调用只能等满硬超时（表现为「打开」15 秒超时、零字节，只有重启 App 才恢复）。
+     */
+    private val hardDeadlineScope = CoroutineScope(
+        SupervisorJob() + Executors.newCachedThreadPool { r ->
+            Thread(r, "mg-storage-io").apply { isDaemon = true }
+        }.asCoroutineDispatcher(),
+    )
 
     override suspend fun list(dir: String, page: Page?): List<RemoteEntry> =
         guard("列目录 " + dir) { delegate.list(dir, page) }
@@ -72,7 +83,7 @@ class TimeoutStorageBackend(
     override fun close() {
         // 关掉这个后端的硬截止作用域：仍在排队的操作不必再跑；已经在阻塞里的调用
         // 由底层 socket 超时收尾（线程无法被强杀）
-        hardDeadlineScope.cancel()
+        // 不 cancel：作用域随进程存活，避免后续调用永久超时（见 hardDeadlineScope 注释）
         delegate.close()
     }
 
@@ -134,7 +145,15 @@ internal suspend fun <T> withHardDeadline(
     what: String,
     block: suspend () -> T,
 ): T {
-    val worker = scope.async { block() }
+    AppLog.d("storage-timeout", "worker 提交：" + what)
+    val worker = scope.async {
+        AppLog.d("storage-timeout", "worker 启动：" + what)
+        try {
+            block()
+        } finally {
+            AppLog.d("storage-timeout", "worker 结束：" + what)
+        }
+    }
     try {
         return withTimeout(timeoutMs) { worker.await() }
     } catch (e: TimeoutCancellationException) {

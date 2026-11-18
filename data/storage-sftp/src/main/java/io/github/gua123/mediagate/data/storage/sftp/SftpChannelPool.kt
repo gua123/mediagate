@@ -1,5 +1,7 @@
 package io.github.gua123.mediagate.data.storage.sftp
 
+import io.github.gua123.mediagate.data.storage.api.StorageDispatchers
+
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
@@ -22,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
  * - 连接断掉（切网 / 服务器重启 / 空闲被踢）时，下一次取通道会自动重连，
  *   而按偏移读的语义由 [SftpRangeStream] 保证：它记住的是**文件绝对偏移**，不是「流里读了多少」。
  *
- * 线程模型：所有 JSch 调用都是阻塞 I/O，一律在 [Dispatchers.IO] 上执行；
+ * 线程模型：所有 JSch 调用都是阻塞 I/O，一律在 [StorageDispatchers.io] 上执行；
  * 并发上限用协程 [Semaphore] 控制，调用方挂起而不是阻塞线程。
  */
 internal class SftpChannelPool(
@@ -31,13 +33,22 @@ internal class SftpChannelPool(
     val timing: TimingSocketFactory = TimingSocketFactory(config.connectTimeoutMs.toInt()),
 ) : Closeable {
 
-    private val permits = Semaphore(config.maxChannels)
+    private var permits = Semaphore(config.maxChannels)
 
     /** 空闲通道（后用先取，尽量让旧通道继续服役，减少握手）。 */
     private val idle = ArrayDeque<ChannelSftp>()
     private val idleLock = Any()
 
     private val sessionRef = AtomicReference<Session?>(null)
+
+    /**
+     * **元数据专用 SSH 会话**（2026-11-18 起与数据会话物理隔离）。
+     * 原因：JSch 每个 Session 只有一个 reader 线程，一条通道不消费就会把整条会话上的
+     * 所有通道一起堵死（head-of-line blocking）。数据读与 list/stat 分开后，
+     * 播放卡住也不会让目录打不开，反之亦然。实测单连接 10 通道、两条连接共 20 通道全部秒回。
+     */
+    private val metaSessionRef = AtomicReference<Session?>(null)
+    private val metaSessionLock = Any()
     private val sessionLock = Any()
 
     private val hostKeys = JschHostKeyRepository(config.host, config.port, verifier)
@@ -90,7 +101,7 @@ internal class SftpChannelPool(
         permits.acquire()
         var handedOff = false
         try {
-            val channel = withContext(Dispatchers.IO) { obtainChannel() }
+            val channel = withContext(StorageDispatchers.io) { obtainChannel() }
             handedOff = true
             return ChannelLease(this, channel)
         } finally {
@@ -105,7 +116,7 @@ internal class SftpChannelPool(
      * maxChannels 条通道全部占住，stat 等 15s 超时 → 回环代理 504 → VLC 拿不到 MP4
      * 尾部 moov（2026-11-15 真机 #Akari 实证）。元数据不能被数据流饿死。
      */
-    suspend fun <T> useMetadata(block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> useMetadata(block: (ChannelSftp) -> T): T = withContext(StorageDispatchers.io) {
         val channel = openEphemeralChannel()
         try {
             block(channel)
@@ -116,7 +127,7 @@ internal class SftpChannelPool(
 
     /** 开一条不经过空闲池/许可池的临时通道（仍复用同一个 SSH Session）。 */
     private fun openEphemeralChannel(): ChannelSftp {
-        val session = ensureSession()
+        val session = ensureMetaSession()
         return try {
             val channel = session.openChannel(SFTP_CHANNEL) as ChannelSftp
             channel.connect(config.connectTimeoutMs.toInt())
@@ -170,6 +181,20 @@ internal class SftpChannelPool(
         }
     }
 
+    /** 元数据会话复用：与数据会话同款逻辑，但走独立 Session。 */
+    private fun ensureMetaSession(): Session {
+        val existing = metaSessionRef.get()
+        if (existing != null && existing.isConnected) return existing
+        synchronized(metaSessionLock) {
+            val again = metaSessionRef.get()
+            if (again != null && again.isConnected) return again
+            if (again != null) runCatching { again.disconnect() }
+            val created = connectSession()
+            metaSessionRef.set(created)
+            return created
+        }
+    }
+
     /** 会话复用：活着就直接用，死了（或第一次）才重建。 */
     private fun ensureSession(): Session {
         val existing = sessionRef.get()
@@ -214,6 +239,10 @@ internal class SftpChannelPool(
     /** 作废当前 SSH 会话（硬超时后由后端调用）：下一个 [acquire] 会重连。 */
     fun invalidateCurrentSession() {
         sessionRef.get()?.let { invalidateSession(it) }
+        metaSessionRef.getAndSet(null)?.let { runCatching { it.disconnect() } }
+        // 作废会话时必须同时重置许可池：被硬超时放弃的流不会再 close()，
+        // 它们持有的许可永不归还 → permits 归零后所有请求永远等不到（2026-11-17 真机实证）。
+        permits = Semaphore(config.maxChannels)
     }
 
     /** 会话出问题时把它丢掉：下一个 [acquire] 会重连（断线重连的入口）。 */

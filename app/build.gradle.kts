@@ -34,8 +34,8 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.109：恢复等待后端就绪；视频/音频 MediaSession 使用唯一 ID。
-        versionCode = 113
-        versionName = "0.1.112"
+        versionCode = 114
+        versionName = "0.1.113"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }

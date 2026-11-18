@@ -39,4 +39,7 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(project(":data:storage-local"))
+
+    // 仅测试用：L4+L2 集成测试要构造真实 SFTP 后端
+    testImplementation(project(":data:storage-sftp"))
 }

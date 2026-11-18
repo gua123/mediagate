@@ -6,6 +6,8 @@ import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.asCoroutineDispatcher
+import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -53,7 +55,7 @@ class SegmentedCacheBackend(
     private val rootDir: File,
     private val segmentBytes: Long = DEFAULT_SEGMENT_BYTES,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
-    private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val io: CoroutineDispatcher = StorageDispatchers.io,
     /**
      * **缓存命名空间**（2026-10-03 用户提问：「同一个文件在局域网留了缓存，切到公网还要重新缓存吗？」）。
      *
@@ -198,7 +200,6 @@ class SegmentedCacheBackend(
         delegate.openRead(path, offset, length)
 
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
-        // 记住"当前在读哪个文件"：淘汰时保护它的段（用户要求：保留单文件缓存，下次打开更快）
         activePath = path
         val stamp = knownStamp(path)
         verifyStampOrDrop(path, stamp)
@@ -238,17 +239,24 @@ class SegmentedCacheBackend(
     }
 
     /**
+     * 文件指纹缓存的**协程锁**。
+     * 2026-11-18：原用 synchronized，但 knownStamp 是 suspend 函数——协程可能在持锁期间挂起
+     * （网络 IO / 线程切换 / 被取消），一旦挂起锁就不释放，其它协程永久等待。改用 Mutex。
+     */
+    private val stampMutex = Mutex()
+
+    /**
      * 取文件指纹（带缓存）。
      *
-     * 只在第一次 `openRead` 时走一次 `stat`，之后同路径直接用缓存——
+     * 只在第一次 openRead 时走一次 stat，之后同路径直接用缓存——
      * 所以"加指纹"这件事**不额外增加任何网络请求**（这也是它值得做的原因）。
      */
     private suspend fun knownStamp(path: String): FileStamp? {
-        synchronized(stampCache) { stampCache[path] }?.let { return it }
+        stampMutex.withLock { stampCache[path] }?.let { return it }
         val entry = runCatching { delegate.stat(path) }.getOrNull() ?: return null
         if (entry.size < 0L) return null
         val stamp = FileStamp(size = entry.size, mtime = entry.mtime, etag = entry.etag)
-        synchronized(stampCache) { stampCache[path] = stamp }
+        stampMutex.withLock { stampCache[path] = stamp }
         return stamp
     }
 
@@ -316,11 +324,15 @@ class SegmentedCacheBackend(
         length: Long = segmentBytes,
         concurrency: Int = SegmentBatches.DEFAULT_PREFETCH_CONCURRENCY,
     ) {
+        // 预取必须给播放让路：至少留 1 条通道给起播/续播的读取。
+        // 否则预取会把 SFTP 通道池占满，播放的 openRead 永远等不到许可（2026-11-17 真机实证）。
+        val reservedForPlayback = (delegate.caps.maxParallelReads - 1).coerceAtLeast(1)
+        val effectiveConcurrency = concurrency.coerceAtMost(reservedForPlayback)
         val start = offset.coerceAtLeast(0L)
         val end = start + length.coerceAtLeast(1L)
         val firstIndex = start / segmentBytes
         val lastIndex = (end - 1L) / segmentBytes
-        for (batch in SegmentBatches.batch(firstIndex, lastIndex, concurrency)) {
+        for (batch in SegmentBatches.batch(firstIndex, lastIndex, effectiveConcurrency)) {
             try {
                 coroutineScope {
                     batch.map { index -> async { ensureSegment(path, index) } }.awaitAll()
@@ -984,4 +996,28 @@ class SegmentedCacheBackend(
         /** 等待"并发槽位"的轮询间隔（毫秒）；块下载是秒级，这点开销可忽略。 */
         private const val CHUNK_SLOT_POLL_MS = 10L
     }
+}
+
+/**
+ * 存储层专用 IO 调度器：**独立的有界线程池**。
+ *
+ * 2026-11-18 真机实证：JSch 的阻塞读一旦卡住会**永久占用** Dispatchers.IO 的线程且无法中断；
+ * 累积几次后系统 IO 池（默认 64）被占死，连"读一个本地边车文件"这种纯本地操作都会
+ * 永远等不到线程 —— 表现为 openRead 15 秒超时、界面永远缓冲、重启 App 才恢复。
+ *
+ * 这里给存储层单独一个池：即使有调用卡住，也不会波及系统 IO 池，且容量可控。
+ *
+ * 容量取 12 的依据（2026-11-18 实测）：OpenSSH 单连接 MaxSessions 默认 **10**，
+ * 第 11 条通道直接被拒（JSchException channel is not opened），前 10 条 stat 均 1–8 ms。
+ * 所以 10 条通道 + 2 条余量（元数据/本地边车 IO）就够；32/64 只是空转线程，
+ * 每个线程约 1 MB 栈，在 Android 上纯属浪费内存。
+ */
+object StorageDispatchers {
+    // 2026-11-18 真机实证：固定 12 线程会被卡死的 JSch 调用**永久占满**（线程全 S 状态卡在
+    // socket read 上、永不返回），于是后续 withContext 排队、连方法第一行都执行不到。
+    // 改用无上限缓存池：卡住的线程随它去，至少不阻塞新请求（线程数上界由并发请求数决定，
+    // 而并发已被 maxParallelReads 与超时作废机制限制）。
+    val io: CoroutineDispatcher = Executors.newCachedThreadPool { r ->
+        Thread(r, "mg-storage-io").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
 }

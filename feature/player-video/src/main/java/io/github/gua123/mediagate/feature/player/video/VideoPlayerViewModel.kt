@@ -248,6 +248,20 @@ class VideoPlayerViewModel(
         hostPaused = true
     }
 
+    /**
+     * 用户**主动退出播放页**（返回键 / 左上角关闭）：停播并释放内核。
+     *
+     * 与 [onHostPause] 的分工（2026-11-18 用户要求）：
+     * - 返回 / 左上角退出 → **停止播放**，不留后台会话；
+     * - 按 HOME 回桌面、锁屏 → 走 ON_PAUSE，**保持后台播放**（那是用户要的后台行为）。
+     */
+    fun stop() {
+        releaseEngine()
+        _state.value = _state.value.copy(playing = false)
+        environment.setPlayerVisible(false)
+        environment.playback.setActive(false)
+    }
+
     /** Activity 回前台：只有真正从后台回来才重新挂载 VLC 输出。 */
     fun onHostResume() {
         if (!hostPaused) return

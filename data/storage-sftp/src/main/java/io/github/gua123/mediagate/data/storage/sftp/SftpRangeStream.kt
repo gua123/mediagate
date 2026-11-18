@@ -1,9 +1,12 @@
 package io.github.gua123.mediagate.data.storage.sftp
 
+import io.github.gua123.mediagate.data.storage.api.StorageDispatchers
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.data.storage.api.RangeStream
 import java.io.IOException
+import io.github.gua123.mediagate.core.common.AppLog
 import java.io.InputStream
 
 /**
@@ -45,42 +48,58 @@ internal class SftpRangeStream(
     @Volatile
     private var closed = false
 
-    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int = withContext(Dispatchers.IO) {
+    /** 整块预读的内存缓冲（见 read 的说明）。 */
+    private var block: ByteArray? = null
+    private var blockStart: Long = 0L
+    private var blockLength: Int = 0
+
+    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int = withContext(StorageDispatchers.io) {
         if (closed) return@withContext -1
         if (len == 0) return@withContext 0
         val remaining = remaining()
         if (remaining <= 0L) return@withContext -1
         val want = minOf(len.toLong(), remaining).toInt()
-        var attempt = 0
-        var result = -1
-        var done = false
-        while (!done) {
-            val stream = ensureInput()
-            if (stream == null) {
-                result = -1
-                done = true
-            } else {
-                try {
-                    val n = stream.read(buf, off, want)
-                    if (n < 0) {
-                        // 读到头：收掉句柄，下次 read 仍会按新偏移重开（EOF 之后的 seek 是合法的）
-                        closeInput()
-                        result = -1
-                    } else {
-                        pos += n
-                        result = n
-                    }
-                    done = true
-                } catch (e: IOException) {
-                    // 断线重连：丢坏通道，按当前绝对偏移重开一次（plan 4.1）
-                    closeInput()
-                    if (attempt++ >= MAX_READ_RETRY) {
-                        throw mapSftpIoFailure(e, path, pool.lastHostKeyCheck)
-                    }
-                }
+
+        // 1) 内存块命中：直接拷
+        block?.let { b ->
+            val localOff = (pos - blockStart).toInt()
+            if (localOff >= 0 && localOff < blockLength) {
+                val n = minOf(want, blockLength - localOff)
+                System.arraycopy(b, localOff, buf, off, n)
+                pos += n
+                return@withContext n
             }
         }
-        result
+
+        // 2) **完全照搬探针的写法**：pool.use 借一条通道，当场 get + 连续读满，读完立刻归还。
+        //    2026-11-17 真机实证：pool.acquire 长期持有 + 延后读会卡死；pool.use 当场读 4MB 只要 107ms。
+        val blockSize = minOf(remaining, BLOCK_READ_BYTES).toInt()
+        val chunk = ByteArray(blockSize)
+        val abs = absolutePath
+        val absolute = start + pos   // 必须加上流的起点偏移：pos 只是流内位置（2026-11-18 修复：漏了 start 会永远从文件头读）
+        val total = try {
+            pool.use { channel ->
+                channel.get(abs, null, absolute).use { ins ->
+                    var read = 0
+                    while (read < blockSize) {
+                        val k = ins.read(chunk, read, blockSize - read)
+                        if (k < 0) break
+                        read += k
+                    }
+                    read
+                }
+            }
+        } catch (e: IOException) {
+            throw mapSftpIoFailure(e, path, pool.lastHostKeyCheck)
+        }
+        if (total <= 0) return@withContext -1
+        block = chunk
+        blockStart = pos
+        blockLength = total
+        val n = minOf(want, total)
+        System.arraycopy(chunk, 0, buf, off, n)
+        pos += n
+        n
     }
 
     /**
@@ -89,7 +108,7 @@ internal class SftpRangeStream(
      * 只是「记住新位置 + 丢掉旧通道」，真正的 `SSH_FXP_READ(offset)` 发生在下一次 [read]；
      * 这样连续 seek 不会产生无用的远端请求。
      */
-    override suspend fun seek(position: Long) = withContext(Dispatchers.IO) {
+    override suspend fun seek(position: Long) = withContext(StorageDispatchers.io) {
         if (closed) return@withContext
         val target = if (length < 0L) position.coerceAtLeast(0L) else position.coerceIn(0L, length)
         if (target != pos) {
@@ -118,9 +137,12 @@ internal class SftpRangeStream(
         val current = input
         if (current != null && inputOffset == absolute) return current
         closeInput()
+        AppLog.d("storage-sftp", "ensureInput 申请通道 abs=" + absolute)
         val newLease = pool.acquire()
+        AppLog.d("storage-sftp", "ensureInput 拿到通道 abs=" + absolute)
         try {
             val stream = newLease.channel.get(absolutePath, null, absolute)
+            AppLog.d("storage-sftp", "ensureInput get 返回流 abs=" + absolute)
             lease = newLease
             input = stream
             inputOffset = absolute
@@ -152,5 +174,13 @@ internal class SftpRangeStream(
     private companion object {
         /** 断线后按同一偏移重试的次数（1 次；再失败就把异常交给上层走重试/降级）。 */
         const val MAX_READ_RETRY = 1
+
+        /** 取到通道后连续读满的块大小：一次读完 4MB 段，避免"延后读"卡死。 */
+        /**
+         * 单次取通道后连续读的块大小。
+         * 2026-11-18 对照 nPlayer（64 KiB 块、串行）后从 4 MiB 降到 256 KiB：
+         * 首字节等待从「等满 4 MiB」变成「等满 256 KiB」，且阻塞时间更短、更不容易拖死线程。
+         */
+        const val BLOCK_READ_BYTES: Long = 256L * 1024
     }
 }
