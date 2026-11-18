@@ -245,6 +245,10 @@ class SegmentedCacheBackend(
      */
     private val stampMutex = Mutex()
 
+    /** 预读失败退避表：key = path#index，value = 失败时刻（2026-11-18 事故后加） */
+    private val failedSegments = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val prefetchBackoffMs = 5_000L
+
     /**
      * 取文件指纹（带缓存）。
      *
@@ -733,9 +737,16 @@ class SegmentedCacheBackend(
             val target = index + step
             val file = segmentFile(path, target)
             if (file.isFile && file.length() > 0L) continue
+            val failKey = path + "#" + target
+            val failedAt = failedSegments[failKey]
+            if (failedAt != null && System.currentTimeMillis() - failedAt < prefetchBackoffMs) continue
             scope.launch {
                 runCatching { ensureSegment(path, target) }
-                    .onFailure { AppLog.d(TAG, "预读失败（不影响播放）：$path 第 $target 段 — ${it.message}") }
+                .onSuccess { failedSegments.remove(failKey) }
+                .onFailure { e ->
+                    failedSegments[failKey] = System.currentTimeMillis()
+                    AppLog.d(TAG, "预读失败（不影响播放，已退避 5s）：" + path + " 第 " + target + " 段 — " + e.message)
+                }
             }
         }
     }
@@ -1017,7 +1028,11 @@ object StorageDispatchers {
     // socket read 上、永不返回），于是后续 withContext 排队、连方法第一行都执行不到。
     // 改用无上限缓存池：卡住的线程随它去，至少不阻塞新请求（线程数上界由并发请求数决定，
     // 而并发已被 maxParallelReads 与超时作废机制限制）。
-    val io: CoroutineDispatcher = Executors.newCachedThreadPool { r ->
-        Thread(r, "mg-storage-io").apply { isDaemon = true }
-    }.asCoroutineDispatcher()
+    val io: CoroutineDispatcher = java.util.concurrent.ThreadPoolExecutor(
+        /* corePoolSize = */ 12,
+        /* maximumPoolSize = */ 32,
+        /* keepAliveTime = */ 30L,
+        /* unit = */ java.util.concurrent.TimeUnit.SECONDS,
+        /* workQueue = */ java.util.concurrent.SynchronousQueue(),
+    ) { r -> Thread(r, "mg-storage-io").apply { isDaemon = true } }.asCoroutineDispatcher()
 }
