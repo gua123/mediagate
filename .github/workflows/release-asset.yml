@@ -1,0 +1,62 @@
+name: release-asset
+
+# 只做一件事：把已构建好的 release APK 通过 GitHub 内网上传到已存在的 Release 资产。
+# 不构建、不碰 versionCode、不改 update.json、不打 tag——发版脚本仍由人工在本机跑。
+# 原因：本机 -> uploads.github.com 上行 100-118 KB/s 且单请求 <10 MB，70 MB 单发必挂；
+# CI 在 GitHub 侧执行，资产上传走 GitHub 内网，绕开本机上行瓶颈。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "目标 Release tag（必须已存在）"
+        required: true
+        default: "v0.1.113"
+      carrier_ref:
+        description: "承载 APK 数据的 git ref（分支名，上传完成前不要删）"
+        required: true
+        default: "tmp-apk-probe"
+      asset_path:
+        description: "仓库内 APK 相对路径"
+        required: true
+        default: ".release-asset/mediagate-0.1.113.apk"
+      asset_name:
+        description: "Release 资产名"
+        required: true
+        default: "mediagate-0.1.113.apk"
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout meta
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Fetch APK carrier ref
+        env:
+          CARRIER_REF: ${{ inputs.carrier_ref }}
+          ASSET_PATH: ${{ inputs.asset_path }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$CARRIER_REF"
+          git checkout FETCH_HEAD -- "$ASSET_PATH"
+          ls -l "$ASSET_PATH"
+          sha256sum "$ASSET_PATH"
+
+      - name: Upload to existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          ASSET_PATH: ${{ inputs.asset_path }}
+          ASSET_NAME: ${{ inputs.asset_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$ASSET_PATH" --clobber --name "$ASSET_NAME" --repo "$GITHUB_REPOSITORY"
+          echo "--- assets after upload ---"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[] | "\(.name) \(.size)"'
