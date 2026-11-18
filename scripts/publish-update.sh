@@ -50,8 +50,16 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+# 凭据走 curl --config 文件：token 绝不进命令行参数（否则 ps / pgrep -af 会原样打印）。
+# 文件 0600，脚本退出时 shred 删除。
+_CRED_CFG="$(mktemp "${TMPDIR:-/tmp}/mg-cred.XXXXXX")"
+umask 077
+printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$_CRED_CFG"
+trap 'shred -u "$_CRED_CFG" 2>/dev/null || rm -f "$_CRED_CFG"' EXIT INT TERM
+
+
 api() {
-  "${CURL[@]}" -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-publish" \
+  "${CURL[@]}" -K "$_CRED_CFG" -H "User-Agent: mediagate-publish" \
     -H "Accept: application/vnd.github+json" "$@"
 }
 
@@ -129,7 +137,7 @@ echo "-- 上传 $ASSET → $ASSET_URL"
 # 上传走**直连**：实测代理下 74 MB 的 POST 会卡死（curl 读完全部字节却拿不到响应），
 # 而 uploads.github.com 直连是通的（302/0.7 s）。API 调用仍然走代理。
 curl -sS --http1.1 -X POST \
-  -H "Authorization: Bearer $TOKEN" -H "User-Agent: mediagate-publish" \
+  -K "$_CRED_CFG" -H "User-Agent: mediagate-publish" \
   -H "Content-Type: application/vnd.android.package-archive" \
   -H "Expect:" \
   --data-binary @"$APK" \
