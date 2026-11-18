@@ -1,8 +1,8 @@
 {
-  "versionCode": 111,
-  "versionName": "0.1.110",
-  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.110/mediagate-0.1.110.apk",
-  "sizeBytes": 70492091,
-  "sha256": "469c3336d519181b4478f421e90380e7cc6a403d877f8586fb4e8240b87a38a3",
-  "notes": "mediagate 0.1.110（versionCode 111）"
+  "versionCode": 114,
+  "versionName": "0.1.113",
+  "apkUrl": "https://github.com/gua123/mediagate/releases/download/v0.1.113/mediagate-0.1.113.apk",
+  "sizeBytes": 70491979,
+  "sha256": "0c731414c5a4034afae41f8515caa4e841d96d7d8ec75123fdb00ec7f912c827",
+  "notes": "# 0.1.113\n\n## 修复\n\n- **SFTP 播放大文件卡死/黑屏**（三个问题一起修的）：\n  - 存储层线程池被卡住的读操作占满，导致打开文件时任务排不进去；\n  - 从远端读数据时偏移量算错——播放器请求文件尾部，拿到的却是文件开头，\n    表现为画面全黑、一直「正在缓冲」；\n  - 播放页返回后仍在后台继续播放。\n- 现在**返回键 / 左上角关闭 = 停止播放**，**按 HOME / 锁屏 = 后台播放**。\n\n## 说明\n\n- 大文件（非 faststart 的 MP4，索引在文件尾部）现在能正常起播与拖拽。\n- 新增「真实 SFTP + 回环代理」的集成测试，防止偏移类问题再次回归。\n"
 }
