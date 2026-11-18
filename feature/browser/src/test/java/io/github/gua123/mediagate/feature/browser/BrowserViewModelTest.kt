@@ -237,6 +237,86 @@ class BrowserViewModelTest {
         assertEquals("", BrowserRoutes.pathOf(null))
     }
 
+    @Test
+    fun `起点参数 startAtRoot 只在显式要求时出现在路由里`() {
+        // 2026-11-18：首页三个媒体入口 / 底部「浏览」页签都带它 ⇒ 必须从连接根目录开始；
+        // 其余来路（带 path 的返回、继续播放）保持不带，继续沿用"回到原处"的行为。
+        assertEquals("browser?startAtRoot=1", BrowserRoutes.route(startAtRoot = true))
+        assertEquals(
+            "browser?kind=VIDEO&startAtRoot=1",
+            BrowserRoutes.route(kind = MediaKind.VIDEO, startAtRoot = true),
+        )
+        assertEquals(
+            "browser?path=Movies%2F2026&startAtRoot=1",
+            BrowserRoutes.route(path = "Movies/2026", startAtRoot = true),
+        )
+        assertEquals(
+            "browser?path=a%2Fb&kind=IMAGE",
+            BrowserRoutes.route(kind = MediaKind.IMAGE, path = "a/b"),
+        )
+
+        assertTrue(BrowserRoutes.startAtRootOf("1"))
+        assertTrue("没带参数的老路由必须当作 false，行为不变", !BrowserRoutes.startAtRootOf(null))
+        assertTrue(!BrowserRoutes.startAtRootOf(""))
+        assertTrue("只认 1，别把 true/yes 这类值当开关", !BrowserRoutes.startAtRootOf("true"))
+    }
+
+    @Test
+    fun `浏览页签不复用返回栈_其余三个页签照旧保留`() {
+        // 真正的 NavHostController 活在 Android 运行时里，JVM 单测构造不出来；
+        // 这里钉住的是 :app 的 switchTopLevel 直接消费的那份决策（BrowserRoutes.topLevelNavFlags）。
+        val browser = BrowserRoutes.topLevelNavFlags(reuseState = false)
+        assertTrue(
+            "restoreState=true 会把上次 entry 连 ViewModel（上次的目录/过滤）一起恢复 —— 正是本次要修的现象",
+            !browser.restoreState,
+        )
+        assertTrue(
+            "saveState 必须保持 true：popUpTo{saveState} 保存的是『被切走的那一页』，" +
+                "关掉会连累 HOME/CONNECTIONS/SETTINGS 的切走再切回",
+            browser.saveState,
+        )
+
+        val others = BrowserRoutes.topLevelNavFlags(reuseState = true)
+        assertTrue("HOME/CONNECTIONS/SETTINGS 必须保持原行为：切走再切回保留状态", others.saveState)
+        assertTrue("HOME/CONNECTIONS/SETTINGS 必须保持原行为：切走再切回保留状态", others.restoreState)
+    }
+
+    @Test
+    fun `startAtRoot 时起点固定为连接根目录_忽略记住的目录`() = runTest(dispatcher) {
+        // 2026-11-18 修复：首页入口与「浏览」页签都传 startAtRoot=true。
+        // 修复前两边都走 rememberedStartPath()，于是页签打开的是"上次那个文件夹"，
+        // 和首页三个媒体入口渲染成同一份列表（用户反馈）。
+        val environment = FakeEnvironment()
+        environment.lastPlayedPathFlow.value = "/tv/shows/s01/e01.mp4"
+        environment.lastBrowsedPathFlow.value = "media"
+        val backend = FakeBackend(
+            mapOf(
+                "" to listOf(dir("tv"), dir("media")),
+                "tv/shows/s01" to emptyList(),
+                "media" to listOf(file("media/movie.mkv")),
+            ),
+        )
+
+        val vm = BrowserViewModel(
+            environment = environment,
+            initialPath = "",
+            initialStartAtRoot = true,
+            io = dispatcher,
+        )
+        environment.root.value = root(backend)
+        advanceUntilIdle()
+
+        assertEquals("startAtRoot=true 时起点必须是连接根目录", "", vm.state.value.path)
+        assertEquals("只列过根目录，没有按记住的目录补跳", listOf(""), backend.listed)
+
+        // 记住的目录再迟到（DataStore 异步读取）也不能把用户从根目录拽走
+        environment.lastBrowsedPathFlow.value = "tv"
+        environment.lastPlayedPathFlow.value = "/media/movie.mkv"
+        advanceUntilIdle()
+        assertEquals("", vm.state.value.path)
+        assertEquals(listOf(""), backend.listed)
+    }
+
     // ------------------------------------------------------------ 测试替身
 
     private fun root(

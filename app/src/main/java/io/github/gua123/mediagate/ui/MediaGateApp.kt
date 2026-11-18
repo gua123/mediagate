@@ -103,8 +103,11 @@ import kotlinx.coroutines.launch
  * 顶层底部导航的五个目标（M1：首页 / 浏览有真实实现，连接 / 任务 / 设置先放占位页）。
  *
  * [navRoute] 是点击时真正跳的路由；[matchRoute] 是 NavHost 注册的路由模板，
- * 两者分开是因为浏览页带查询参数（`browser?path={path}&kind={kind}`），
- * 而点击时必须跳到不带参数的形式 `browser`。
+ * 两者分开是因为浏览页带查询参数（`browser?path={path}&kind={kind}&startAtRoot={startAtRoot}`），
+ * 而点击时必须自己决定带哪些参数。
+ *
+ * **2026-11-18**：「浏览」页签的 navRoute 现在带 `startAtRoot=true` —— 页签必须**从根目录开始**，
+ * 而不是回到"上次那个文件夹"（否则和首页三个媒体入口渲染同一份列表）。
  */
 /**
  * 从播放/看图页"返回"到浏览页（**2026-10-03 用户要求**）。
@@ -128,7 +131,12 @@ private enum class TopLevelDestination(
     val icon: ImageVector,
 ) {
     HOME("home", "home", R.string.nav_home, Icons.Default.Home),
-    BROWSER(BrowserRoutes.BASE, BrowserRoutes.ROUTE, R.string.nav_browser, Icons.Default.FolderOpen),
+    BROWSER(
+        BrowserRoutes.route(startAtRoot = true),
+        BrowserRoutes.ROUTE,
+        R.string.nav_browser,
+        Icons.Default.FolderOpen,
+    ),
     CONNECTIONS("connections", "connections", R.string.nav_connections, Icons.Default.Dns),
     SETTINGS("settings", "settings", R.string.nav_settings, Icons.Default.Settings),
 }
@@ -315,7 +323,9 @@ fun MediaGateApp(
                         container = container,
                         onOpenKind = { kind: MediaKind ->
                             // 跨模块导航：路由常量由 :feature:browser 暴露，首页只拼目标
-                            navController.navigate(BrowserRoutes.route(kind = kind)) {
+                            // 首页入口与底部「浏览」页签必须落在同一个起点（连接根目录），
+                            // 否则两边都会退回到"记住上次的目录"，渲染成同一份列表。
+                            navController.navigate(BrowserRoutes.route(kind = kind, startAtRoot = true)) {
                                 launchSingleTop = true
                             }
                         },
@@ -344,6 +354,9 @@ fun MediaGateApp(
                     BrowserScreen(
                         initialPath = BrowserRoutes.pathOf(entry.arguments?.getString(BrowserRoutes.ARG_PATH)),
                         initialKind = BrowserRoutes.kindOf(entry.arguments?.getString(BrowserRoutes.ARG_KIND)),
+                        initialStartAtRoot = BrowserRoutes.startAtRootOf(
+                            entry.arguments?.getString(BrowserRoutes.ARG_START_AT_ROOT),
+                        ),
                         onOpenEntry = { clicked ->
                             // R1：图片进查看器（M1-F）、音频进音频播放页（M1-G）、
                             // 视频进视频播放页（M2-B）；其余类型给一句中文提示
@@ -667,14 +680,32 @@ private fun HomeRoute(
     onOpenLastPlayed: (String) -> Unit,
     onOpenConnections: () -> Unit,
 ) {
-    val config by container.rootConfig.collectAsStateWithLifecycle()
+    // **2026-11-18 同源修复**：浏览页只认 container.root（远端优先，其次本地），首页原来只读本地
+    // rootConfig，两页对"现在生效的是哪个根目录 / 是否已配置"可能给出不同答案。首页改用同一个 StateFlow。
+    val browserRoot by container.root.collectAsStateWithLifecycle()
+    // 远端根目录的 mode 恒为 NONE（AppContainer 里 installRemoteRoot 的注释：远端不是"本地根目录模式"，
+    // 这个 NONE 只影响首页这张本地卡片），它没有 SAF / 全盘之分可报。所以：
+    // - 生效的是本地根目录（或压根没有根目录）⇒ 直接用 root 的 mode / displayPath；
+    // - 生效的是远端 ⇒ 本地这张卡描述的是"后台保留"的那份本地目录，仍按 rootConfig 展示，
+    //   远端本身由 remoteLabel 那条分支交代（否则本地卡会显示成"未选择"＋远端路径）。
+    val localConfig by container.rootConfig.collectAsStateWithLifecycle()
+    val effectiveRoot = browserRoot
+    val remoteActiveRoot = effectiveRoot != null && effectiveRoot.mode == RootModeKind.NONE
     val allFilesGranted by container.allFilesGranted.collectAsStateWithLifecycle()
     val remoteLabel by container.remoteRootLabel.collectAsStateWithLifecycle()
     val lastPlayed by container.lastPlayedPathFlow.collectAsStateWithLifecycle()
     HomeScreen(
         root = HomeRootUi(
-            mode = config?.mode ?: RootModeKind.NONE,
-            displayPath = config?.display.orEmpty(),
+            mode = if (remoteActiveRoot) {
+                localConfig?.mode ?: RootModeKind.NONE
+            } else {
+                effectiveRoot?.mode ?: RootModeKind.NONE
+            },
+            displayPath = if (remoteActiveRoot) {
+                localConfig?.display.orEmpty()
+            } else {
+                effectiveRoot?.displayPath.orEmpty()
+            },
             allFilesGranted = allFilesGranted,
             remoteLabel = remoteLabel,
         ),
@@ -909,11 +940,19 @@ private fun SettingsRoute(
     )
 }
 
-/** 底部导航切换：标准的 saveState / restoreState 组合，切走再切回保留各自的滚动与路径。 */
+/**
+ * 底部导航切换的 saveState / restoreState 组合。
+ *
+ * 原本四个页签一律「切走再切回保留各自的滚动与路径」；**2026-11-18 起「浏览」页签例外**：
+ * 复用返回栈会把上次 entry 连同 ViewModel（上次的目录、上次的类型过滤）一起恢复，
+ * 于是首页三个媒体入口与页签渲染出同一份"上次的"列表。浏览页每次从干净的一页开始（起点由
+ * [BrowserRoutes.route] 的 `startAtRoot` 决定 = 连接根目录），其余三个页签行为不变。
+ */
 private fun NavHostController.switchTopLevel(destination: TopLevelDestination) {
+    val flags = BrowserRoutes.topLevelNavFlags(reuseState = destination != TopLevelDestination.BROWSER)
     navigate(destination.navRoute) {
-        popUpTo(graph.findStartDestination().id) { saveState = true }
+        popUpTo(graph.findStartDestination().id) { saveState = flags.saveState }
         launchSingleTop = true
-        restoreState = true
+        restoreState = flags.restoreState
     }
 }

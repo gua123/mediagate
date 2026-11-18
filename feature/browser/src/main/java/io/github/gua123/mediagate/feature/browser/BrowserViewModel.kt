@@ -37,12 +37,15 @@ import io.github.gua123.mediagate.data.storage.api.StorageException
  * @param environment 宿主能力（根目录 + 缩略图仓库），见 [BrowserEnvironment]。
  * @param initialPath 进入时展示的目录（来自路由参数，缺省根目录）。
  * @param initialFilter 进入时的类型过滤（首页「视频/音乐/图片」卡片带入，可清除）。
+ * @param initialStartAtRoot **true = 起点固定为连接根目录**（首页三个媒体入口 / 底部「浏览」页签），
+ *   不再走 [rememberedStartPath] 的推断；false = 保持原行为（从上次播放/浏览的目录起）。
  * @param io 列目录所用的调度器；单测注入测试调度器。
  */
 class BrowserViewModel(
     private val environment: BrowserEnvironment,
     private val initialPath: String = "",
     initialFilter: MediaKind? = null,
+    private val initialStartAtRoot: Boolean = false,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
@@ -52,8 +55,12 @@ class BrowserViewModel(
      * **2026-10-03 用户要求**：「在重新打开软件时，如果网络通畅，自动打开到最后一次播放的文件夹」
      * ⇒ 路由没带路径（＝从底部导航进来的）时，退回"**最后一次播放文件所在的那个文件夹**"；
      * 谁都没有记录才回根目录。网络不通时照旧由根目录装载流程给出中文错误与重试。
+     *
+     * **2026-11-18**：路由显式要求从根目录开始（`startAtRoot=true`）时，这条推断一律不生效 ——
+     * 首页三个媒体入口和底部「浏览」页签都带这个标记，否则两边都会落到"上次那个文件夹"上，
+     * 渲染成同一份列表（用户反馈的现象）。显式路径（带 path 的来路）仍然优先，与 startAtRoot 不冲突。
      */
-    private val startPath: String = initialPath.ifBlank {
+    private val startPath: String = if (initialStartAtRoot) "" else initialPath.ifBlank {
         rememberedStartPath()
     }
 
@@ -98,8 +105,9 @@ class BrowserViewModel(
         }
         // **2026-10-03 真机修复**：记住的目录是**异步**从 DataStore 读出来的，
         // 冷启动时构造这个 VM 那一刻往往还是空 ⇒ 先按根目录渲染，等它到了再"补跳"一次。
-        // 只在用户还没自己进过任何目录（path 仍为空）且路由没指定路径时才跳，绝不打断用户。
-        if (initialPath.isBlank()) {
+        // 只在用户还没自己进过任何目录（path 仍为空）、路由没指定路径、且**没要求固定从根开始**时才跳，
+        // 绝不打断用户，也绝不把 startAtRoot 的页面从根目录拽走（2026-11-18）。
+        if (initialPath.isBlank() && !initialStartAtRoot) {
             viewModelScope.launch {
                 environment.lastPlayedPathFlow.collect { played ->
                     val dir = BrowserPaths.parentOf(played.orEmpty()).orEmpty()
@@ -183,8 +191,10 @@ class BrowserViewModel(
             // 首帧：远端连接不能套用本地记住的目录（2026-11-15 用户反馈：
             // 切到 LAN 后路径变成 "本地视频文件夹/..."）。远端只认路由显式带来的路径，
             // 没带就回根目录；本地仍按记住的起始目录恢复。
-            awaitingFirstRoot && root.mode == RootModeKind.NONE -> initialPath
-            // 首帧用**算好的**起始目录（曾经这里写成 initialPath ⇒ 路由没带路径时永远回根目录）
+            awaitingFirstRoot && root.mode == RootModeKind.NONE ->
+                if (initialStartAtRoot) "" else initialPath
+            // 首帧用**算好的**起始目录（曾经这里写成 initialPath ⇒ 路由没带路径时永远回根目录）；
+            // startAtRoot=true 时 startPath 就是 ""（连接根目录），不受记住的目录影响。
             awaitingFirstRoot -> startPath
             sameBackend || sameConnection -> _state.value.path
             else -> ""

@@ -102,6 +102,8 @@ import io.github.gua123.mediagate.data.storage.api.StorageBackend
  *
  * @param initialPath 进入时展示的目录（相对根目录，来自路由参数）。
  * @param initialKind 进入时的类型过滤（首页入口卡片带入）。
+ * @param initialStartAtRoot **true = 固定从连接根目录开始**（首页三个媒体入口 / 底部「浏览」页签），
+ *   不再推断"上次浏览/播放的目录"。
  * @param onOpenEntry 打开文件的回调；**为 null 时本页只弹「开发中」提示**，绝不空白或崩溃
  *   （视频/音频播放 M2、图片查看器 M1-F 接入后由 :app 传回调接管）。
  * @param onRequestRootAccess 未选根目录 / 无权限时点「去授权」的回调（:app 拉起目录选择器）。
@@ -112,6 +114,7 @@ fun BrowserScreen(
     modifier: Modifier = Modifier,
     initialPath: String = "",
     initialKind: MediaKind? = null,
+    initialStartAtRoot: Boolean = false,
     onOpenEntry: ((RemoteEntry) -> Unit)? = null,
     /**
      * **长按一行**（2026-10-15 用户要求：「缓存这里增加手动批量多个文件的缓存方式，
@@ -127,7 +130,12 @@ fun BrowserScreen(
 ) {
     val environment = LocalBrowserEnvironment.current
     val viewModel: BrowserViewModel = viewModel {
-        BrowserViewModel(environment = environment, initialPath = initialPath, initialFilter = initialKind)
+        BrowserViewModel(
+            environment = environment,
+            initialPath = initialPath,
+            initialFilter = initialKind,
+            initialStartAtRoot = initialStartAtRoot,
+        )
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val root by environment.root.collectAsStateWithLifecycle()

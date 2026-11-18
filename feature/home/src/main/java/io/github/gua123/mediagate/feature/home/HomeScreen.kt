@@ -42,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.feature.browser.RootModeKind
 
@@ -90,8 +91,10 @@ fun HomeScreen(
         Spacer(Modifier.height(24.dp))
         Text(
             text = stringResource(R.string.home_section_media),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 0.1.sp,
         )
         Spacer(Modifier.height(8.dp))
         Card(modifier = Modifier.fillMaxWidth()) {
@@ -154,6 +157,7 @@ private fun ContinueCard(path: String, onClick: () -> Unit) {
                 Text(
                     text = path.substringAfterLast('/'),
                     style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -195,7 +199,7 @@ private fun MediaEntryRow(
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 text = description,
                 style = MaterialTheme.typography.bodySmall,

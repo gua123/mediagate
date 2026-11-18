@@ -72,6 +72,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.gua123.mediagate.core.network.AddressLabel
@@ -240,6 +241,7 @@ private fun ConnectionsSectionHeader(title: String) {
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.primary,
+        letterSpacing = 0.1.sp,
         modifier = Modifier.padding(top = 4.dp),
     )
 }
@@ -260,7 +262,11 @@ private fun LocalRootCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.connections_local_title), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = stringResource(R.string.connections_local_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
@@ -357,7 +363,11 @@ private fun SummaryCard(summary: TestAllSummary) {
         ),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(stringResource(R.string.connections_summary_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                text = stringResource(R.string.connections_summary_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
             Spacer(modifier = Modifier.height(4.dp))
             Text(summary.summaryLine, style = MaterialTheme.typography.bodyMedium)
             if (!summary.allOk) {

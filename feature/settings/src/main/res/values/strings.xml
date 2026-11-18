@@ -9,11 +9,12 @@
     <string name="settings_current_connection">当前连接</string>
     <string name="settings_current_value">%1$s（%2$s）</string>
     <string name="settings_current_primary">当前网络首选地址：%1$s</string>
-    <string name="settings_current_none">还没有指定连接：正在使用首页选择的本地根目录。到连接页新建一个并「设为当前连接」，即可浏览 WebDAV 等远端媒体。</string>
-    <string name="settings_current_not_browsable">当前连接的协议标识认不出：浏览与播放会退回本地根目录，请到连接页重新选协议。</string>
+    <string name="settings_current_none">还没有指定连接，当前用首页选择的本地目录。到连接页「设为当前连接」即可浏览 WebDAV 等远端媒体。</string>
+    <string name="settings_current_not_browsable">协议标识认不出：浏览与播放会退回本地目录，请到连接页重选协议。</string>
     <string name="settings_open_connections">去连接管理页</string>
-
-    <string name="settings_network_policy">网络切换策略</string>
+    <!-- 选路判定依据（排障信息）：默认收起，2026-11-18 精简 -->
+    <string name="settings_current_reason_show">为什么用这个地址</string>
+    <string name="settings_current_reason_hide">收起选路依据</string>
 
     <!-- 分组（R21 设置页信息架构：2026-10-15 用户要求「优化一下设置页面的信息排列等」） -->
     <string name="settings_group_connection">连接</string>
@@ -22,12 +23,12 @@
     <string name="settings_group_update">更新</string>
     <string name="settings_group_security">安全与凭据</string>
     <string name="settings_group_diagnostics">诊断与日志</string>
-    <string name="settings_group_subtitle_connection">当前用哪个连接、去哪儿改</string>
-    <string name="settings_group_subtitle_playback">画中画、控件自动隐藏、后台保活</string>
-    <string name="settings_group_subtitle_network">预读 / 段大小 / 缓存上限与已用量</string>
-    <string name="settings_group_subtitle_update">检查更新、下载与安装</string>
-    <string name="settings_group_subtitle_security">SFTP 主机密钥与凭据口径</string>
-    <string name="settings_group_subtitle_diagnostics">崩溃报告、自研引擎自检、最近播放指标（排障用）</string>
+    <string name="settings_group_subtitle_connection">当前连接与入口</string>
+    <string name="settings_group_subtitle_playback">画中画、保活与自动隐藏</string>
+    <string name="settings_group_subtitle_network">缓存上限、预读与段大小</string>
+    <string name="settings_group_subtitle_update">检查更新与安装</string>
+    <string name="settings_group_subtitle_security">SFTP 主机密钥</string>
+    <string name="settings_group_subtitle_diagnostics">崩溃报告与播放指标</string>
     <string name="settings_group_expand">展开</string>
     <string name="settings_group_collapse">收起</string>
     <string name="settings_notes_title">说明</string>
@@ -37,7 +38,7 @@
     <!-- 后台与保活（M8-A / R18：澎湃 OS 首次运行引导） -->
     <string name="settings_keep_alive">后台与保活</string>
     <string name="settings_keep_alive_summary">已就绪 %1$d / %2$d 项</string>
-    <string name="settings_keep_alive_hint">澎湃 OS 会限制后台应用。下面几项就绪后，切后台 / 息屏播放与批量字幕生成才不会被系统掐断；每项状态能查的自动查，查不到的请你手动确认。</string>
+    <string name="settings_keep_alive_hint">澎湃 OS 会限制后台应用。下面几项就绪后，切后台 / 息屏播放才不会被系统掐断；查不到状态的请你手动确认。</string>
     <string name="settings_keep_alive_all_ready">四项都已就绪，可以放心后台播放。</string>
     <string name="settings_keep_alive_show">查看 %1$d 项</string>
     <string name="settings_keep_alive_hide">收起详情</string>

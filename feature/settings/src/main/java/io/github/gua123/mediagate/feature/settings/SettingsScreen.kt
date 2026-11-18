@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.gua123.mediagate.feature.settings.R
 
 /**
@@ -62,7 +63,7 @@ fun SettingsScreen(
     onKeepAliveAction: (KeepAliveAction) -> Unit = {},
     onKeepAliveConfirm: (KeepAliveItemKind, Boolean) -> Unit = { _, _ -> },
     /**
-     * 各分组的内容插槽（由 :app 注入：播放 / 网络与缓冲 / 更新 / 主机密钥 / 诊断）——
+     * 各分组的内容插槽（由 :app 注入：播放 / 网络与缓存 / 更新 / 主机密钥 / 诊断）——
      * 让 :feature:settings 不必反向依赖那些模块，插槽里的内容仍遵守"组合函数零 IO"。
      *
      * **R21（2026-10-15）**：从"整体追加在最后"改成**按分组归位**；没给内容的分组不渲染空卡片。
@@ -155,9 +156,10 @@ private fun SettingsGroupHeader(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = stringResource(group.titleRes),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary,
+                letterSpacing = 0.1.sp,
             )
             Text(
                 text = stringResource(group.subtitleRes),
@@ -183,8 +185,8 @@ private fun NotesBlock(notes: List<SettingsNote>) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
                 text = stringResource(R.string.settings_notes_title),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
             )
             notes.forEach { note ->
                 Spacer(modifier = Modifier.height(10.dp))
@@ -199,12 +201,19 @@ private fun NotesBlock(notes: List<SettingsNote>) {
     }
 }
 
-/** 「当前连接」卡片（**R8**）：显示当前连接与首选地址，并可跳到连接管理页。 */
+/**
+ * 「当前连接」卡片（**R8**）：显示当前连接与首选地址，并可跳到连接管理页。
+ *
+ * **2026-11-18 精简**：常显只留三样——**用的哪条连接、当前首选地址、去哪儿改**；
+ * 「选路判定依据」（哪条规则选中了这个地址）是排障信息，收进「为什么用这个地址」折叠区，
+ * 默认收起。协议认不出的错误提示仍然常显（那是要用户动手的）。
+ */
 @Composable
 private fun ConnectionCard(
     connection: SettingsConnectionUi,
     onOpenConnections: () -> Unit,
 ) {
+    var showSelectionReason by rememberSaveable { mutableStateOf(false) }
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
             Text(
@@ -229,12 +238,26 @@ private fun ConnectionCard(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
+                // 选路依据（排障用）：折叠，默认不占版面
                 connection.selectionReason?.let { reason ->
-                    Text(
-                        text = reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    TextButton(onClick = { showSelectionReason = !showSelectionReason }) {
+                        Text(
+                            stringResource(
+                                if (showSelectionReason) {
+                                    R.string.settings_current_reason_hide
+                                } else {
+                                    R.string.settings_current_reason_show
+                                },
+                            ),
+                        )
+                    }
+                    if (showSelectionReason) {
+                        Text(
+                            text = reason,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 if (!connection.browsable) {
                     Text(
