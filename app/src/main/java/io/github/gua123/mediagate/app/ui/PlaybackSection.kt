@@ -32,7 +32,7 @@ fun PlaybackSection(
     bufferSeconds: Int,
     onBufferSeconds: (Int) -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = "播放", style = MaterialTheme.typography.titleMedium)
             Row(

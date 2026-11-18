@@ -86,7 +86,7 @@ fun NetworkTuningSection(
 
             // ---------------- 缓存上限（2026-10-03 用户要求：GB 档位 + **可以自己输入一个值**）
             Text(
-                text = "缓存上限：**" + labelOfGb(tuning.maxBytes) + "**（下次连接生效）",
+                text = "缓存上限：" + labelOfGb(tuning.maxBytes) + "（下次连接生效）",
                 style = MaterialTheme.typography.bodyMedium,
             )
             if (tuning.maxBytes <= 0L) {

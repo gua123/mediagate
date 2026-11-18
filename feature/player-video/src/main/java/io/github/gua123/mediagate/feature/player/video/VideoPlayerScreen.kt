@@ -129,7 +129,7 @@ import io.github.gua123.mediagate.media.engine.EngineKind
 // 控制层自动隐藏的秒数改成用户可配置（见 ControlsAutoHide 与设置 → 播放）
 
 /** 控制层压在画面上的深色底（半透明，保证白色文字在任何画面上都可读）。 */
-private val CONTROL_SCRIM = Color.Black.copy(alpha = 0.45f)
+private val CONTROL_SCRIM = Color.Black.copy(alpha = 0.6f)
 
 /**
  * 视频播放页（R1 视频 / R4 拖拽 / R9 多内核 / R10 硬软解 / R16 全中文）。
@@ -615,7 +615,7 @@ private fun PipBadge(modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.labelSmall,
         modifier = modifier
             .padding(6.dp)
-            .background(CONTROL_SCRIM, RoundedCornerShape(4.dp))
+            .background(CONTROL_SCRIM, RoundedCornerShape(12.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
@@ -647,7 +647,7 @@ private fun SeekGestureHud(
 ) {
     Column(
         modifier = modifier
-            .background(CONTROL_SCRIM, RoundedCornerShape(8.dp))
+            .background(CONTROL_SCRIM, RoundedCornerShape(12.dp))
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),

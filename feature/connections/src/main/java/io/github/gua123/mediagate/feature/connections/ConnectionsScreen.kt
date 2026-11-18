@@ -43,6 +43,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -1010,7 +1011,10 @@ private fun AddressEditor(
  *
  * M3 配色里没有"成功色"，这里给一个对比度足够的深绿；失败仍用 `colorScheme.error`。
  */
-private val ConnectionResultPassed = Color(0xFF1B5E20)
+// 深绿在浅色主题下可读（7.68:1），但深色主题下只有 2.18:1；用 lightColorScheme 的 tertiary
+// 或直接用 primary 都更稳。这里改成「浅色用深绿、深色用浅绿」的自适应取值。
+private val ConnectionResultPassed: Color
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF7ED89A) else Color(0xFF1B5E20)
 
 /** 内部存储的标准路径（「使用内部存储」一键填它，配合「所有文件访问」权限使用）。 */
 private const val INTERNAL_STORAGE_PATH = "/storage/emulated/0"

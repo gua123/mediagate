@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -149,7 +150,7 @@ private fun ViewerTopBar(state: ViewerUiState, rootLabel: String, onBack: () -> 
             }
         },
         navigationIcon = {
-            TextButton(onClick = onBack) {
+            TextButton(onClick = onBack, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
                 Text(text = stringResource(R.string.viewer_back))
             }
         },
@@ -172,7 +173,7 @@ private fun ViewerPageBar(state: ViewerUiState, onPrev: () -> Unit, onNext: () -
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        TextButton(onClick = onPrev, enabled = state.canGoPrev) {
+        TextButton(onClick = onPrev, enabled = state.canGoPrev, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
             Text(text = stringResource(R.string.viewer_prev))
         }
         Text(
@@ -180,7 +181,7 @@ private fun ViewerPageBar(state: ViewerUiState, onPrev: () -> Unit, onNext: () -
             color = Color.White,
             style = MaterialTheme.typography.labelLarge,
         )
-        TextButton(onClick = onNext, enabled = state.canGoNext) {
+        TextButton(onClick = onNext, enabled = state.canGoNext, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
             Text(text = stringResource(R.string.viewer_next))
         }
     }

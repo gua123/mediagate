@@ -265,7 +265,7 @@ private fun BreadcrumbRow(crumbs: List<BrowserCrumb>, onCrumbClick: (BrowserCrum
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .clickable { onCrumbClick(crumb) }
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 12.dp),
             )
         }
     }
