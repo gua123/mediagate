@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.app
 
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -190,7 +191,7 @@ class CacheQueueController(
             val ok = runCatching { downloadSegment(task.path, offset, length) }
             if (ok.isFailure) {
                 val error = ok.exceptionOrNull()
-                AppLog.w(TAG, "缓存开头失败：" + task.path, error)
+                AppLog.w(TAG, "缓存开头失败：" + redactPath(task.path), error)
                 update(task.path) {
                     it.copy(
                         status = CacheTaskStatus.FAILED,

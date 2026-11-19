@@ -5,7 +5,7 @@ import java.util.*;
 /** 单通道块大小敏感性：同一文件、同一通道，用不同 read 缓冲大小量吞吐。 */
 public class SftpChunk {
     static Properties cfg;
-    static final String PATH = "/share/videos/Akari25_3_8【実写LIVE】巨乳アイドルに甘々に耳舐めされる♡ASMR♡.mp4";
+    static final String PATH = "/share/videos/demo-sample.mp4";
 
     public static void main(String[] a) throws Exception {
         cfg = new Properties();

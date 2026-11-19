@@ -8,6 +8,9 @@ import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
+import io.github.gua123.mediagate.core.common.redactEndpoint
+import io.github.gua123.mediagate.core.common.redactHost
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -227,7 +230,7 @@ class FtpStorageBackend(val config: FtpConfig) : StorageBackend {
                     return@withContext report(false, e.message, dnsMs, connectMs, elapsedMs(started))
                 }
                 val total = elapsedMs(started)
-                AppLog.d(TAG_FTP, "probe 成功：" + config.host + ":" + config.port + " total=" + total + "ms")
+                AppLog.d(TAG_FTP, "probe 成功：" + redactEndpoint(config.host, config.port) + " total=" + total + "ms")
                 report(ok = true, message = null, dnsMs = dnsMs, connectMs = connectMs, totalMs = total)
             } catch (e: IOException) {
                 val mapped = classifyIoFailure(e, config)
@@ -279,7 +282,7 @@ class FtpStorageBackend(val config: FtpConfig) : StorageBackend {
             val code = client.replyCode
             if (isCommandUnsupported(code)) {
                 if (mlsdSupport.compareAndSet(Capability.UNKNOWN, Capability.UNSUPPORTED)) {
-                    AppLog.i(TAG_FTP, "服务器不支持 MLSD（" + code + "），改用 LIST：" + config.host)
+                    AppLog.i(TAG_FTP, "服务器不支持 MLSD（" + code + "），改用 LIST：" + redactHost(config.host))
                 }
             } else {
                 throw classifyReply(client, config, abs)
@@ -309,7 +312,7 @@ class FtpStorageBackend(val config: FtpConfig) : StorageBackend {
     /** 服务器拒绝 REST：降级 caps，上层改走分段缓存（plan 4.1）。 */
     private fun markRestUnsupported(path: String) {
         if (restSupport.compareAndSet(Capability.UNKNOWN, Capability.UNSUPPORTED)) {
-            AppLog.w(TAG_FTP, "服务器不支持 REST，随机读降级为顺序跳过（上层应走分段缓存）：" + path)
+            AppLog.w(TAG_FTP, "服务器不支持 REST，随机读降级为顺序跳过（上层应走分段缓存）：" + redactPath(path))
         }
     }
 
@@ -324,7 +327,7 @@ class FtpStorageBackend(val config: FtpConfig) : StorageBackend {
         val supported = FTPReply.isPositiveIntermediate(restReply)
         restSupport.compareAndSet(Capability.UNKNOWN, if (supported) Capability.SUPPORTED else Capability.UNSUPPORTED)
         if (!supported) {
-            AppLog.i(TAG_FTP, "服务器不支持 REST（应答 " + restReply + "），随机读将降级：" + config.host)
+            AppLog.i(TAG_FTP, "服务器不支持 REST（应答 " + restReply + "），随机读将降级：" + redactHost(config.host))
         }
     }
 

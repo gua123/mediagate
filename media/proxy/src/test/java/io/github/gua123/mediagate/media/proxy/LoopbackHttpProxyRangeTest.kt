@@ -121,7 +121,7 @@ class LoopbackHttpProxyRangeTest {
 
     @Test
     fun token形态地址可播放特殊字符路径() {
-        val url = URL(proxy.playUrlSafe("fake", "目录/#Akari 2024.8.3.mp4"))
+        val url = URL(proxy.playUrlSafe("fake", "目录/#demo 2024.8.3.mp4"))
         val c = url.openConnection() as HttpURLConnection
         c.setRequestProperty("Range", "bytes=0-99")
         assertEquals(206, c.responseCode)

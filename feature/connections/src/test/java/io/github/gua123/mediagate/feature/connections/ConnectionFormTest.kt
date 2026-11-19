@@ -234,7 +234,7 @@ class ConnectionFormTest {
             passwordErrors.errorOf(FormField.PASSWORD).orEmpty().contains("全角"),
         )
 
-        val userErrors = ConnectionFormValidator.validate(base.copy(username = "ｈｍｌ"))
+        val userErrors = ConnectionFormValidator.validate(base.copy(username = "ｄｅｍｏ"))
         assertTrue(
             "账号也要点名：${userErrors.errorOf(FormField.USERNAME)}",
             userErrors.errorOf(FormField.USERNAME).orEmpty().contains("全角"),

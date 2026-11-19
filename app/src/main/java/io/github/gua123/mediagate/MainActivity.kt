@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
      * 只接受当前后端能解析的恢复请求。
      *
      * 真实故障：播放中切回本地目录后，通知栏还带着远端路径；回到前台时拿
-     * `local-file:/storage/emulated/0` 去读 `home/nas1/...`，代理直接 404。
+     * `local-file:/storage/emulated/0` 去读 `share/...`，代理直接 404。
      * 带 backendId 的请求必须和当前后端一致；调试入口不带 backendId 时保持兼容。
      */
     private fun acceptedDebugOpen(container: AppContainer, request: DebugOpenRequest?): DebugOpenRequest? {

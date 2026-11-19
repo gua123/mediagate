@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 
 /**
  * 音频后台播放服务（R18：切后台 / 息屏不中断，通知栏、锁屏、耳机键可控）。
@@ -195,7 +196,8 @@ class AudioPlaybackService : MediaSessionService() {
         val snapshot = currentSnapshot() ?: return
         scope.launch {
             runCatching { store.save(snapshot) }
-                .onFailure { AppLog.w(TAG, "写断点失败：" + snapshot.path, it) }
+                // 2026-11-18 日志脱敏：断点里的 path 是远端完整路径，日志只留末段目录 + 文件名前 6 字符
+                .onFailure { AppLog.w(TAG, "写断点失败：" + redactPath(snapshot.path), it) }
         }
     }
 
@@ -212,7 +214,7 @@ class AudioPlaybackService : MediaSessionService() {
             runBlocking {
                 withTimeoutOrNull(BLOCKING_SAVE_TIMEOUT_MS) { store.save(snapshot) }
             }
-        }.onFailure { AppLog.w(TAG, "退出时写断点失败：" + snapshot.path, it) }
+        }.onFailure { AppLog.w(TAG, "退出时写断点失败：" + redactPath(snapshot.path), it) }
     }
 
     /** 当前曲目的断点快照；没有在播的曲目时返回 null。 */
@@ -246,7 +248,7 @@ class AudioPlaybackService : MediaSessionService() {
                 saved.positionMs
             }
             current.seekTo(target)
-            AppLog.i(TAG, "断点续播：$path @${target}ms")
+            AppLog.i(TAG, "断点续播：" + redactPath(path) + " @${target}ms")
         }
     }
 

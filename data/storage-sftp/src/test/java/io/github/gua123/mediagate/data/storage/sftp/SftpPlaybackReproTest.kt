@@ -35,7 +35,8 @@ class SftpPlaybackReproTest {
             TofuHostKeyVerifier(InMemoryKnownHostsStore(), SftpHostKeyPolicy.TOFU),
         )
         val backend = TimeoutStorageBackend(sftp)
-        val path = "share/videos/demo-sample.mp4"
+        // 真实路径只从 .toolchain/real-server.properties 读（repro.path），源码里只留示例值
+        val path = p.getProperty("repro.path", "share/videos/demo-sample.mp4")
         try {
             val t0 = System.currentTimeMillis()
             val stream = withTimeout(25_000) { backend.openRead(path, 0L, 4L * 1024 * 1024) }

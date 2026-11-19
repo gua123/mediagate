@@ -30,6 +30,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactForLog
+import io.github.gua123.mediagate.core.common.redactPath
+import io.github.gua123.mediagate.core.common.redactUrl
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.core.common.ErrorText
@@ -310,14 +313,14 @@ class AppContainer(context: Context) :
                 val size = cache.knownSizeOf(path)
                 val chunks = PrefetchTargets.openPlan(size, segment, positionMs, durationMs)
                 if (chunks.isEmpty()) return@runCatching
-                AppLog.i(TAG, "点按预取 " + chunks.size + " 段：" + path)
+                AppLog.i(TAG, "点按预取 " + chunks.size + " 段：" + redactPath(path))
                 chunks.forEach { chunk ->
                     launch {
                         runCatching { cache.prefetch(path, chunk.offset, chunk.length) }
-                            .onFailure { AppLog.w(TAG, "点按预取失败（不影响播放）：" + path, it) }
+                            .onFailure { AppLog.w(TAG, "点按预取失败（不影响播放）：" + redactPath(path), it) }
                     }
                 }
-            }.onFailure { AppLog.w(TAG, "点按预取准备失败（不影响播放）：" + path, it) }
+            }.onFailure { AppLog.w(TAG, "点按预取准备失败（不影响播放）：" + redactPath(path), it) }
         }
     }
 
@@ -438,7 +441,9 @@ class AppContainer(context: Context) :
         TofuHostKeyVerifier(
             store = knownHosts,
             policy = SftpHostKeyPolicy.TOFU,
-            onChange = { event -> AppLog.w(TAG, event.message) },
+            // 2026-11-18 日志脱敏（第二批）：告警文案带「主机:端口」与两枚指纹——指纹是核对依据要留，
+            // 主机只留网段。界面/通知用的 event.message 本身不改。
+            onChange = { event -> AppLog.w(TAG, redactForLog(event.message, event.host)) },
         )
     }
 
@@ -546,11 +551,11 @@ class AppContainer(context: Context) :
                 length = headBytes,
                 concurrency = PREFETCH_CONCURRENCY,
             )
-        }.onFailure { AppLog.w(TAG, "打开文件夹预热（头部）失败，不影响播放：" + path, it) }
+        }.onFailure { AppLog.w(TAG, "打开文件夹预热（头部）失败，不影响播放：" + redactPath(path), it) }
         val size = runCatching { cache.knownSizeOf(path) }.getOrNull() ?: return
         val tail = PrefetchTargets.tailOffset(size, segment, headBytes) ?: return
         runCatching { cache.prefetch(path, tail, segment) }
-            .onFailure { AppLog.w(TAG, "打开文件夹预热（尾段）失败，不影响播放：" + path, it) }
+            .onFailure { AppLog.w(TAG, "打开文件夹预热（尾段）失败，不影响播放：" + redactPath(path), it) }
     }
 
     override val thumbnails: ThumbnailRepository by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -1021,7 +1026,7 @@ class AppContainer(context: Context) :
                 throw e
             } catch (t: Throwable) {
                 runCatching { outFile.delete() }
-                AppLog.w(TAG, "时间戳重建失败：" + path, t)
+                AppLog.w(TAG, "时间戳重建失败：" + redactPath(path), t)
                 TimestampRepairOutcome.Failed(ErrorText.of(t, "时间戳重建失败"))
             }
         }
@@ -1165,7 +1170,7 @@ class AppContainer(context: Context) :
                             warmUpForOpen(next.path)
                         }
                     }
-                }.onFailure { AppLog.w(TAG, "滑窗预取失败（不影响播放）：" + path, it) }
+                }.onFailure { AppLog.w(TAG, "滑窗预取失败（不影响播放）：" + redactPath(path), it) }
             }
         }
 
@@ -1856,8 +1861,8 @@ class AppContainer(context: Context) :
         if (choice.usedFallback) {
             AppLog.i(
                 TAG,
-                "先内网后外网：连接 " + record.name + " 的首选 " + primary.display +
-                    " 不通，已自动改用 " + chosen.display,
+                "先内网后外网：连接 " + record.name + " 的首选 " + redactUrl(primary.display) +
+                    " 不通，已自动改用 " + redactUrl(chosen.display),
             )
         }
         return chosen
@@ -1926,7 +1931,7 @@ class AppContainer(context: Context) :
                 },
             )
         }.onFailure { t ->
-            AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + address.display, t)
+            AppLog.w(TAG, "构造 " + protocolText + " 后端失败：" + record.name + " → " + redactUrl(address.display), t)
             _remoteNotice.value = "连接「" + record.name + "」切不过去：" + friendlyReason(t) + "（仍在使用本地根目录）"
         }.getOrNull()
 
@@ -2102,7 +2107,7 @@ class AppContainer(context: Context) :
         val report = runCatching { root.backend.probe() }.getOrNull() ?: return
         AppLog.i(
             TAG,
-            "根目录自检 mode=${root.mode} path=${root.displayPath} ok=${report.ok} ${report.message.orEmpty()}",
+            "根目录自检 mode=${root.mode} path=${redactPath(root.displayPath)} ok=${report.ok} ${report.message.orEmpty()}",
         )
     }
 

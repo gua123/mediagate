@@ -15,7 +15,7 @@ import org.junit.Test
 class CacheDetailTextTest {
 
     private fun entry(
-        path: String? = "home/nas1/电影/a.mp4",
+        path: String? = "share/videos/a.mp4",
         bytes: Long = 8L * 1024 * 1024,
         segments: Int = 2,
         total: Long? = 100L * 1024 * 1024,

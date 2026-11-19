@@ -2,6 +2,8 @@
 package io.github.gua123.mediagate.data.storage.api
 
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
+import io.github.gua123.mediagate.core.common.redactUrl
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -66,17 +68,18 @@ class TimeoutStorageBackend(
     )
 
     override suspend fun list(dir: String, page: Page?): List<RemoteEntry> =
-        guard("列目录 " + dir) { delegate.list(dir, page) }
+        guard("列目录 " + dir, "列目录 " + redactPath(dir)) { delegate.list(dir, page) }
 
-    override suspend fun stat(path: String): RemoteEntry = guard("取属性 " + path) { delegate.stat(path) }
+    override suspend fun stat(path: String): RemoteEntry =
+        guard("取属性 " + path, "取属性 " + redactPath(path)) { delegate.stat(path) }
 
     override suspend fun write(path: String, data: InputStream): Unit =
-        guard("写入 " + path) { delegate.write(path, data) }
+        guard("写入 " + path, "写入 " + redactPath(path)) { delegate.write(path, data) }
 
-    override suspend fun probe(): ProbeReport = guard("探测 " + id) { delegate.probe() }
+    override suspend fun probe(): ProbeReport = guard("探测 " + id, "探测 " + redactUrl(id)) { delegate.probe() }
 
     override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
-        val stream = guard("打开 " + path) { delegate.openRead(path, offset, length) }
+        val stream = guard("打开 " + path, "打开 " + redactPath(path)) { delegate.openRead(path, offset, length) }
         return TimeoutRangeStream(stream, readTimeoutMs, hardDeadlineScope)
     }
 
@@ -87,9 +90,13 @@ class TimeoutStorageBackend(
         delegate.close()
     }
 
-    private suspend fun <T> guard(what: String, block: suspend () -> T): T =
+    /**
+     * @param what 完整文案（会进 [StorageException.Timeout] 的消息 → 界面用它，路径照旧，用户看自己的屏幕）
+     * @param logText 日志文案（2026-11-18 日志脱敏：只有它进 AppLog 与崩溃报告的环形缓冲）
+     */
+    private suspend fun <T> guard(what: String, logText: String = what, block: suspend () -> T): T =
         try {
-            withHardDeadline(hardDeadlineScope, operationTimeoutMs, what, block)
+            withHardDeadline(hardDeadlineScope, operationTimeoutMs, what, logText, block)
         } catch (e: StorageException.Timeout) {
             // 硬超时只放弃等待，底层阻塞线程还活着（JSch 没有自己的超时）。
             // 通知后端作废会话，否则它会一直占着连接、把后续请求全拖死（2026-11-17 真机实证）。
@@ -143,15 +150,17 @@ internal suspend fun <T> withHardDeadline(
     scope: CoroutineScope,
     timeoutMs: Long,
     what: String,
+    logText: String = what,
     block: suspend () -> T,
 ): T {
-    AppLog.d("storage-timeout", "worker 提交：" + what)
+    // 日志只打脱敏文案（logText）；what 留给异常消息（界面文案），两者互不干扰
+    AppLog.d("storage-timeout", "worker 提交：" + logText)
     val worker = scope.async {
-        AppLog.d("storage-timeout", "worker 启动：" + what)
+        AppLog.d("storage-timeout", "worker 启动：" + logText)
         try {
             block()
         } finally {
-            AppLog.d("storage-timeout", "worker 结束：" + what)
+            AppLog.d("storage-timeout", "worker 结束：" + logText)
         }
     }
     try {
@@ -159,7 +168,7 @@ internal suspend fun <T> withHardDeadline(
     } catch (e: TimeoutCancellationException) {
         // 顺序：TimeoutCancellationException 也是 CancellationException，先转成"超时"
         worker.cancel()
-        AppLog.w("storage-timeout", "硬超时（" + timeoutMs + " ms）：" + what)
+        AppLog.w("storage-timeout", "硬超时（" + timeoutMs + " ms）：" + logText)
         throw StorageException.Timeout("等待超过 " + (timeoutMs / 1000) + " 秒：" + what)
     } catch (e: CancellationException) {
         // 调用方自己取消（换目录/退出页面）：把后台任务也放掉

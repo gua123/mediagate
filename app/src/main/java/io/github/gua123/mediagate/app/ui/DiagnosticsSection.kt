@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.selection.SelectionContainer
 import io.github.gua123.mediagate.R
+import io.github.gua123.mediagate.core.common.redactForLog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -237,7 +238,9 @@ internal fun fallbackDiagnosticText(lastExit: String?, breadcrumbs: List<String>
     } else {
         breadcrumbs.forEach { builder.append(it).append('\n') }
     }
-    return builder.toString()
+    // 2026-11-18 日志脱敏：这段文本是「没有崩溃报告时」给用户复制/分享的，面包屑里可能带路径；
+    // 与崩溃报告同一个出口口径（readBreadcrumbs 落盘的原文不动，只改抄出去这一份）
+    return redactForLog(builder.toString())
 }
 
 /** 把报告写进系统剪贴板；返回给用户看的提示语。 */

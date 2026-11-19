@@ -21,7 +21,7 @@ echo "=== A. 目录 PROPFIND（Depth:1）顺序 20 次，每次新连接 ==="
 : > /tmp/small_a.txt
 for i in $(seq 1 20); do
   curl "${CURL_COMMON[@]}" -K "$RC" -X PROPFIND -H 'Depth: 1' -o /dev/null \
-    -w '%{time_total}\n' "$BASE/share/" >> /tmp/small_a.txt
+    -w '%{time_total}\n' "$BASE/share/videos/" >> /tmp/small_a.txt
 done
 awk '{print $1*1000}' /tmp/small_a.txt | stat_lat
 
@@ -40,7 +40,7 @@ conn = http.client.HTTPConnection(host, port, timeout=30)
 lat=[]
 for i in range(20):
     t=time.time()
-    conn.request('PROPFIND', '/share/', headers={'Depth':'1','Authorization':auth})
+    conn.request('PROPFIND', '/share/videos/', headers={'Depth':'1','Authorization':auth})
     r=conn.getresponse(); r.read()
     lat.append((time.time()-t)*1000)
 lat.sort()

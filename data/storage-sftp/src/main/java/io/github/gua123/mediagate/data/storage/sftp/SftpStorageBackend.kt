@@ -7,6 +7,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactEndpoint
+import io.github.gua123.mediagate.core.common.redactHostInText
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -111,7 +113,7 @@ class SftpStorageBackend(
         val abs = absoluteSftpPath(config.rootPath, relative)
         // **必须走 attrsOf 缓存**：VLC 每个 Range 请求前都会 stat 一次；如果每次都借 SFTP
         // 通道，播放中的分段读会把 4 条通道占满，stat 等 15s 超时 → 代理回 504，
-        // VLC 报 "cannot seek / no moov"（2026-11-15 真机 #Akari 复现）。
+        // VLC 报 "cannot seek / no moov"（2026-11-15 真机 #demo 复现）。
         toEntry(relative, attrsOf(abs, path))
     }
 
@@ -183,7 +185,12 @@ class SftpStorageBackend(
         } catch (t: Throwable) {
             val total = elapsedMs(started)
             val message = probeMessage(t)
-            AppLog.w(TAG, "probe 失败：" + config.host + ":" + config.port + " → " + message)
+            // 2026-11-18 日志脱敏：主机/端口留网段与端口，异常文案里的主机名单独打码（文案本身不改，界面要看）
+            AppLog.w(
+                TAG,
+                "probe 失败：" + redactEndpoint(config.host, config.port) +
+                    " → " + redactHostInText(message, config.host),
+            )
             report(ok = false, message = message, timing = timing, totalMs = total, failure = t)
         } finally {
             runCatching { probePool.close() }
@@ -290,7 +297,7 @@ class SftpStorageBackend(
      * 下次操作会自动重连，用户无需重启 App。
      */
     override fun onHardTimeout() {
-        AppLog.w("storage-sftp", "硬超时后作废 SSH 会话：" + config.host + ":" + config.port)
+        AppLog.w("storage-sftp", "硬超时后作废 SSH 会话：" + redactEndpoint(config.host, config.port))
         runCatching { pool.invalidateCurrentSession() }
     }
 

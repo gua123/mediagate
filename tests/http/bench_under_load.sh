@@ -4,7 +4,7 @@
 set -u
 . "$(dirname "$0")/lib.sh"
 BASE="${1:-${DAV_LAN_URL%/}}"
-ENC_PATH="${2:-/share/videos/Akari25_3_8%e3%80%90%e5%ae%9f%e5%86%99LIVE%e3%80%91%e5%b7%a8%e4%b9%b3%e3%82%a2%e3%82%a4%e3%83%89%e3%83%ab%e3%81%ab%e7%94%98%e3%80%85%e3%81%ab%e8%80%b3%e8%88%90%e3%82%81%e3%81%95%e3%82%8c%e3%82%8b%e2%99%a1ASMR%e2%99%a1.mp4}"
+ENC_PATH="${2:-/share/videos/demo-sample.mp4}"
 BG="${3:-16}"
 BG_BYTES="${4:-50331648}"
 PLAY_READS="${5:-20}"

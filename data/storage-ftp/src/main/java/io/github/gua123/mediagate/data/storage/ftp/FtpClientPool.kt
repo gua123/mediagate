@@ -7,6 +7,8 @@ import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
 import org.apache.commons.net.ftp.FTPSClient
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactEndpoint
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import java.io.Closeable
 import java.io.IOException
@@ -279,7 +281,10 @@ internal fun classifyIoFailure(e: IOException, config: FtpConfig): StorageExcept
 internal fun classifyReply(client: FTPClient, config: FtpConfig, context: String): StorageException {
     val code = client.replyCode
     val text = client.replyString.trim()
-    AppLog.w(TAG_FTP, "FTP 应答 " + code + " " + text + "（" + context + "）")
+    // 2026-11-18 日志脱敏：context 要么是路径、要么是「登录 账号@主机:端口」，两种都不许原样进日志；
+    // 异常文案（下面那些 StorageException）保持不变——界面要看得到自己填的地址。
+    val logContext = if (context.startsWith("登录 ")) redactEndpoint(config.host, config.port) else redactPath(context)
+    AppLog.w(TAG_FTP, "FTP 应答 " + code + " " + text + "（" + logContext + "）")
     return when {
         code == 530 || code == 532 ->
             StorageException.Auth("FTP 认证失败（" + code + " 账号或密码错误）：" + config.username + "@" + config.host)

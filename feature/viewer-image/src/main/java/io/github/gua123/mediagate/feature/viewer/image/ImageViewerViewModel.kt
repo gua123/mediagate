@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.model.RemoteEntry
 
 /** 日志 TAG。 */
@@ -153,7 +154,8 @@ class ImageViewerViewModel(
 
         // 目录项已给出体积且超限：不读字节，直接提示（避免先读 200 MB 再报错）
         if (entry.size > MAX_VIEWER_IMAGE_BYTES) {
-            AppLog.w(TAG, "图片超过查看器上限：" + entry.path + " size=" + entry.size)
+            // 2026-11-18 日志脱敏：entry.path 是远端完整路径，日志只留末段目录 + 文件名前 6 字符
+            AppLog.w(TAG, "图片超过查看器上限：" + redactPath(entry.path) + " size=" + entry.size)
             _state.update { it.reduce(ViewerEvent.LoadFailed(ViewerErrorKind.TOO_LARGE)) }
             return
         }
@@ -199,7 +201,7 @@ class ImageViewerViewModel(
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
-        AppLog.w(TAG, "列出同目录图片失败：" + path, t)
+        AppLog.w(TAG, "列出同目录图片失败：" + redactPath(path), t)
         SiblingOutcome.Failure(ViewerErrors.classify(t), t.message)
     }
 
@@ -215,7 +217,7 @@ class ImageViewerViewModel(
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
-        AppLog.w(TAG, "读取图片失败：" + path, t)
+        AppLog.w(TAG, "读取图片失败：" + redactPath(path), t)
         DecodeOutcome.Failure(ViewerErrors.classify(t), t.message)
     }
 

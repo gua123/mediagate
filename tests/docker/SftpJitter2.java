@@ -6,7 +6,7 @@ import java.util.concurrent.*;
 /** SFTP 抖动：单通道 5 轮 / 单会话 10 通道 5 轮，同一文件同一区间。 */
 public class SftpJitter2 {
     static Properties cfg;
-    static final String PATH = "/share/videos/Akari25_3_8【実写LIVE】巨乳アイドルに甘々に耳舐めされる♡ASMR♡.mp4";
+    static final String PATH = "/share/videos/demo-sample.mp4";
 
     static Session open() throws Exception {
         JSch j = new JSch();

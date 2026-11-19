@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.data.storage.api
 
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -304,7 +305,7 @@ class SegmentedCacheBackend(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "预取分段失败：$path #$index", t)
+                AppLog.w(TAG, "预取分段失败：" + redactPath(path) + " #" + index, t)
                 return
             }
             index++
@@ -344,7 +345,7 @@ class SegmentedCacheBackend(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "并行预取失败：$path @$batch", t)
+                AppLog.w(TAG, "并行预取失败：" + redactPath(path) + " @" + batch, t)
                 return
             }
         }
@@ -534,7 +535,7 @@ class SegmentedCacheBackend(
             return
         }
         if (!differs(recorded, stamp)) return
-        AppLog.w(TAG, "文件指纹变了（" + recorded.encode() + " → " + stamp.encode() + "），丢掉旧缓存：" + path)
+        AppLog.w(TAG, "文件指纹变了（" + recorded.encode() + " → " + stamp.encode() + "），丢掉旧缓存：" + redactPath(path))
         clearFile(path)
         writeStamp(dir, path, stamp)
     }
@@ -617,7 +618,7 @@ class SegmentedCacheBackend(
         if (existing != null) {
             inFlightLock.withLock { if (inFlight[key] === existing) inFlight.remove(key) }
             existing.finish(CacheClearedException())
-            AppLog.w(TAG, "丢弃清空缓存前的旧段任务：" + path + " #" + index)
+            AppLog.w(TAG, "丢弃清空缓存前的旧段任务：" + redactPath(path) + " #" + index)
         }
         val created = SegmentJob(file, currentEpoch)
         val winner = inFlightLock.withLock {
@@ -745,7 +746,7 @@ class SegmentedCacheBackend(
                 .onSuccess { failedSegments.remove(failKey) }
                 .onFailure { e ->
                     failedSegments[failKey] = System.currentTimeMillis()
-                    AppLog.d(TAG, "预读失败（不影响播放，已退避 5s）：" + path + " 第 " + target + " 段 — " + e.message)
+                    AppLog.d(TAG, "预读失败（不影响播放，已退避 5s）：" + redactPath(path) + " 第 " + target + " 段 — " + e.message)
                 }
             }
         }

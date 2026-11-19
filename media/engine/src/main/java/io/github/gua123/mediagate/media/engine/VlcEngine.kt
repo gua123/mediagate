@@ -19,6 +19,8 @@ import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.interfaces.IVLCVout
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
+import io.github.gua123.mediagate.core.common.redactPath
+import io.github.gua123.mediagate.core.common.redactProxyUrl
 import io.github.gua123.mediagate.media.proxy.LoopbackHttpProxy
 import io.github.gua123.mediagate.media.proxy.MediaUriCodec
 import kotlin.math.roundToInt
@@ -405,7 +407,10 @@ class VlcEngine(
         media = src
         // 伪 URI → 回环地址：VLC 只会吃 URL，数据层复用全靠这一步（plan 4.6）
         val url = proxy.playUrlSafe(src.backendId, src.path)
-        AppLog.d(TAG, "LibVLC 播放地址：" + url)
+        // 2026-11-18 日志脱敏：「/m/ 之后的 token」按 base64url 解开就是 sftp://user@内网IP:端口/完整路径，
+        // 原样落日志等于把内网地址与目录结构一起送出去（截图 / 崩溃报告 / 分享日志都会带走它）。
+        // 只留 scheme、端口、载荷长度，再附一个**打码后**的文件名：排障要的是「哪个文件」，不是「哪台机器的哪个目录」。
+        AppLog.d(TAG, "LibVLC 播放地址：" + redactProxyUrl(url) + " · 文件 " + redactPath(src.path))
         val vlcMedia = createMedia(url)
         try {
             player.media = vlcMedia

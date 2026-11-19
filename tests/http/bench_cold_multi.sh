@@ -7,10 +7,10 @@ BASE="${1:-${DAV_LAN_URL%/}}"
 RC="$(make_curlrc)"; trap 'rm -f "$RC"' EXIT
 SIZE=${SIZE:-$((96*1024*1024))}
 FILES=(
- "/share/videos/Akari25_3_8%e3%80%90%e5%ae%9f%e5%86%99LIVE%e3%80%91%e5%b7%a8%e4%b9%b3%e3%82%a2%e3%82%a4%e3%83%89%e3%83%ab%e3%81%ab%e7%94%98%e3%80%85%e3%81%ab%e8%80%b3%e8%88%90%e3%82%81%e3%81%95%e3%82%8c%e3%82%8b%e2%99%a1ASMR%e2%99%a1.mp4"
- "/share/videos/akari_asmr%20%e5%92%8c%e5%88%9a%e6%b4%97%e5%ae%8c%e6%be%a1%e7%9a%84%e5%a5%b3%e6%9c%8b%e5%8f%8b%e6%89%93%e6%83%85%e9%aa%82%e4%bf%8f%e8%88%94%e8%80%b3%e6%9c%b5.mp4"
- "/share/videos/%e8%bf%b7%e4%bd%a0%e8%a3%99%e5%a5%b3%e4%bb%86%e6%bf%80%e7%83%88%e8%88%94%e8%80%b3%e6%9c%b5%e6%b2%bb%e6%84%88%20-%20Akari%e2%80%99s%20ASMR.mp4"
- "/share/videos/akari_asmr%20%e5%9c%b0%e9%9b%b7%e7%b3%bb%e7%9a%84%e4%b9%89%e5%a6%b9%e5%92%8c%e8%88%94%e8%80%b3%e6%9c%b5%e7%9a%84ASMR.mp4"
+ "/share/videos/demo-sample.mp4"
+ "/share/videos/demo-sample.mp4"
+ "/share/videos/demo-sample.mp4"
+ "/share/videos/demo-sample.mp4"
 )
 echo "SIZE=$SIZE 文件数=${#FILES[@]}"
 echo "--- 顺序冷读 ---"

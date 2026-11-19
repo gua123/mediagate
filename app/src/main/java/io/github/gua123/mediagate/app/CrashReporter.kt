@@ -5,6 +5,7 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactForLog
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -18,6 +19,11 @@ import java.util.Locale
  * 写进 `filesDir/crashes/`，再交回系统默认处理（该闪还是闪，不改变系统行为）。
  *
  * 设置页的「诊断」卡片能直接看/复制这段文本，用户粘给我即可。
+ *
+ * **2026-11-18 日志脱敏（第二批）**：这份文本是要**复制、分享、贴进聊天**的，所以四个渲染入口
+ * （[renderStartupFailure] / [renderCrash] / [renderExit] / [render]）与写盘失败时的兜底文本，
+ * 全部在出口过一遍 [redactForLog]——路径只留末段、主机只留网段、URL 只留 scheme 与端口。
+ * 注意：**从源头不改**异常文案（那是给界面看的），只改抄进报告的这一份。
  */
 object CrashReporter {
 
@@ -35,7 +41,7 @@ object CrashReporter {
             // （独立进程的 CrashActivity：主进程随后死掉也不影响它显示）
             val rendered = runCatching {
                 renderCrash(thread, throwable, deviceInfo(app), AppLog.snapshot())
-            }.getOrDefault("=== MediaGate 崩溃 ===\n" + throwable.stackTraceToString())
+            }.getOrDefault(redactForLog("=== MediaGate 崩溃 ===\n" + throwable.stackTraceToString()))
             runCatching { write(app, thread, throwable) }
             runCatching {
                 io.github.gua123.mediagate.CrashActivity.show(
@@ -87,7 +93,7 @@ object CrashReporter {
         throwable: Throwable,
         device: DeviceInfo,
         logLines: List<String>,
-    ): String = buildString {
+    ): String = redactForLog(buildString {
         appendLine("=== MediaGate 启动失败 ===")
         appendLine("阶段：" + stage)
         appendLine("版本：" + device.versionName + "(" + device.versionCode + ")")
@@ -102,7 +108,7 @@ object CrashReporter {
             appendLine("[应用日志（最后 " + logLines.size + " 行）]")
             logLines.forEach { appendLine(it) }
         }
-    }
+    })
 
     /** 崩溃文本（纯函数；写盘失败时用它兜底显示）。 */
     fun renderCrash(
@@ -110,7 +116,7 @@ object CrashReporter {
         throwable: Throwable,
         device: DeviceInfo,
         logLines: List<String>,
-    ): String = buildString {
+    ): String = redactForLog(buildString {
         appendLine("=== MediaGate 崩溃 ===")
         appendLine("线程：" + thread.name)
         appendLine("版本：" + device.versionName + "(" + device.versionCode + ")")
@@ -125,7 +131,7 @@ object CrashReporter {
             appendLine("[应用日志（最后 " + logLines.size + " 行）]")
             logLines.forEach { appendLine(it) }
         }
-    }
+    })
 
     /**
      * 抓上一次进程退出的原因（**Android 11+ 的 ApplicationExitInfo**）。
@@ -242,7 +248,9 @@ object CrashReporter {
         } else {
             logLines.forEach { builder.append(it).append('\n') }
         }
-        return builder.toString()
+        // 2026-11-18 日志脱敏：报告全文（异常消息 + 堆栈 + 日志 + 面包屑）在**出口**统一过一遍，
+        // 因为 StorageException 的消息带完整远端路径与主机（界面必须原样显示），报告却是要复制/分享出去的
+        return redactForLog(builder.toString())
     }
 
     /** 退出原因的中文说明（诊断卡与报告都用）。 */
@@ -362,7 +370,9 @@ object CrashReporter {
         } else {
             logLines.forEach { builder.append(it).append('\n') }
         }
-        return builder.toString()
+        // 2026-11-18 日志脱敏：报告全文（异常消息 + 堆栈 + 日志 + 面包屑）在**出口**统一过一遍，
+        // 因为 StorageException 的消息带完整远端路径与主机（界面必须原样显示），报告却是要复制/分享出去的
+        return redactForLog(builder.toString())
     }
 
     private fun render(context: Context, thread: Thread, throwable: Throwable): String =

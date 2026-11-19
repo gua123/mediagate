@@ -20,6 +20,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.Breadcrumbs
+import io.github.gua123.mediagate.core.common.redactForLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.media.engine.DecoderMode
 import io.github.gua123.mediagate.media.engine.EngineCatalog
 import io.github.gua123.mediagate.media.engine.EngineKind
@@ -229,7 +231,8 @@ class VideoPlayerViewModel(
             )
         }.onFailure { error ->
             AppLog.w(TAG, "绑定播放会话失败（通知栏/锁屏控制可能不可用）", error)
-            runCatching { Breadcrumbs.mark("绑定播放会话失败：" + (error.message ?: error::class.java.simpleName)) }
+            // 2026-11-18 日志脱敏：会话失败的原因里可能带地址；面包屑会落盘并抄进崩溃报告，按自由文本过一遍
+            runCatching { Breadcrumbs.mark("绑定播放会话失败：" + redactForLog(error.message ?: error::class.java.simpleName)) }
         }
     }
 
@@ -668,7 +671,8 @@ class VideoPlayerViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "预取拖拽落点失败：$path @$positionMs", t)
+                // 2026-11-18 日志脱敏：远端完整路径只留末段目录 + 文件名前 6 字符（认得出文件，认不出机器与目录）
+                AppLog.w(TAG, "预取拖拽落点失败：" + redactPath(path) + " @$positionMs", t)
             }
         }
     }
@@ -700,7 +704,7 @@ class VideoPlayerViewModel(
                 _state.update { it.reduce(VideoPlayerEvent.TimestampRepairFinished) }
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "时间戳重建失败：$path", t)
+                AppLog.w(TAG, "时间戳重建失败：" + redactPath(path), t)
                 TimestampRepairOutcome.Failed("时间戳重建失败：" + (t.message ?: t.javaClass.simpleName))
             }
             when (outcome) {
@@ -790,7 +794,7 @@ class VideoPlayerViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "列出同目录文件失败（不影响播放）：" + path, t)
+                AppLog.w(TAG, "列出同目录文件失败（不影响播放）：" + redactPath(path), t)
                 return@launch
             }
             if (source?.path != path) return@launch
@@ -840,7 +844,8 @@ class VideoPlayerViewModel(
         // 内核/解码器在真机上抛出的异常（MediaCodec 初始化失败、容器不支持…）不该让 App 直接消失，
         // 统一降级成播放页的错误卡片 + 中文原因。
         try {
-            Breadcrumbs.mark("开始播放：" + path + "（内核 " + kind.label + "）")
+            // 2026-11-18 日志脱敏：面包屑会落盘 → 抄进崩溃报告，路径同样只留末段
+            Breadcrumbs.mark("开始播放：" + redactPath(path) + "（内核 " + kind.label + "）")
         created.setDecoderMode(mode)
             created.setMedia(ref)
             created.prepare()
@@ -848,7 +853,7 @@ class VideoPlayerViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "装载媒体失败：$path", t)
+            AppLog.w(TAG, "装载媒体失败：" + redactPath(path), t)
             runCatching { created.release() }
             _state.update { it.reduce(VideoPlayerEvent.Failed(VideoErrorKind.UNKNOWN, t.message, canFallback = environment.proxyBaseUrl != null)) }
             return
@@ -881,7 +886,7 @@ class VideoPlayerViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "准备 TS 索引失败：$path", t)
+                AppLog.w(TAG, "准备 TS 索引失败：" + redactPath(path), t)
                 null
             } ?: return@launch
             if (!info.hasPcr) {
@@ -902,7 +907,7 @@ class VideoPlayerViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "读取断点失败：" + ref.path, t)
+            AppLog.w(TAG, "读取断点失败：" + redactPath(ref.path), t)
             return
         }
         val position = record?.positionMs ?: return
@@ -1078,7 +1083,7 @@ class VideoPlayerViewModel(
             throw e
         } catch (t: Throwable) {
             AppLog.w(TAG, "切换内核后初始化失败：" + target.label, t)
-            Breadcrumbs.mark("切换内核失败：" + target.label + " → " + (t.message ?: t.javaClass.simpleName))
+            Breadcrumbs.mark("切换内核失败：" + target.label + " → " + redactForLog(t.message ?: t.javaClass.simpleName))
             runCatching { created.release() }
             engine = null
             _videoOutput.value = null
@@ -1114,7 +1119,9 @@ class VideoPlayerViewModel(
         engineJob = viewModelScope.launch {
             target.state.collect { engineState ->
                 if (engineState is EngineState.Error) {
-                    AppLog.w(TAG, "内核报错：" + engineState.message)
+                    // 2026-11-18 日志脱敏：内核（LibVLC/Media3）的报错文案常把整条地址抄进 message，日志这份要过一遍；
+                    // 界面那份（下面 Failed 事件）保持原文——用户得看见自己填的地址
+                    AppLog.w(TAG, "内核报错：" + redactForLog(engineState.message))
                     val fallback = VideoEngineSwitch.fallbackTarget(target.kind, proxyAvailable) != null
                     _state.update {
                         it.reduce(VideoPlayerEvent.Failed(VideoErrorKind.PLAYBACK, engineState.message, fallback))
@@ -1208,7 +1215,7 @@ class VideoPlayerViewModel(
         val ref = source ?: return
         if (positionMs <= 0L) return
         runCatching { withContext(io) { environment.progress.save(progressOf(ref, positionMs)) } }
-            .onFailure { AppLog.w(TAG, "写入断点失败：" + ref.path, it) }
+            .onFailure { AppLog.w(TAG, "写入断点失败：" + redactPath(ref.path), it) }
     }
 
     /** 同内核内重建解码器后，把「短暂黑屏」提示留一小会儿再收掉（R10）。 */

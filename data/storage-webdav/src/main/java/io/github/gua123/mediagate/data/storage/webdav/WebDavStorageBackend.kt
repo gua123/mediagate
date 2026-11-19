@@ -15,6 +15,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.ErrorText
+import io.github.gua123.mediagate.core.common.redactHost
+import io.github.gua123.mediagate.core.common.redactHostInText
+// 别名：本包已有 internal fun redactUrl（WebDavProbeMessage 的界面文案用，保留全路径），两者不能混
+import io.github.gua123.mediagate.core.common.redactUrl as redactLogUrl
 import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
@@ -198,7 +202,14 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                     url = request.url.toString(),
                     bodySnippet = snippet,
                 )
-                if (!report.ok) AppLog.w(TAG, "probe 失败：${config.requestBaseUrl} → ${report.message}")
+                // 2026-11-18 日志脱敏：基址只留 scheme/端口/路径末段，异常文案里的主机名单独打码
+                if (!report.ok) {
+                    AppLog.w(
+                        TAG,
+                        "probe 失败：" + redactLogUrl(config.requestBaseUrl) +
+                            " → " + redactHostInText(report.message.orEmpty(), config.host),
+                    )
+                }
                 report
             }
         } catch (e: CancellationException) {
@@ -218,7 +229,11 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 is IOException -> ErrorText.of(t, "网络请求失败")
                 else -> ErrorText.of(t, "请求失败")
             }
-            AppLog.w(TAG, "probe 异常：${config.requestBaseUrl} → $message", t)
+            AppLog.w(
+                TAG,
+                "probe 异常：" + redactLogUrl(config.requestBaseUrl) + " → " + redactHostInText(message, config.host),
+                t,
+            )
             // DNS 失败时监听器收不到 dnsEnd：把整段耗时算进 DNS，保证三段相加 ≈ 总耗时
             val dnsFailure = t is UnknownHostException
             ProbeReport(
@@ -372,7 +387,8 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
                 builder.removeHeader("Authorization")
                 AppLog.w(
                     TAG,
-                    "重定向到其它主机或明文链路（" + current.url.host + " → " + next.host + "），已移除 Authorization 头：" + next,
+                    "重定向到其它主机或明文链路（" + redactHost(current.url.host) + " → " + redactHost(next.host) +
+                        "），已移除 Authorization 头：" + redactLogUrl(next.toString()),
                 )
             }
             current = builder.build()
@@ -397,7 +413,11 @@ class WebDavStorageBackend(val config: WebDavConfig) : StorageBackend {
         } ?: return
         val previous = rangeSupport.getAndSet(known)
         if (known.not() && previous != false) {
-            AppLog.w(TAG, "服务器忽略 Range（Accept-Ranges=${accept ?: "-"}），降级为顺序读：${config.requestBaseUrl}")
+            AppLog.w(
+                TAG,
+                "服务器忽略 Range（Accept-Ranges=" + (accept ?: "-") + "），降级为顺序读：" +
+                    redactLogUrl(config.requestBaseUrl),
+            )
         }
     }
 

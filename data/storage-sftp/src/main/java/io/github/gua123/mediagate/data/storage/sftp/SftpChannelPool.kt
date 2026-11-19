@@ -10,6 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactEndpoint
+import io.github.gua123.mediagate.core.common.redactHostInText
+import io.github.gua123.mediagate.core.common.redactUserInText
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicReference
@@ -114,7 +117,7 @@ internal class SftpChannelPool(
      *
      * 为什么需要：VLC 每个 Range 请求前都会 stat；播放中的 [SftpRangeStream] 会把
      * maxChannels 条通道全部占住，stat 等 15s 超时 → 回环代理 504 → VLC 拿不到 MP4
-     * 尾部 moov（2026-11-15 真机 #Akari 实证）。元数据不能被数据流饿死。
+     * 尾部 moov（2026-11-15 真机 #demo 实证）。元数据不能被数据流饿死。
      */
     suspend fun <T> useMetadata(block: (ChannelSftp) -> T): T = withContext(StorageDispatchers.io) {
         val channel = openEphemeralChannel()
@@ -229,7 +232,12 @@ internal class SftpChannelPool(
             runCatching { session.disconnect() }
             val mapped = mapJschFailure(e, config, lastHostKeyCheck, "建立 SSH 会话")
             if (mapped is StorageException.Auth) {
-                AppLog.w(TAG, "SFTP 认证/主机密钥问题：" + config.host + ":" + config.port + " → " + mapped.message)
+                // 2026-11-18 日志脱敏：认证文案里带 账号@主机:端口，账号与主机都要打码
+                AppLog.w(
+                    TAG,
+                    "SFTP 认证/主机密钥问题：" + redactEndpoint(config.host, config.port) +
+                        " → " + redactUserInText(redactHostInText(mapped.message.orEmpty(), config.host)),
+                )
             }
             throw mapped
         }

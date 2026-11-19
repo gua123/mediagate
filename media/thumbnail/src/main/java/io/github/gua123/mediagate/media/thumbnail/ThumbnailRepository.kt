@@ -9,6 +9,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactForLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import io.github.gua123.mediagate.data.storage.api.RandomAccessSource
@@ -170,7 +172,9 @@ class ThumbnailRepository(
                     throw e
                 } catch (t: Throwable) {
                     // 缓存写不进去不影响本次结果
-                    AppLog.w(TAG, "写缩略图缓存失败：${entry.path}", t)
+                    // 2026-11-18 日志脱敏：整条链路（Repository）里的 entry.path 都是**远端完整路径**，
+                    // 日志只留末段目录 + 文件名前 6 字符；排障要认的是「哪个文件」，不是「哪台机器的哪个目录」
+                    AppLog.w(TAG, "写缩略图缓存失败：" + redactPath(entry.path), t)
                 }
                 remember(entry.path, bytes)
                 bytes
@@ -212,7 +216,7 @@ class ThumbnailRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "读同目录封面失败：${entry.path}", t)
+            AppLog.w(TAG, "读同目录封面失败：" + redactPath(entry.path), t)
             null
         }
     }
@@ -227,7 +231,7 @@ class ThumbnailRepository(
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
-        AppLog.w(TAG, "抽帧流程异常：${entry.path}", t)
+        AppLog.w(TAG, "抽帧流程异常：" + redactPath(entry.path), t)
         null
     }
 
@@ -242,7 +246,7 @@ class ThumbnailRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "打开数据源失败：${entry.path}", t)
+            AppLog.w(TAG, "打开数据源失败：" + redactPath(entry.path), t)
             return null
         }
 
@@ -261,7 +265,7 @@ class ThumbnailRepository(
                         embedded
                     } else {
                         val sibling = runCatchingSiblingCover(entry, backend)
-                        if (sibling == null) AppLog.w(TAG, "音频既没有内嵌封面，同目录也没有 cover/folder 图片：${entry.path}")
+                        if (sibling == null) AppLog.w(TAG, "音频既没有内嵌封面，同目录也没有 cover/folder 图片：" + redactPath(entry.path))
                         sibling
                     }
                 }
@@ -271,7 +275,7 @@ class ThumbnailRepository(
                     val pipeline = imagePreview ?: return null
                     val bytes = runExtractor(pipeline.extractor, "图片缩略图", source, entry.mimeType, ANY_FRAME_MS)
                     if (bytes == null || bytes.isEmpty()) {
-                        AppLog.w(TAG, "图片缩略图生成失败：${entry.path}")
+                        AppLog.w(TAG, "图片缩略图生成失败：" + redactPath(entry.path))
                         null
                     } else {
                         bytes
@@ -297,7 +301,7 @@ class ThumbnailRepository(
             val bytes = runExtractor(primary, "主策略", source, entry.mimeType, positionMs)
             if (bytes != null && bytes.isNotEmpty()) return bytes
             if (index < positions.lastIndex) {
-                AppLog.d(TAG, "主策略取帧失败，换位重试：${entry.path} @${positionMs}ms")
+                AppLog.d(TAG, "主策略取帧失败，换位重试：" + redactPath(entry.path) + " @" + positionMs + "ms")
             }
         }
 
@@ -305,10 +309,10 @@ class ThumbnailRepository(
         currentCoroutineContext().ensureActive()
         val bytes = runExtractor(fallbackExtractor, "FFmpeg 兜底", source, entry.mimeType, positions.first())
         if (bytes != null && bytes.isNotEmpty()) {
-            AppLog.i(TAG, "FFmpeg 兜底抽帧成功：${entry.path}")
+            AppLog.i(TAG, "FFmpeg 兜底抽帧成功：" + redactPath(entry.path))
             return bytes
         }
-        AppLog.w(TAG, "缩略图抽帧全部失败：${entry.path}（duration=$durationMs）")
+        AppLog.w(TAG, "缩略图抽帧全部失败：" + redactPath(entry.path) + "（duration=" + durationMs + "）")
         return null
     }
 
@@ -331,7 +335,7 @@ class ThumbnailRepository(
         throw e
     } catch (t: Throwable) {
         // 抽帧器约定不抛异常，这里再兜一层：缩略图失败不该影响列表渲染
-        AppLog.w(TAG, "$label 抽帧异常：positionMs=$positionMs ${t.message}", t)
+        AppLog.w(TAG, label + " 抽帧异常：positionMs=" + positionMs + " " + redactForLog(t.message.orEmpty()), t)
         null
     }
 
@@ -342,7 +346,7 @@ class ThumbnailRepository(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "探测媒体时长失败：${t.message}", t)
+            AppLog.w(TAG, "探测媒体时长失败：" + redactForLog(t.message.orEmpty()), t)
             null
         }
     }

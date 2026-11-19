@@ -11,7 +11,7 @@
 
 ## 0.1.108 跨后端恢复保护（2026-11-15 ADB 定位）
 
-- 现象：VLC 打开 `local-file:/storage/emulated/0` 却接 `home/nas1/...`，代理返回 HTTP 404。
+- 现象：VLC 打开 `local-file:/storage/emulated/0` 却接 `share/...`，代理返回 HTTP 404。
 - 原因：播放中切换连接/回到本地后，通知栏或调试恢复仍带旧远端路径，播放页用当前本地后端去读。
 - 修复：`VideoSessionSource` 增加 `backendId`，通知 Intent 带 `mg_backend_id`；回到前台/新 Intent 时只有 backendId 与当前后端一致才恢复，否则忽略并记录日志。
 
@@ -52,7 +52,7 @@
 
 ## 0.1.102 SFTP 目录列表专用通道（2026-11-15 用户反馈）
 
-- **现象**：公网从子目录返回上级（如 akari_asmr → tg_down）后一直“正在加载…”，目录空。
+- **现象**：公网从子目录返回上级（如 demo → videos）后一直“正在加载…”，目录空。
 - **根因**：`SftpStorageBackend.list` 用 `pool.use` 借数据通道；返回上级时上一条 list/缩略图/预取的通道未归还，列表永久排队。
 - **修**：list 改走 `pool.useMetadata`（与 stat 同一套元数据专用通道，不占 maxChannels，用完即断）。
 

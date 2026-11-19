@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.model.RemoteEntry
 
 /** 日志 TAG。 */
@@ -130,7 +131,8 @@ class AudioPlayerViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "开始播放失败：" + clicked, t)
+            // 2026-11-18 日志脱敏：clicked 是远端完整路径，只留末段目录 + 文件名前 6 字符
+            AppLog.w(TAG, "开始播放失败：" + redactPath(clicked), t)
             _state.update { it.reduce(AudioPlayerEvent.LoadFailed(AudioPlayerErrors.classify(t), t.message)) }
         }
     }
@@ -169,7 +171,7 @@ class AudioPlayerViewModel(
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
-        AppLog.w(TAG, "加载封面失败：" + entry.path, t)
+        AppLog.w(TAG, "加载封面失败：" + redactPath(entry.path), t)
         null
     }
 
@@ -179,7 +181,7 @@ class AudioPlayerViewModel(
     } catch (e: CancellationException) {
         throw e
     } catch (t: Throwable) {
-        AppLog.w(TAG, "列出同目录音频失败：" + path, t)
+        AppLog.w(TAG, "列出同目录音频失败：" + redactPath(path), t)
         SiblingsOutcome.Failure(AudioPlayerErrors.classify(t), t.message)
     }
 

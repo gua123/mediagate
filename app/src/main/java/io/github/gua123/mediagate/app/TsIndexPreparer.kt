@@ -1,6 +1,7 @@
 package io.github.gua123.mediagate.app
 
 import io.github.gua123.mediagate.core.common.AppLog
+import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
 import io.github.gua123.mediagate.media.tsext.TsIndex
 import io.github.gua123.mediagate.media.tsext.TsIndexKey
@@ -72,7 +73,7 @@ class TsIndexPreparer(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "TS 索引：stat 失败 " + path, t)
+            AppLog.w(TAG, "TS 索引：stat 失败 " + redactPath(path), t)
             return null
         }
         val key = TsIndexKey(
@@ -90,7 +91,7 @@ class TsIndexPreparer(
         val scanned = scan(backend, path) ?: return null
         withContext(io) {
             runCatching { store.save(key, scanned.index) }
-                .onFailure { AppLog.w(TAG, "TS 索引写盘失败：" + path, it) }
+                .onFailure { AppLog.w(TAG, "TS 索引写盘失败：" + redactPath(path), it) }
         }
         writeSummary(key, scanned.hasPcr)
         prepared[path] = scanned
@@ -104,7 +105,7 @@ class TsIndexPreparer(
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
-            AppLog.w(TAG, "TS 索引：打开数据源失败 " + path, t)
+            AppLog.w(TAG, "TS 索引：打开数据源失败 " + redactPath(path), t)
             return null
         }
         return source.use {
@@ -144,7 +145,7 @@ class TsIndexPreparer(
 
                         is TsScanUpdate.Failed -> {
                             // collect 的 lambda 是 crossinline，不能非局部 return——用异常跳出（下面统一接住）
-                            AppLog.w(TAG, "TS 索引扫描失败：" + path + " → " + update.error.message)
+                            AppLog.w(TAG, "TS 索引扫描失败：" + redactPath(path) + " → " + update.error.message)
                             throw ScanStopped
                         }
                     }
@@ -156,7 +157,7 @@ class TsIndexPreparer(
             } catch (e: CancellationException) {
                 throw e
             } catch (t: Throwable) {
-                AppLog.w(TAG, "TS 索引扫描异常：" + path, t)
+                AppLog.w(TAG, "TS 索引扫描异常：" + redactPath(path), t)
             }
             partial
         }

@@ -6,7 +6,7 @@ import java.util.concurrent.*;
 /** SFTP 多连接/多通道吞吐（同文件、固定 8MiB/通道，避免小 get 的开销污染）。 */
 public class SftpMulti2 {
     static Properties cfg;
-    static final String PATH = "/share/videos/Akari25_3_8【実写LIVE】巨乳アイドルに甘々に耳舐めされる♡ASMR♡.mp4";
+    static final String PATH = "/share/videos/demo-sample.mp4";
     static final int PER = 8 * 1024 * 1024;
 
     static Session open() throws Exception {

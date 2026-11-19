@@ -8,7 +8,7 @@ public class SftpBaseline {
     static Properties cfg;
     static final String HOST = "192.168.1.10";
     static final int PORT = 2222;
-    static final String PATH = "/share/videos/Akari25_3_8【実写LIVE】巨乳アイドルに甘々に耳舐めされる♡ASMR♡.mp4";
+    static final String PATH = "/share/videos/demo-sample.mp4";
 
     static Session open() throws Exception {
         JSch j = new JSch();
