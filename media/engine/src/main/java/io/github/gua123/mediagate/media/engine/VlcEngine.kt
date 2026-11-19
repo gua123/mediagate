@@ -8,9 +8,7 @@ import android.net.Uri
 import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -64,9 +62,16 @@ class VlcEngine(
 
     private val appContext: Context = context.applicationContext
 
-    private val _state = MutableStateFlow<EngineState>(EngineState.Idle)
+    /**
+     * 内核状态的唯一写入口（见 [EngineStateHolder]）：事件走 [moveTo]，换源/释放走 [resetTo]。
+     *
+     * 本类里**不再直接碰 MutableStateFlow**——上一轮把事件回调改走 latch 之后，setMedia /
+     * prepare / play / release 还各留着一处裸写，prepare() 尤其危险（能冲掉 Ended）。把 flow
+     * 收进 holder 之后，"绕过 latch"在类型层面就写不出来了（2026-11-20 审计收口）。
+     */
+    private val stateHolder = EngineStateHolder()
 
-    override val state: StateFlow<EngineState> = _state.asStateFlow()
+    override val state: StateFlow<EngineState> = stateHolder.state
 
     override val kind: EngineKind = EngineKind.VLC
 
@@ -304,7 +309,7 @@ class VlcEngine(
                 player.attachViews(view, null, false, false)
             } catch (t: Throwable) {
                 AppLog.e(TAG, "LibVLC 视频输出挂载失败", t)
-                _state.value = EngineState.Error("LibVLC 视频输出挂载失败：" + ErrorText.of(t, "未知原因"), t)
+                moveTo(EngineState.Error("LibVLC 视频输出挂载失败：" + ErrorText.of(t, "未知原因"), t))
                 pendingPlay = false
                 return
             }
@@ -416,14 +421,18 @@ class VlcEngine(
             player.media = vlcMedia
         } catch (t: IllegalStateException) {
             // 极端情况下（MediaPlayer 已释放）不要崩在播放页，上报成引擎错误由上层提示
-            _state.value = EngineState.Error("LibVLC 装载媒体失败：" + ErrorText.of(t, "未知原因"), t)
+            moveTo(EngineState.Error("LibVLC 装载媒体失败：" + ErrorText.of(t, "未知原因"), t))
             vlcMedia.release()
             return
         }
         // MediaPlayer 已经持有 Media 的引用，这里释放本地引用（libvlc-android 的既定用法）
         vlcMedia.release()
         AppLog.i(TAG, "setMedia 完成，准备 play")
-        _state.value = EngineState.Preparing
+        // 换源＝新的一次播放：视频输出重试预算跟着重置（否则上一个文件用完 3 次后新源不再自愈）
+        outputRetryCount = 0
+        // 换源是**允许离开 Ended** 的两条明确路径之一（见 [EngineStateLatch.reset]）：换片了就不该再是"播完了"，
+        // 所以这里走显式重置；普通事件一律没有这个待遇
+        resetTo(EngineState.Preparing)
     }
 
     /** 造一个带解码与缓存选项的 VLC 媒体。 */
@@ -442,14 +451,24 @@ class VlcEngine(
     }
 
     override fun prepare() {
-        // LibVLC 没有独立的 prepare：play() 时才真正打开媒体；这里只推进状态，真实进度由事件回调更新
-        if (media != null) _state.value = EngineState.Preparing
+        // LibVLC 没有独立的 prepare：play() 时才真正打开媒体；这里只推进状态，真实进度由事件回调更新。
+        //
+        // **必须是事件（moveTo），不能是重置**：prepare() 会被"换集 / 换内核恢复"在 setMedia 之后调，
+        // 那时状态本来就是 Preparing，走事件等于空操作；万一有人在 Ended 之后单独调它（例如将来加
+        // 一个"准备播放"的入口），终态也必须留住——一旦这里把 Ended 冲成 Preparing，[play] 就会
+        // 以为"还没播完"，跳过 [restartAfterEnded]，而 LibVLC 的输入线程早已结束，点播放变成静默无反应。
+        if (media != null) moveTo(EngineState.Preparing)
     }
 
     override fun play() {
         if (released) return
+        // **播完之后再播放**（单曲循环 / 播完手动点播放）：LibVLC 的输入线程在播完时就结束了，
+        // 此时 player.play() 只是给一个已死的输入线程发 PLAYING_S，什么都不会发生
+        //（VLC 3.0 `lib/media_player.c`：p_thread 非空就只 input_Control(INPUT_SET_STATE)）。
+        // 必须重新装载媒体，让 LibVLC 再起一个新的输入线程。
+        if (state.value is EngineState.Ended) restartAfterEnded()
         if (!requestAudioFocus()) {
-            _state.value = EngineState.Error("音频焦点被其它应用占用，暂时不能播放（可稍后再试）")
+            moveTo(EngineState.Error("音频焦点被其它应用占用，暂时不能播放（可稍后再试）"))
             return
         }
         // Compose 还没把视频视图挂上：先记下，等 attach / TextureView available 后再真正起播。
@@ -457,20 +476,34 @@ class VlcEngine(
         val surface = attachedView as? VlcVideoSurface
         if (surface != null && (!videoOutputAttached || !surface.textureView.isAvailable)) {
             pendingPlay = true
-            _state.value = EngineState.Preparing
+            // 事件而非重置：等待输出就绪只是"还没起来"，不构成"这一遍重新开始"
+            moveTo(EngineState.Preparing)
             AppLog.i(TAG, "视频输出尚未就绪，等待 attach/available 后起播")
             surface.postDelayed(pendingPlayRunnable, 50)
             return
         }
         if (attachedView is VLCVideoLayout && !videoOutputAttached) {
             pendingPlay = true
-            _state.value = EngineState.Preparing
+            moveTo(EngineState.Preparing)
             AppLog.i(TAG, "视频视图尚未挂载，等待 attach 后起播")
             return
         }
         AppLog.i(TAG, "调用 player.play()")
         player.play()
         scheduleOutputRetry()
+    }
+
+    /**
+     * 播完之后的"从头再来"：重新装载同一个媒体。
+     *
+     * `libvlc_media_player_set_media` 会先 release 掉旧输入线程（stop + close），
+     * 再由 `play()` 新建一个输入 —— 这是 LibVLC 里唯一可靠的"播完再播"路径，
+     * 单曲循环与"播完点播放"都靠它（2026-11-20）。
+     */
+    private fun restartAfterEnded() {
+        val src = media ?: return
+        AppLog.i(TAG, "播完后重新起播：重新装载媒体（LibVLC 的输入线程在播完时已结束）")
+        setMedia(src)
     }
 
     override fun pause() {
@@ -484,6 +517,9 @@ class VlcEngine(
 
     override fun seekTo(positionMs: Long) {
         if (released) return
+        // 播完之后输入线程已经结束，setTime 落不到任何东西上；真正让画面回来的是
+        // [play] 里的"重新装载媒体"（2026-11-20）。这里直接不动，避免对已结束的输入做无用调用。
+        if (state.value is EngineState.Ended) return
         // 第二个参数 true = fast seek（关键帧对齐，VLC 自己选最近可解码点）
         player.setTime(positionMs.coerceAtLeast(0L), true)
     }
@@ -627,7 +663,8 @@ class VlcEngine(
         abandonAudioFocus()
         media = null
         attachedView = null
-        _state.value = EngineState.Idle
+        // 释放是离开 Ended 的另一条明确路径：没有媒体了，回 Idle 才是实话（见 [EngineStateLatch.reset]）
+        resetTo(EngineState.Idle)
     }
 
     // ------------------------------------------------------------------ 内部实现
@@ -676,13 +713,14 @@ class VlcEngine(
             if (position > 0L) seekTo(position)
             if (wasPlaying) play()
         } else {
-            _state.value = EngineState.Idle
+            // 重建管线时没有媒体：既没有"在播"也没有"播完"，只能是 Idle（显式重置）
+            resetTo(EngineState.Idle)
         }
     }
 
     private fun onVlcEvent(event: MediaPlayer.Event) {
         when (event.type) {
-            MediaPlayer.Event.Opening -> _state.value = EngineState.Preparing
+            MediaPlayer.Event.Opening -> moveTo(EngineState.Preparing)
 
             // Vout 出现后视频尺寸/画面窗口才稳定：自算缩放容器拿到轨道尺寸，重排一次
             MediaPlayer.Event.Vout -> {
@@ -698,30 +736,60 @@ class VlcEngine(
 
             // 100 = 缓冲完成。VLC 在 Playing 之后还可能补发一次 Buffering(100)，
             // 如果一律当 Preparing，界面会一直停在“正在缓冲…”（真机截图复现）。
-            MediaPlayer.Event.Buffering -> _state.value =
-                if (event.buffering >= 100f) EngineState.Ready else EngineState.Preparing
+            MediaPlayer.Event.Buffering -> moveTo(
+                if (event.buffering >= 100f) EngineState.Ready else EngineState.Preparing,
+            )
             MediaPlayer.Event.Playing -> {
                 (attachedView as? VlcVideoSurface)?.removeCallbacks(outputRetryRunnable)
-                _state.value = EngineState.Ready
+                moveTo(EngineState.Ready)
             }
 
+            // **Stopped 不能盖掉 Ended**（2026-11-20）：LibVLC 播完时同一个输入线程会先发
+            // EndReached、紧接着发 Stopped（INPUT_EVENT_DEAD），见 [moveTo] 的说明。
             MediaPlayer.Event.Paused,
             MediaPlayer.Event.Stopped,
             MediaPlayer.Event.SeekableChanged,
             MediaPlayer.Event.LengthChanged,
-            -> _state.value = EngineState.Ready
+            -> moveTo(EngineState.Ready)
 
             MediaPlayer.Event.EndReached -> {
                 abandonAudioFocus()
-                _state.value = EngineState.Ended
+                // 这条日志是"播完钩子真的到了"的现场证据（真机排障要它）
+                AppLog.i(TAG, "LibVLC 播完（EndReached）：位置 " + positionMs() + " / 时长 " + durationMs())
+                moveTo(EngineState.Ended)
             }
-            MediaPlayer.Event.EncounteredError -> _state.value = EngineState.Error(
-                "LibVLC 无法播放该媒体（" + (media?.displayName ?: "未知媒体") + "），可尝试改解码模式或换回 Media3 内核",
+            MediaPlayer.Event.EncounteredError -> moveTo(
+                EngineState.Error(
+                    "LibVLC 无法播放该媒体（" + (media?.displayName ?: "未知媒体") + "），可尝试改解码模式或换回 Media3 内核",
+                ),
             )
 
             else -> Unit
         }
     }
+
+    /**
+     * **内核事件**的唯一入口：播完是终态，普通事件不许把它冲掉。
+     *
+     * 现场链路（VLC 3.0，`src/input/input.c` 的 `Run()`）：
+     * `MainLoop()` → `End()` → `input_ChangeState(END_S)` ⇒ `libvlc_MediaPlayerEndReached`
+     * → （同一线程紧接着）`input_SendEventDead()` ⇒ `libvlc_MediaPlayerStopped`。
+     * 以前 `Stopped` 直接写 Ready，播放页 500 ms 一轮的采样永远看不到 Ended，
+     * 「开着循环，播完也不自动下一集」的根因就在这里。
+     *
+     * 适用：LibVLC 回调、prepare()/play() 的"输出未就绪"、各类失败上报。
+     * 不适用：换源与释放——那两条是"这一遍结束了/换了一个"，走 [resetTo]。
+     */
+    private fun moveTo(next: EngineState) = stateHolder.event(next)
+
+    /**
+     * **显式重置**的唯一入口：只有 [setMedia]（换片 → Preparing）与 [release]（释放 → Idle）能调。
+     *
+     * 这是离开 [EngineState.Ended] 的合法方式；别的调用点想让状态动，请走 [moveTo]。
+     * 特别地："播完再播"不要在这里重置——交给 [play] 里的 [restartAfterEnded]（重新装载同一个媒体），
+     * 否则 Ended 被提前清掉，play() 会跳过重启、对着已死的输入线程发 PLAYING_S（静默无反应）。
+     */
+    private fun resetTo(next: EngineState) = stateHolder.reset(next)
 
     /** [ResizeMode] → LibVLC 的画面缩放档位。 */
     private fun ResizeMode.toVlcScaleType(): MediaPlayer.ScaleType = when (this) {
