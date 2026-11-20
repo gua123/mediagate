@@ -33,6 +33,7 @@ import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.redactForLog
 import io.github.gua123.mediagate.core.common.redactPath
 import io.github.gua123.mediagate.core.common.redactUrl
+import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.core.common.ErrorText
@@ -916,7 +917,12 @@ class AppContainer(context: Context) :
      * 视频会话控制器（R18 视频侧 / R19 让路）：把播放页借出的内核包成 MediaSession 的会话源，
      * 并在起播时连上 :media:playback 的 `VideoPlaybackService`（通知栏 / 锁屏可控）。
      */
-    val videoSession: VideoSessionController = VideoSessionController(appContext, thumbnails)
+    val videoSession: VideoSessionController = VideoSessionController(
+        appContext,
+        thumbnails,
+        // 会话收起（停止播放 / 退出播放页）后，把"播放期间被推迟"的远端后端重建补上
+        onSessionClosed = { flushDeferredPlaybackReconnect() },
+    )
 
     /**
      * 视频会话/通知这条链路的一行自述（设置页诊断卡显示）。
@@ -952,9 +958,20 @@ class AppContainer(context: Context) :
             downloadedMb,
             throughputMb,
             tuning.segmentBytes / (1024.0 * 1024.0),
-            tuning.readAheadSegments,
+            cache.readAheadWindowSegments,
         )
     }
+
+    /**
+     * **播放预读段数**：设置里的「预读 N 段」是**单连接时代**的经验值（默认 4）。
+     *
+     * 多连接后端（SFTP 20 会话 × 10 通道）如果只有 4 段在飞，20 条连接里最多 4-5 条在干活，
+     * 带宽还是上不去（2026-11-18 实测：200 通道并读才叠加到 23-25 MB/s）。所以按后端并行能力
+     * 放大，最多 [MAX_READ_AHEAD_WINDOW] 段 = 20 × 4 MB ≈ 80 MB 在飞：够吃满公网，也不至于把手机顶爆。
+     * 单会话后端（WebDAV / FTP 的 caps 是 2-4）保持用户设置不变。
+     */
+    private fun readAheadWindowFor(caps: Caps, configured: Int): Int =
+        maxOf(configured, minOf(caps.maxParallelReads, MAX_READ_AHEAD_WINDOW))
 
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {
@@ -1689,7 +1706,8 @@ class AppContainer(context: Context) :
                 networkMonitor.context,
             ) { id, records, network -> Triple(id, records, network) }
                 .collect { (id, records, network) ->
-                    applyCurrentConnection(records.firstOrNull { it.id == id }, network)
+                    // 网络现场变化（这条流最主要的触发源）不能在播放中拆后端，见 applyCurrentConnection
+                    applyCurrentConnection(records.firstOrNull { it.id == id }, network, deferWhilePlaying = true)
                 }
         }
         // 冷启动自愈：DataStore/网络现场/连接表是三条异步流，首帧可能还没齐，
@@ -1797,6 +1815,29 @@ class AppContainer(context: Context) :
     }
 
     /**
+     * 播放中推迟的「网络现场变化」（见 [applyCurrentConnection] 的 `deferWhilePlaying`）。
+     *
+     * null = 没有待补的重建。只保留最后一次：中间的网络抖动会被后一条覆盖，
+     * 补太多次只会白建后端。
+     */
+    private var deferredConnectionApply: Pair<ConnectionRecord?, NetworkContext>? = null
+
+    /**
+     * 视频会话收起后补做被推迟的后端重建（由 [VideoSessionController] 的 `onSessionClosed` 回调）。
+     *
+     * 投到 [ioScope]：选路会做 TCP 探测，绝不能在主线程跑。
+     */
+    private fun flushDeferredPlaybackReconnect() {
+        val pending = deferredConnectionApply ?: return
+        deferredConnectionApply = null
+        ioScope.launch {
+            AppLog.i(TAG, "视频会话已收起：补做推迟的远端后端重建")
+            runCatching { applyCurrentConnection(pending.first, pending.second) }
+                .onFailure { AppLog.w(TAG, "补做远端后端重建失败（下次前台恢复会再试）", it) }
+        }
+    }
+
+    /**
      * 把「当前连接」落成实际后端（**R8** + **R7**）。
      *
      * - **WEBDAV**：用 [AddressSelector] 先内网后外网选地址（局域网不通自动换公网），
@@ -1807,7 +1848,25 @@ class AppContainer(context: Context) :
      *   于是浏览器拿到的仍是 [LocalBackends] 的双模式后端（R12）；
      * - 连接被删除 / 未选中 / 协议标识认不出：关掉远端后端，回落到本地根目录（认不出时给一句提示）。
      */
-    private suspend fun applyCurrentConnection(record: ConnectionRecord?, network: NetworkContext) {
+    private suspend fun applyCurrentConnection(
+        record: ConnectionRecord?,
+        network: NetworkContext,
+        /**
+         * 视频**正在播放**时遇到网络现场变化（锁屏后 Wi-Fi 抖动 / 切基站 / Wi-Fi→蜂窝）要不要推迟。
+         *
+         * 2026-11-20 锁屏停止播放的修复项之一：重建远端后端会 `close()` 旧的 SFTP/WebDAV 会话，
+         * 而回环代理此刻正拿着旧会话的流在读——一关就断流，用户看到的就是"锁屏之后连接断了、播放停了"。
+         * 连接/根目录变化仍传 false（用户的显式意图优先，必须立刻生效）。
+         */
+        deferWhilePlaying: Boolean = false,
+    ) {
+        if (deferWhilePlaying && remoteRoot != null && videoSession.videoSessionSource != null) {
+            deferredConnectionApply = record to network
+            AppLog.i(TAG, "视频播放中：网络现场变化暂不重建远端后端（等会话收起再收敛）")
+            Breadcrumbs.mark("播放中：网络变化推迟重建后端")
+            return
+        }
+        deferredConnectionApply = null
         if (record == null) {
             _remoteNotice.value = null
             closeRemoteRoot()
@@ -1914,8 +1973,10 @@ class AppContainer(context: Context) :
                     if (effectiveMax < tuning.maxBytes) {
                         AppLog.w(TAG, "缓存上限按磁盘余量下调：" + tuning.maxBytes + " → " + effectiveMax)
                     }
+                    // 后端先造出来：预读窗口要看它的 caps（SFTP 多连接时 maxParallelReads = 200）
+                    val delegate = build()
                     SegmentedCacheBackend(
-                        delegate = TimeoutStorageBackend(build()),
+                        delegate = TimeoutStorageBackend(delegate),
                         rootDir = File(appContext.cacheDir, SEGMENT_CACHE_DIR),
                         readAheadScope = ioScope,
                         // 段大小与缓存总上限在构造时定（改它等于缓存作废，所以"下次连接生效"）…
@@ -1923,6 +1984,8 @@ class AppContainer(context: Context) :
                         maxBytes = effectiveMax,
                         // 预读段数每次现读 ⇒ 设置里一改就生效（段大小只能下次连接生效）
                         readAheadSegments = tuning.readAheadSegments,
+                        // **喂满多连接**：并发段数 = 同时在飞的 SSH 通道数（SFTP 多连接按 caps 放大）
+                        readAheadWindow = readAheadWindowFor(delegate.caps, tuning.readAheadSegments),
                         // **按"连接"而不是"地址"分缓存**（2026-10-03 用户提问「局域网留了缓存，
                         // 切公网还要重新缓存吗？」）：同一连接下的局域网/公网地址共用同一份段缓存，
                         // 在家缓存过的部分，出门走公网直接复用。
@@ -2031,10 +2094,14 @@ class AppContainer(context: Context) :
             if (secret.isNullOrEmpty()) {
                 error("还没有保存密码，请在连接页编辑这条连接并填写密码")
             }
-            SftpStorageBackend(
-                ConnectionBackends.sftpConfig(record, address, secret, hostKeyPolicy = SftpHostKeyPolicy.TOFU),
-                sftpHostKeys,
-            )
+            // **多连接加速（2026-11-20）**：用户报外网 SFTP 只有 2-3 MB/s；2026-11-18 开发机实测
+            // 单连接 2.2 MB/s、20 连接 × 10 通道 23-25 MB/s（零失败）。这里把 App 默认设成
+            // 「20 条会话 × 10 通道」：目录/缩略图与播放共用一个池（元数据本身走独立会话的临时通道），
+            // 小文件（< 512 MB）自动只开 2 条会话——建连开销大于收益时不吃亏。
+            val sftpConfig = ConnectionBackends
+                .sftpConfig(record, address, secret, hostKeyPolicy = SftpHostKeyPolicy.TOFU)
+                .withMultiConnectionAcceleration()
+            SftpStorageBackend(sftpConfig, sftpHostKeys)
         }
     }
 
@@ -2135,6 +2202,9 @@ class AppContainer(context: Context) :
     // "打开 App 就看到崩溃提示"（用户报的就是"更新后打不开"）。现在改成**按需**：
 
     private companion object {
+
+        /** 预读窗口上限（段）：20 段 × 4 MB ≈ 80 MB 在飞，喂满多连接又不把手机顶爆。 */
+        const val MAX_READ_AHEAD_WINDOW = 20
 
         /** 后台不足 2 秒（转屏/权限框/PIP 切换）不重建连接。 */
         const val FOREGROUND_RECONNECT_MIN_BG_MS = 2_000L

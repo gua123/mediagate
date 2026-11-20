@@ -2,9 +2,12 @@ package io.github.gua123.mediagate.media.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -107,9 +110,12 @@ interface VideoSessionHost {
  *   Media3 会话，于是通知栏、锁屏、蓝牙、耳机键全部可用（R18「通知栏与锁屏可控」）。
  * - **前台服务**：由 :app 在视频起播时拉起；播放中 Media3 会把通知变成前台服务通知，
  *   进程因此在切后台/息屏时不会被随手回收（R18 要求 ≥30 分钟不中断）。
- * - **唤醒锁**：息屏后 CPU 若休眠，解码线程会被冻住（画面没了、声音也断）。:media:engine 的
- *   视频内核没有开 `setWakeMode`（那是音频服务里对 ExoPlayer 做的），所以这里在播放期间
- *   持一把 `PARTIAL_WAKE_LOCK`，暂停/退出立刻释放。
+ * - **唤醒锁 + Wi-Fi 锁**：息屏后 CPU 若休眠，解码线程会被冻住（画面没了、声音也断）；
+ *   锁屏后 Wi-Fi 进省电又会让远端读超时、回环代理断流。:media:engine 的视频内核没有开
+ *   `setWakeMode`（那是音频服务里对 ExoPlayer 做的），所以这里在**播放期间**持
+ *   `PARTIAL_WAKE_LOCK` 与 `WIFI_MODE_FULL_LOW_LATENCY`（API 28 及以下用 HIGH_PERF）；
+ *   暂停留 30 秒宽限（盖住 surface 销毁/缓冲抖动，见 [PlaybackKeepAwake]），
+ *   会话收起（停止播放 / 退出播放页）立刻释放。
  * - **画面**：不做任何"停渲染"的额外处理——息屏时系统销毁 surface，解码器继续输出音频；
  *   回到前台 surface 重建，画面自己回来（正是 R18 要的"音频轨继续输出，画面暂停渲染"）。
  *
@@ -133,7 +139,22 @@ class VideoPlaybackService : MediaSessionService() {
     /** 已经写进通知点击 PendingIntent 的视频路径（源变了才重写）。 */
     private var lastSessionPath: String? = null
 
+    /** 唤醒锁（CPU）：息屏后解码线程与回环代理的 socket 线程不能被冻住。 */
     private var wakeLock: PowerManager.WakeLock? = null
+
+    /**
+     * **Wi-Fi 锁**（2026-11-20 锁屏停止播放的修复项之一）。
+     *
+     * 锁屏后 Wi-Fi 会进省电（DTIM 拉长、部分机型直接断），远端 SFTP/WebDAV 的一次读就可能
+     * 超过 15 秒读超时 → 回环代理断流 → 播放停。以前只有唤醒锁（管 CPU），没人管 Wi-Fi 省电。
+     */
+    private var wifiLock: WifiManager.WifiLock? = null
+
+    /** 唤醒锁的获取时刻（elapsedRealtime）；用于到期前续期，不留"无锁空窗"。 */
+    private var wakeLockAcquiredAt = 0L
+
+    /** 最近一次「内核自报在播」的时刻（elapsedRealtime）；暂停宽限期判定用它。 */
+    private var lastPlayingAt = 0L
 
     /**
      * 会话状态轮询（1 秒一次）。
@@ -156,7 +177,9 @@ class VideoPlaybackService : MediaSessionService() {
                 lastSessionPath = source.path
                 runCatching { mediaSession?.setSessionActivity(openAppIntent()) }
             }
-            syncWakeLock(source.isPlaying)
+            val playing = source.isPlaying
+            if (playing) lastPlayingAt = SystemClock.elapsedRealtime()
+            syncKeepAwake(alive = true, playing = playing)
             sessionPlayer?.refresh()
             handler.postDelayed(this, POLL_INTERVAL_MS)
         }
@@ -217,7 +240,9 @@ class VideoPlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(poller)
+        // 两把锁都在这里放掉：服务没了就没人再需要它们（"停止播放就释放"是硬口径）
         releaseWakeLock()
+        releaseWifiLock()
         mediaSession?.release()
         mediaSession = null
         sessionPlayer?.release()
@@ -233,29 +258,89 @@ class VideoPlaybackService : MediaSessionService() {
         (application as? VideoSessionHost)?.videoSessionSource
 
     /**
-     * 唤醒锁跟随播放状态（R18 息屏不中断）。
+     * 保活锁（唤醒锁 + Wi-Fi 锁）跟随播放状态（R18 息屏不中断）。
      *
-     * 用带超时的 acquire（[WAKE_LOCK_TIMEOUT_MS]）兜底：万一某条异常路径没释放，
-     * 系统也会自己收回，不会留下一个永远亮着的锁。
+     * 口径见 [PlaybackKeepAwake]：**会话还在 + 在播 → 持有；暂停留 30 秒宽限；会话收起立刻释放**。
+     *
+     * 为什么要宽限期（2026-11-20 锁屏停止播放的**自锁环**）：旧实现是「这一拍 `isPlaying == false`
+     * 就立刻 release」。锁屏瞬间内核本来就会短暂报 false（surface 销毁 / 缓冲），锁一放，CPU 立刻睡，
+     * 于是数据流读不出来 → 更不可能恢复 → 播放就这么停在那里，而且**再也醒不回来**。
+     * 宽限期明显大于 SFTP 的 15 秒读超时，正好把这段抖动盖住，同时真暂停超过 30 秒仍然释放。
      */
-    private fun syncWakeLock(playing: Boolean) {
-        if (playing) acquireWakeLock() else releaseWakeLock()
+    private fun syncKeepAwake(alive: Boolean, playing: Boolean) {
+        val sinceLastPlaying = when {
+            playing -> 0L
+            lastPlayingAt == 0L -> Long.MAX_VALUE
+            else -> SystemClock.elapsedRealtime() - lastPlayingAt
+        }
+        if (PlaybackKeepAwake.shouldHold(sessionAlive = alive, playing = playing, msSinceLastPlaying = sinceLastPlaying)) {
+            acquireWakeLock()
+            acquireWifiLock()
+        } else {
+            releaseWakeLock()
+            releaseWifiLock()
+        }
     }
 
+    /**
+     * 拿唤醒锁；已持有但快到超时就**续一次**。
+     *
+     * 续期而不是等它自己过期：带超时的 acquire 只是「漏释放」的兜底，不该变成
+     * 「每 30 分钟掉一次锁」——那一瞬间没有唤醒锁，进程就可能在读超时里被冻住。
+     */
     private fun acquireWakeLock() {
-        val current = wakeLock
-        if (current?.isHeld == true) return
         val manager = getSystemService(PowerManager::class.java) ?: return
+        val current = wakeLock
+        val heldMs = if (current?.isHeld == true && wakeLockAcquiredAt > 0L) {
+            SystemClock.elapsedRealtime() - wakeLockAcquiredAt
+        } else {
+            -1L
+        }
+        if (heldMs >= 0L && !PlaybackKeepAwake.shouldRenew(heldMs, WAKE_LOCK_TIMEOUT_MS)) return
+        // 续期：同一把锁（setReferenceCounted(false)）release 与 acquire 必须配对
+        if (heldMs >= 0L) runCatching { current?.release() }
         val lock = current ?: manager
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
             .apply { setReferenceCounted(false) }
         wakeLock = lock
         runCatching { lock.acquire(WAKE_LOCK_TIMEOUT_MS) }
+            .onSuccess { wakeLockAcquiredAt = SystemClock.elapsedRealtime() }
             .onFailure { AppLog.w(TAG, "获取播放唤醒锁失败（省电策略可能拦截）", it) }
     }
 
     private fun releaseWakeLock() {
+        wakeLockAcquiredAt = 0L
         val current = wakeLock ?: return
+        if (current.isHeld) runCatching { current.release() }
+    }
+
+    /**
+     * **Wi-Fi 锁**：播放期间要「屏幕关了也别让 Wi-Fi 睡」。
+     *
+     * 锁屏后 Wi-Fi 进省电（DTIM 周期拉长、部分机型直接断链）会让远端 SFTP/WebDAV 的单次读
+     * 超过 15 秒读超时，回环代理随即断流——用户看到的就是「锁屏后连接断掉、播放停止」。
+     * 旧实现只有 CPU 唤醒锁，没有任何东西管 Wi-Fi。
+     *
+     * API 29+ 用 [WifiManager.WIFI_MODE_FULL_LOW_LATENCY]（为音视频实时流设计，息屏仍维持性能），
+     * 更老的设备退回 [WifiManager.WIFI_MODE_FULL_HIGH_PERF]。
+     */
+    private fun acquireWifiLock() {
+        val current = wifiLock
+        if (current?.isHeld == true) return
+        val manager = runCatching { getSystemService(WifiManager::class.java) }.getOrNull() ?: return
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        } else {
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF
+        }
+        val lock = current ?: runCatching { manager.createWifiLock(mode, WIFI_LOCK_TAG) }.getOrNull() ?: return
+        wifiLock = lock
+        runCatching { lock.acquire() }
+            .onFailure { AppLog.w(TAG, "获取播放 Wi-Fi 锁失败（省电策略可能拦截）", it) }
+    }
+
+    private fun releaseWifiLock() {
+        val current = wifiLock ?: return
         if (current.isHeld) runCatching { current.release() }
     }
 
@@ -351,6 +436,9 @@ class VideoPlaybackService : MediaSessionService() {
         const val WAKE_LOCK_TIMEOUT_MS = 30L * 60L * 1_000L
 
         const val WAKE_LOCK_TAG = "mediagate:video-playback"
+
+        /** Wi-Fi 锁的 tag（`dumpsys wifi` / 电量统计里能按它认出是本 App）。 */
+        const val WIFI_LOCK_TAG = "mediagate:video-playback-wifi"
     }
 }
 

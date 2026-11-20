@@ -27,6 +27,7 @@ import java.io.InputStream
  * @param start 本流在文件里的起始绝对偏移（[RangeStream.position] 的 0 点）。
  * @param length 本流可读长度；-1 表示读到文件末尾。
  * @param path 树内路径（只用于错误消息）。
+ * @param onClose 关闭时的回调（后端用来减「同一文件的并发读数」，多连接靠它区分播放/缩略图）。
  */
 internal class SftpRangeStream(
     private val pool: SftpChannelPool,
@@ -34,6 +35,7 @@ internal class SftpRangeStream(
     private val start: Long,
     override val length: Long,
     private val path: String,
+    private val onClose: (() -> Unit)? = null,
 ) : RangeStream {
 
     private var pos: Long = 0L
@@ -123,6 +125,7 @@ internal class SftpRangeStream(
         if (closed) return
         closed = true
         closeInput()
+        runCatching { onClose?.invoke() }
     }
 
     // ------------------------------------------------------------------ 内部

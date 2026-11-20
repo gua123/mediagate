@@ -23,6 +23,14 @@ data class VideoSession(
     val backendId: String,
     val path: String,
     val videoView: View?,
+    /**
+     * 系统侧（通知栏 / 锁屏 / 蓝牙 / 耳机键）要求**暂停**时的回调（2026-11-20）。
+     *
+     * 为什么页面需要知道这一下：锁屏期间内核可能被系统停掉，回前台要接着播（R18「息屏不中断」）；
+     * 但如果那一下是**用户自己按的暂停**，就不能替他续播。这条回调把「用户意图」和「被系统搞停」分开，
+     * 两者的表现都是 `isPlaying == false`，光看内核状态分不出来。
+     */
+    val onSessionPause: (() -> Unit)? = null,
 )
 
 /**

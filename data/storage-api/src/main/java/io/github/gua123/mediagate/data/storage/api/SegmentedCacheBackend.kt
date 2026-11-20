@@ -67,6 +67,15 @@ class SegmentedCacheBackend(
     private val namespace: String = delegate.id,
     /** 读到某段后**顺手预读**后面几段（0 = 关闭）。 */
     private val readAheadSegments: Int = DEFAULT_READ_AHEAD_SEGMENTS,
+    /**
+     * **实际预读段数**（默认 = [readAheadSegments]，单连接时代的老行为不变）。
+     *
+     * 2026-11-20「SFTP 多连接加速」：并发段下载数决定同时占几条 SSH 连接，
+     * 只预读 4 段的话 20 条连接里最多只有 4-5 条在干活，带宽仍然上不去。
+     * :app 按后端 caps.maxParallelReads 传更大的值（SFTP 多连接 → 20 段），
+     * 单会话后端（WebDAV / FTP）沿用小值。
+     */
+    private val readAheadWindow: Int = readAheadSegments,
     /** 预读用的作用域；为 null 时不做预读（单测与其它调用方不受影响）。 */
     private val readAheadScope: CoroutineScope? = null,
 ) : StorageBackend {
@@ -74,7 +83,11 @@ class SegmentedCacheBackend(
     init {
         require(segmentBytes > 0L) { "segmentBytes 必须为正：$segmentBytes" }
         require(maxBytes >= segmentBytes) { "maxBytes 不能小于一个段：$maxBytes < $segmentBytes" }
+        require(readAheadWindow >= 0) { "预读段数不能为负：$readAheadWindow" }
     }
+
+    /** 当前实际预读段数（设置页诊断卡展示用；多会话后端会大于用户设置）。 */
+    val readAheadWindowSegments: Int get() = readAheadWindow
 
     /** 正在下载的段（单飞：同一段不会被下两次，不同段可以同时下——预读才有意义）。 */
     /**
@@ -729,10 +742,14 @@ class SegmentedCacheBackend(
      * 反过来（用固定容量信号量直接当限制用）会导致"一个块抢走全部许可、其余块排队"，
      * 也就是并发退化成串行——那是错的（已在单测里暴露过）。
      */
-    /** 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。 */
+    /**
+     * 预读：当前段读完后，顺手把后面几段也拉进缓存（上限内并行）。
+     *
+     * 这里是「多连接能不能吃满」的闸门：并发段数 = 同时在飞的 SSH 通道数。
+     */
     private fun scheduleReadAhead(path: String, index: Long) {
         val scope = readAheadScope ?: return
-        val ahead = readAheadSegments
+        val ahead = readAheadWindow
         if (ahead <= 0) return
         for (step in 1..ahead) {
             val target = index + step
@@ -1019,21 +1036,21 @@ class SegmentedCacheBackend(
  *
  * 这里给存储层单独一个池：即使有调用卡住，也不会波及系统 IO 池，且容量可控。
  *
- * 容量取 12 的依据（2026-11-18 实测）：OpenSSH 单连接 MaxSessions 默认 **10**，
- * 第 11 条通道直接被拒（JSchException channel is not opened），前 10 条 stat 均 1–8 ms。
- * 所以 10 条通道 + 2 条余量（元数据/本地边车 IO）就够；32/64 只是空转线程，
- * 每个线程约 1 MB 栈，在 Android 上纯属浪费内存。
+ * 线程数上界 =**同时在飞的存储操作数**：多连接 SFTP 一个文件预读 20 段就是 20 个并发段任务，
+ * 每个段任务还要嵌套几次 withContext（同一个 dispatcher 也会重新派发），
+ * 所以这里用**真正的缓存池**（0..无界、60 s 空闲回收）——线程数由 [Caps.maxParallelReads]
+ * 与预读窗口决定，不由池子自己拍一个上限。
+ *
+ * 2026-11-20 之前是 12/32 + SynchronousQueue：20 段并发时很容易走到 "池满 → 直接抛
+ * RejectedExecutionException"，那会把多连接加速变成随机崩溃。缓存池没有这个拒绝路径。
+ * 代价是卡死线程不再被池容量兜住——它们由 [TimeoutStorageBackend] 的硬超时 +
+ * `onHardTimeout()` 作废会话来收尾（2026-11-17/18 已有机制，见 SftpStorageBackend）。
  */
 object StorageDispatchers {
     // 2026-11-18 真机实证：固定 12 线程会被卡死的 JSch 调用**永久占满**（线程全 S 状态卡在
     // socket read 上、永不返回），于是后续 withContext 排队、连方法第一行都执行不到。
-    // 改用无上限缓存池：卡住的线程随它去，至少不阻塞新请求（线程数上界由并发请求数决定，
-    // 而并发已被 maxParallelReads 与超时作废机制限制）。
-    val io: CoroutineDispatcher = java.util.concurrent.ThreadPoolExecutor(
-        /* corePoolSize = */ 12,
-        /* maximumPoolSize = */ 32,
-        /* keepAliveTime = */ 30L,
-        /* unit = */ java.util.concurrent.TimeUnit.SECONDS,
-        /* workQueue = */ java.util.concurrent.SynchronousQueue(),
-    ) { r -> Thread(r, "mg-storage-io").apply { isDaemon = true } }.asCoroutineDispatcher()
+    // 改用缓存池：卡住的线程随它去，至少不阻塞新请求（上界由并发请求数与超时作废机制限制）。
+    val io: CoroutineDispatcher = java.util.concurrent.Executors.newCachedThreadPool { r ->
+        Thread(r, "mg-storage-io").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
 }

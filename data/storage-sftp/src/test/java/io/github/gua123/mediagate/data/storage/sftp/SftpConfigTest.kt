@@ -25,6 +25,11 @@ class SftpConfigTest {
         readTimeoutMs: Long = 15_000L,
         policy: SftpHostKeyPolicy = SftpHostKeyPolicy.TOFU,
         maxChannels: Int = 4,
+        maxSessions: Int = 1,
+        channelsPerSession: Int = 10,
+        largeFileBytes: Long = SftpConfig.DEFAULT_LARGE_FILE_BYTES,
+        smallFileSessions: Int = 2,
+        acquireTimeoutMs: Long = SftpConfig.DEFAULT_ACQUIRE_TIMEOUT_MS,
     ) = SftpConfig(
         host = host,
         port = port,
@@ -36,6 +41,11 @@ class SftpConfigTest {
         readTimeoutMs = readTimeoutMs,
         hostKeyPolicy = policy,
         maxChannels = maxChannels,
+        maxSessions = maxSessions,
+        channelsPerSession = channelsPerSession,
+        largeFileBytes = largeFileBytes,
+        smallFileSessions = smallFileSessions,
+        acquireTimeoutMs = acquireTimeoutMs,
     )
 
     @Test
@@ -91,8 +101,46 @@ class SftpConfigTest {
     @Test
     fun `通道池大小有上限`() {
         assertThrows(IllegalArgumentException::class.java) { config(maxChannels = 0) }
-        assertThrows(IllegalArgumentException::class.java) { config(maxChannels = 99) }
+        // 上限从 16 提到 200（20 会话 × 10 通道，2026-11-20 多连接）：201 才越界
+        assertThrows(IllegalArgumentException::class.java) { config(maxChannels = 201) }
         assertEquals(2, config(maxChannels = 2).maxChannels)
+    }
+
+    @Test
+    fun `默认仍是单会话老行为`() {
+        val config = config(maxChannels = 4)
+        assertEquals(1, config.maxSessions)
+        assertEquals(4, config.channelCapacity)
+        assertEquals(4, config.effectiveChannelsPerSession)
+    }
+
+    @Test
+    fun `多连接加速 20 会话 x 10 通道 = 200 通道预算`() {
+        val config = config().withMultiConnectionAcceleration()
+        assertEquals(SftpConfig.MULTI_CONNECTION_SESSIONS, config.maxSessions)
+        assertEquals(10, config.channelsPerSession)
+        assertEquals(200, config.maxChannels)
+        assertEquals(200, config.channelCapacity)
+        // 每条会话的都开满 10 条（否则等于白建连接）
+        assertEquals(10, config.effectiveChannelsPerSession)
+    }
+
+    @Test
+    fun `小文件只开 2 条、大文件开满`() {
+        val config = config().withMultiConnectionAcceleration()
+        assertEquals(2, config.sessionsForSize(100L * 1024 * 1024))
+        assertEquals(2, config.sessionsForSize(null))
+        assertEquals(20, config.sessionsForSize(SftpConfig.DEFAULT_LARGE_FILE_BYTES))
+        assertEquals(20, config.sessionsForSize(10L * 1024 * 1024 * 1024))
+    }
+
+    @Test
+    fun `小文件会话数被夹到总会话数以内`() {
+        // 单会话配置下「小文件 2 条」自动夹成 1 条（老行为不能因为新参数变非法）
+        assertEquals(1, config(maxSessions = 1, smallFileSessions = 2).sessionsForSize(1L))
+        assertEquals(2, config(maxSessions = 2, smallFileSessions = 3).sessionsForSize(1L))
+        assertThrows(IllegalArgumentException::class.java) { config(maxSessions = 0) }
+        assertThrows(IllegalArgumentException::class.java) { config(channelsPerSession = 33) }
     }
 
     @Test

@@ -27,7 +27,10 @@ import java.io.InputStream
  *   `:data:storage-local` 的 FileStorageBackend 完全一致；
  * - 随机读：`SSH_FXP_READ + offset`（真按偏移读，见 [SftpRangeStream]），拖拽 seek 不重下；
  * - 写回：SFTP PUT（R14 字幕写回视频同目录；父目录不存在 → NotFound、无权限 → AccessDenied）；
- * - 会话：**单会话复用 + 通道池**（[SftpChannelPool]，plan 4.1），断线自动重连且不丢 seek；
+ * - 会话：**多会话 + 每会话多条通道**（[SftpChannelPool]，plan 4.1），断线自动重连且不丢 seek；
+ *   多连接按需懒加载（小文件 2 条、大文件开满，见 [SftpConfig.sessionsForSize]）；
+ *   只有**同一文件的多路并发读**（播放 + 预读）才真去拉满，缩略图/目录只占 1 条连接；
+ *   2026-11-18 用户实测：单连接 2.2 MB/s → 20 连接 × 10 通道 23-25 MB/s；
  * - 主机密钥：**TOFU + 变更告警**（plan 4.9，[TofuHostKeyVerifier]），绝不静默接受变更；
  * - 连通性：probe() 三段计时（DNS / TCP / banner + 认证 + 列目录），**不抛异常**。
  *
@@ -60,6 +63,19 @@ class SftpStorageBackend(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SftpATTRS>?): Boolean = size > 128
     }
 
+    /**
+     * **同一文件当前有几个读流在飞**（2026-11-20 多连接用）。
+     *
+     * 为什么需要它：`stat` 出来的大小只能说明「这是个大文件」，不能说明「这是播放」。
+     * 缩略图/抽帧也是打开大文件读几 MB，但它们被限到 2 路并发；播放（分段缓存预读 20 段）
+     * 会立刻出现多路并发读。只有后者才值得为它拉满 20 条会话——这正是用户拍板的
+     * 「目录+缩略图占 1 条连接，视频播放占 20 条」。
+     */
+    private val activeReads = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
+
+    /** 同一文件达到几路并发读就认定是「播放」（缩略图上限 2 路）。 */
+    private val playbackReadThreshold: Int = PLAYBACK_READ_THRESHOLD
+
     /** 取属性：先查缓存，未命中才走一次网络。 */
     private suspend fun attrsOf(abs: String, display: String): SftpATTRS {
         synchronized(attrsCache) { attrsCache[abs] }?.let { return it }
@@ -77,13 +93,15 @@ class SftpStorageBackend(
      *
      * SFTP 天生支持任意偏移随机读（`SSH_FXP_READ` 自带 offset），所以 `randomAccess = true`；
      * `rangeHeader` / `resumeByRest` 是 HTTP / FTP 的概念，对 SFTP 无意义，恒 false；
-     * 并发上限 = 通道池大小（单会话下的折中，避免把服务器打爆）。
+     * 并发上限 = **全池通道预算**（[SftpConfig.channelCapacity]）：多连接时它是
+     * 「会话数 × 单会话通道数」（App 默认 20 × 10 = 200），单会话配置下仍等于 `maxChannels`。
+     * 上层（分段缓存 / 预取）按它决定并发读的数量——这是多连接能吃到带宽的前提。
      */
     override val caps: Caps = Caps(
         randomAccess = true,
         rangeHeader = false,
         resumeByRest = false,
-        maxParallelReads = config.maxChannels,
+        maxParallelReads = config.channelCapacity,
         // SFTP 通常可写；真实权限靠 write() 的 AccessDenied 反馈（R14 由上层落本地缓存）
         writable = true,
     )
@@ -126,9 +144,16 @@ class SftpStorageBackend(
         // 走缓存：同一文件连续取多块时不再每块都 stat 一次（高延迟链路上这是纯亏的 RTT）
         val attrs = attrsOf(abs, path)
         if (attrs.isDir) throw StorageException.NotSupported("目录不能读取：" + path)
-        if (length == 0L) return@withContext SftpRangeStream(pool, abs, offset, 0L, path)
+        // **多连接懒加载的入口（1/2）**：按文件大小定「最多开几条会话」——小文件（< 512 MB）2 条，
+        // 大文件开满 20 条。只设目标，不在这里建连（缩略图也会走到这里）。
+        pool.planForSize(attrs.size)
+        // **（2/2）确认是不是播放**：同一文件多路并发读才拉满会话；缩略图只有 2 路，不会触发。
+        val concurrentReads = noteReadStarted(relative)
+        if (concurrentReads >= playbackReadThreshold) pool.ensureSessionRamp()
+        val onClosed = { noteReadFinished(relative) }
+        if (length == 0L) return@withContext SftpRangeStream(pool, abs, offset, 0L, path, onClosed)
         // 越界（offset 已在末尾之后）不报错：length 会被夹成 0，read 直接返回 -1（与本地后端同语义）
-        SftpRangeStream(pool, abs, offset, effectiveSftpLength(attrs.size, offset, length), path)
+        SftpRangeStream(pool, abs, offset, effectiveSftpLength(attrs.size, offset, length), path, onClosed)
     }
 
     override suspend fun write(path: String, data: InputStream): Unit = withContext(Dispatchers.IO) {
@@ -295,11 +320,27 @@ class SftpStorageBackend(
     /**
      * 硬超时后作废 SSH 会话（2026-11-17 真机实证：不作废会让卡死的线程拖死后续所有请求）。
      * 下次操作会自动重连，用户无需重启 App。
+     *
+     * 多连接版（2026-11-20）：作废的是**池里所有会话**——卡住的通道可能挂在任意一条上，
+     * 只扔一条等于赌运气；作废后 20 条会话会在后续读取中按需并行重建。
      */
     override fun onHardTimeout() {
-        AppLog.w("storage-sftp", "硬超时后作废 SSH 会话：" + redactEndpoint(config.host, config.port))
+        AppLog.w("storage-sftp", "硬超时后作废 SFTP 会话池：" + redactEndpoint(config.host, config.port))
         runCatching { pool.invalidateCurrentSession() }
     }
+
+    /** 该文件多了一个读流；返回当前并发数（播放判据）。 */
+    private fun noteReadStarted(path: String): Int =
+        activeReads.computeIfAbsent(path) { java.util.concurrent.atomic.AtomicInteger() }.incrementAndGet()
+
+    /** 该文件少了一个读流（流关闭时调用；归零就从表里摘掉）。 */
+    private fun noteReadFinished(path: String) {
+        val counter = activeReads[path] ?: return
+        if (counter.decrementAndGet() <= 0) activeReads.remove(path, counter)
+    }
+
+    /** 池的即时快照（诊断 / 单测断言「开几条会话、借了几条通道」用）。 */
+    internal fun poolStats(): SftpPoolStats = pool.stats()
 
     private fun ensureOpen() {
         if (closed) throw StorageException.Unknown("后端已关闭：" + id)
@@ -310,5 +351,8 @@ class SftpStorageBackend(
 
     private companion object {
         const val TAG = "storage-sftp"
+
+        /** 同一文件 ≥ 3 路并发读 = 播放（缩略图/抽帧被限到 2 路，不会误判）。 */
+        const val PLAYBACK_READ_THRESHOLD = 3
     }
 }

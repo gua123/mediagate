@@ -227,6 +227,8 @@ class VideoPlayerViewModel(
                     backendId = ref.backendId,
                     path = ref.path,
                     videoView = view,
+                    // 通知栏/锁屏按的暂停是"用户意图"：记下来，回前台别把它当成"被系统停掉"又续播
+                    onSessionPause = { pausedFromSession = true },
                 ),
             )
         }.onFailure { error ->
@@ -247,8 +249,17 @@ class VideoPlayerViewModel(
     /** 是否真的经历过一次后台（避免播放页首次 ON_RESUME 就 detach/attach 打断起播）。 */
     private var hostPaused = false
 
+    /** 进后台那一刻内核是否在播（回前台续播的唯一依据之一）。 */
+    private var playingBeforeBackground = false
+
+    /** 后台期间用户是否在通知栏 / 锁屏上按过暂停（按过就不替他续播）。 */
+    private var pausedFromSession = false
+
     fun onHostPause() {
         hostPaused = true
+        // 记下"进后台那一刻在不在播"：回前台时内核若被系统停掉，靠它决定要不要续播
+        playingBeforeBackground = engine?.isPlaying == true
+        pausedFromSession = false
     }
 
     /**
@@ -284,7 +295,13 @@ class VideoPlayerViewModel(
         hostPaused = false
         val current = engine ?: return
         current.recoverVideoOutput()
-        if (_state.value.playing && !current.isPlaying) current.play()
+        // 2026-11-20：锁屏期间内核可能被系统停掉（surface 销毁 / 网络抖动），这时界面采样值
+        // 也已经是"暂停"了，用 [_state.playing] 作判据就永远不会续播。改为按**进后台前在播** +
+        // **后台期间用户没按过暂停**来判（用户自己暂停过就尊重他）。
+        val resume = !current.isPlaying && !pausedFromSession && playingBeforeBackground
+        playingBeforeBackground = false
+        pausedFromSession = false
+        if (resume) current.play()
     }
 
     /** 失败后重试（释放现有内核，按当前路径重新来一遍）。 */

@@ -47,6 +47,14 @@ class VideoSessionController(
     private val context: Context,
     /** 缩略图仓库（取通知栏封面用，R18）；null = 不提供封面。 */
     private val thumbnailRepository: ThumbnailRepository? = null,
+    /**
+     * **会话收起后的回调**（2026-11-20 锁屏停止播放的修复项之一）。
+     *
+     * :app 用它补做「播放期间被推迟的远端后端重建」：播放中遇到网络现场变化（锁屏后 Wi-Fi 抖动、
+     * 切基站、Wi-Fi→蜂窝）时不能立刻拆后端——正在读的 SFTP/WebDAV 流会被关掉，用户看到的就是
+     * "锁屏后连接断掉、播放停止"。推迟到会话收起后再收敛，代价只是一个很短的"后端略旧"窗口。
+     */
+    private val onSessionClosed: () -> Unit = {},
 ) : VideoPlaybackHost, VideoSessionHost {
 
     private val appContext: Context = context.applicationContext
@@ -118,6 +126,7 @@ class VideoSessionController(
         }
         this.session = session
         source = EngineSessionSource(session)
+        startServiceSafely()
         connectService()
     }
 
@@ -148,6 +157,27 @@ class VideoSessionController(
         connecting = false
         runCatching { appContext.stopService(Intent(appContext, VideoPlaybackService::class.java)) }
             .onFailure { AppLog.w(TAG, "停止视频会话服务失败", it) }
+        // 会话收起了 = 不再有任何"正在读的流"需要保护：把播放期间推迟的后端重建补上
+        runCatching { onSessionClosed() }
+            .onFailure { AppLog.w(TAG, "会话收起回调失败（后端可能要等下次前台恢复才重建）", it) }
+    }
+
+    /**
+     * 把视频会话服务**拉起来**（不只是 bind）。
+     *
+     * 为什么必须有这一句（2026-11-20 锁屏停止播放）：只用 [MediaController] 绑定创建的只是
+     * **bound-only 服务**——`onTaskRemoved` 永远不会回调到它（那是 started service 才有的回调），
+     * 进程被系统清掉后也没有任何重启语义；前台化则完全押在 Media3 自己那只手上。
+     * 起播时 App 必然在前台，`startService` 合法。
+     *
+     * 刻意**不用** `startForegroundService`：它要求 5 秒内 `startForeground`，
+     * 而"真的开始播"由 Media3 在 player 进入 READY + playWhenReady 时才做，
+     * 抢先调用会踩 `ForegroundServiceDidNotStartInTimeException`（真机表现是"一起播就闪退"）。
+     */
+    private fun startServiceSafely() {
+        runCatching { appContext.startService(Intent(appContext, VideoPlaybackService::class.java)) }
+            .onSuccess { AppLog.i(TAG, "已 startService 视频会话服务（不再只是绑定）") }
+            .onFailure { AppLog.w(TAG, "startService 视频会话服务失败（退回只用绑定连接）", it) }
     }
 
     /**
@@ -214,6 +244,9 @@ class VideoSessionController(
         }
 
         override fun pause() {
+            // 先把「这是用户按的暂停」告诉页面：锁屏期间内核被系统停掉时回前台要续播，
+            // 而用户自己按的暂停不能替他续播——两者在 isPlaying 上长得一模一样（2026-11-20）
+            session.onSessionPause?.invoke()
             runCatching { session.engine.pause() }.onFailure { AppLog.w(TAG, "会话暂停失败", it) }
         }
 

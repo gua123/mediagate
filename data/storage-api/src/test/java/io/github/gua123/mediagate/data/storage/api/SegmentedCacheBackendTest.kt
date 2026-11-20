@@ -4,7 +4,11 @@ import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -439,6 +443,47 @@ class SegmentedCacheBackendTest {
         // 顺序下载：任何时刻只有一个在途请求（这正是"把并发去掉"后的预期行为）
         assertEquals("同一时刻只应有一个请求在途", 1, peak.get())
         stream.close()
+    }
+
+    /**
+     * **多连接加速（2026-11-20）**：并发段数由 readAheadWindow 决定，而不是用户设置。
+     *
+     * SFTP 一条连接最多跑 10 条通道；20 条连接能到 23-25 MB/s 靠的是「同时有很多段在飞」。
+     * 用户设置（默认 4 段）是单连接时代的经验值，多连接后端由 :app 把窗口放大到 20 段。
+     */
+    @Test
+    fun 预读窗口按readAheadWindow放大_多连接靠并发段数喂满() = runBlocking {
+        val fetches = java.util.Collections.synchronizedList(mutableListOf<Pair<Long, Long>>())
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val cache = SegmentedCacheBackend(
+            delegate = FakeSequentialBackend(payload, fetches),
+            rootDir = tmp.newFolder(),
+            segmentBytes = segment,
+            maxBytes = 64L * 1024,
+            io = Dispatchers.IO,
+            // 用户设置只有 1 段，多连接后端把窗口放大到 3 段
+            readAheadSegments = 1,
+            readAheadWindow = 3,
+            readAheadScope = scope,
+        )
+        try {
+            assertEquals(3, cache.readAheadWindowSegments)
+            cache.openRead("/m.bin", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+            val wanted = setOf(segment, segment * 2, segment * 3)
+            val deadline = System.currentTimeMillis() + 3_000L
+            while (System.currentTimeMillis() < deadline) {
+                if (fetches.map { it.first }.toSet().containsAll(wanted)) break
+                delay(20L)
+            }
+            val offsets = fetches.map { it.first }.toSet()
+            assertTrue(
+                "读第 0 段后应当预读 1/2/3 段（不是用户设置的 1 段），实际请求 " + offsets,
+                offsets.containsAll(wanted),
+            )
+        } finally {
+            runCatching { cache.close() }
+            scope.cancel()
+        }
     }
 
     /** 只会顺序读的假后端：`openRead` 记下每次请求的 (offset, length)。 */
