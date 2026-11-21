@@ -107,6 +107,57 @@ object BrowserRoutes {
         return MediaKind.entries.firstOrNull { it.name == argument }
     }
 
+    /** 去参数的基名：`browser?path=a&kind=VIDEO` → `browser`；null / 空串 → null。 */
+    fun baseNameOf(route: String?): String? =
+        route?.substringBefore('?')?.takeIf { it.isNotEmpty() }
+
+    /**
+     * 这条 destination 路由是不是浏览页。
+     *
+     * **2026-11-21**：只比基名，**不解析路由模板**。旧实现把
+     * `browser?path={path}&kind={kind}&startAtRoot={startAtRoot}` 整串丢给 `popBackStack(route)`，
+     * 命中与否取决于导航库怎么把「模板」和「具体路由」做匹配 —— 参数名、参数顺序、编码方式任何一处变动
+     * 都会在没人察觉的情况下改掉语义（返回键变成"再开一条浏览页"）。基名比对与参数无关：
+     * 模板加参数、减参数，或者传进来的是 `browser?startAtRoot=1` 这种具体路由，都能认出来。
+     */
+    fun isBrowserDestination(route: String?): Boolean = baseNameOf(route) == BASE
+
+    /** 「从播放页 / 看图页返回浏览页」该怎么做，见 [planReturnToBrowser]。 */
+    sealed interface BrowserReturnPlan {
+        /** 当前页之下确实压着浏览页 ⇒ 往上弹 [steps] 层回到它（它自己所在的目录保持不变）。 */
+        data class PopToBrowser(val steps: Int) : BrowserReturnPlan
+
+        /**
+         * 当前页就是浏览页 ⇒ **什么都不做**。
+         *
+         * 旧实现这里会走 `navigate(browser)` 再压一条，栈变成 home→browser→browser：
+         * 有了重复的浏览页，底部页签的 saveState/restoreState 就会把两条一起恢复回来。
+         */
+        data object AlreadyOnBrowser : BrowserReturnPlan
+
+        /** 栈里压根没有浏览页（从首页「继续播放」这类来路进来）⇒ 新开一条。 */
+        data object OpenBrowser : BrowserReturnPlan
+    }
+
+    /**
+     * 由返回栈的路由快照（**自底向顶**）算出「回浏览页」的动作。
+     *
+     * 抽成纯函数是为了能进 JVM 单测：真正的 `NavHostController` 只在 Android 运行时里存在，
+     * 而"到底该 pop 回栈里那条浏览页、还是原地不动、还是新开一条"恰恰只能靠这份决策钉住。
+     *
+     * @param backStackRoutes 每层 destination 的 `route`（模板或具体路由都行；NavGraph 那层是 null）。
+     */
+    fun planReturnToBrowser(backStackRoutes: List<String?>): BrowserReturnPlan {
+        val lastIndex = backStackRoutes.lastIndex
+        if (lastIndex < 0) return BrowserReturnPlan.OpenBrowser
+        val browserIndex = backStackRoutes.indexOfLast { isBrowserDestination(it) }
+        return when {
+            browserIndex < 0 -> BrowserReturnPlan.OpenBrowser
+            browserIndex == lastIndex -> BrowserReturnPlan.AlreadyOnBrowser
+            else -> BrowserReturnPlan.PopToBrowser(lastIndex - browserIndex)
+        }
+    }
+
     /**
      * 底部导航切换时给 NavOptions 的 saveState / restoreState 组合。
      *
@@ -118,16 +169,29 @@ object BrowserRoutes {
     /**
      * 计算页签切换的返回栈策略。
      *
-     * @param reuseState true = 切走再切回保留该页自己的返回栈与 ViewModel 状态（HOME / CONNECTIONS / SETTINGS）；
+     * @param isStartDestination 目标是 NavHost 的**起始页**（首页）—— 它永远躺在栈底，没有任何"自己的返回栈"。
+     * @param reuseState true = 切走再切回保留该页自己的返回栈与 ViewModel 状态（连接 / 设置）；
      *   false = **每次都从干净的一页开始**（「浏览」页签）。
      *
      * **2026-11-18 修复**：`restoreState = true` 会把上次 entry 连同它的 ViewModel 一起恢复，
      * 于是首页三个媒体入口点进来看到的是"上次那个文件夹 + 上次那个过滤"，和页签渲染同一份列表。
      *
+     * **2026-11-21 修复（真机：从播放页返回后点「首页」没反应）**：起始页签**绝对不能带 restoreState**。
+     * Navigation 的 `popUpTo(id) { saveState = true }` 会把**被保留下来的那个 destination**（这里是起始页 home）
+     * 也写进 `backStackMap`，映射到"刚被弹掉的那一堆"（浏览页 + 它上面的东西）。于是下一次
+     * `navigate("home") { restoreState = true }` 恢复的不是首页自己的状态，而是**刚弹掉的那条浏览页** ——
+     * 首页被顶掉、界面还停在浏览页，看起来就是"点了没反应"；因为每次点击都重新存一次、再恢复一次，
+     * 这个环会一直转下去，只有重启进程（`backStackMap` 清空）才恢复。
+     * 首页在栈底，本来就没有"切走再切回"可言，`restoreState = false` 是它的正确取值。
+     *
      * `saveState` 保持 true 不动，哪怕目标是浏览页：`popUpTo { saveState }` 保存的是**被切走的那一页**
-     * （切去浏览页时可能是连接页/设置页），关掉它会让另外三个页签"切走再切回"丢状态 —— 那是顺手修不能
+     * （切去浏览页时可能是连接页/设置页），关掉它会让连接/设置"切走再切回"丢状态 —— 那是顺手修不能
      * 付的代价。浏览页自己的那份存了也用不上（`restoreState = false` 不会去取），代价只是栈里一点死数据。
      */
-    fun topLevelNavFlags(reuseState: Boolean): TopLevelNavFlags =
-        TopLevelNavFlags(saveState = true, restoreState = reuseState)
+    fun topLevelNavFlags(isStartDestination: Boolean, reuseState: Boolean): TopLevelNavFlags =
+        TopLevelNavFlags(
+            saveState = true,
+            // 起始页（栈底）没有自己的返回栈：给它 restoreState 只会把"刚才压在它上面的那一页"恢复回来。
+            restoreState = reuseState && !isStartDestination,
+        )
 }

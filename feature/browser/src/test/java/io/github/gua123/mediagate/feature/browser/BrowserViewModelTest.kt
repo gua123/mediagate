@@ -262,23 +262,36 @@ class BrowserViewModelTest {
     }
 
     @Test
-    fun `浏览页签不复用返回栈_其余三个页签照旧保留`() {
+    fun `浏览页签不复用返回栈_连接与设置照旧保留`() {
         // 真正的 NavHostController 活在 Android 运行时里，JVM 单测构造不出来；
         // 这里钉住的是 :app 的 switchTopLevel 直接消费的那份决策（BrowserRoutes.topLevelNavFlags）。
-        val browser = BrowserRoutes.topLevelNavFlags(reuseState = false)
+        val browser = BrowserRoutes.topLevelNavFlags(isStartDestination = false, reuseState = false)
         assertTrue(
-            "restoreState=true 会把上次 entry 连 ViewModel（上次的目录/过滤）一起恢复 —— 正是本次要修的现象",
+            "restoreState=true 会把上次 entry 连 ViewModel（上次的目录/过滤）一起恢复 —— 正是要修的现象",
             !browser.restoreState,
         )
         assertTrue(
             "saveState 必须保持 true：popUpTo{saveState} 保存的是『被切走的那一页』，" +
-                "关掉会连累 HOME/CONNECTIONS/SETTINGS 的切走再切回",
+                "关掉会连累连接/设置的切走再切回",
             browser.saveState,
         )
 
-        val others = BrowserRoutes.topLevelNavFlags(reuseState = true)
-        assertTrue("HOME/CONNECTIONS/SETTINGS 必须保持原行为：切走再切回保留状态", others.saveState)
-        assertTrue("HOME/CONNECTIONS/SETTINGS 必须保持原行为：切走再切回保留状态", others.restoreState)
+        val others = BrowserRoutes.topLevelNavFlags(isStartDestination = false, reuseState = true)
+        assertTrue("连接/设置必须保持原行为：切走再切回保留状态", others.saveState)
+        assertTrue("连接/设置必须保持原行为：切走再切回保留状态", others.restoreState)
+    }
+
+    @Test
+    fun `起始页签首页绝不能复用返回栈_否则会把刚弹掉的浏览页恢复回来`() {
+        // 2026-11-21 真机缺陷：从播放页返回浏览页后点「首页」没反应（重启才恢复）。
+        // 根因就在这一行：首页是 NavHost 的起始页，popUpTo(startDestination){saveState=true}
+        // 会把起始页自己也映射到「刚被弹掉的那一堆」，之后 restoreState=true 恢复回来的是浏览页。
+        val home = BrowserRoutes.topLevelNavFlags(isStartDestination = true, reuseState = true)
+        assertTrue("saveState 仍要 true，否则连接/设置切走再切回会丢状态", home.saveState)
+        assertTrue(
+            "首页在栈底，没有自己的返回栈；restoreState=true 只会把压过它的那一页叠回来",
+            !home.restoreState,
+        )
     }
 
     @Test

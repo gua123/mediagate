@@ -62,6 +62,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import io.github.gua123.mediagate.R
 import io.github.gua123.mediagate.app.AppContainer
+import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.model.MediaKind
 import io.github.gua123.mediagate.core.model.MediaKindGuesser
 import io.github.gua123.mediagate.feature.browser.BrowserRoutes
@@ -99,6 +100,45 @@ import io.github.gua123.mediagate.feature.viewer.image.LocalImageViewerEnvironme
 import io.github.gua123.mediagate.feature.viewer.image.ViewerRoutes
 import kotlinx.coroutines.launch
 
+/** 导航相关的低噪日志（一行一个决策，真机上按 MG/nav 过滤即可复盘栈的变化）。 */
+private const val NAV_TAG = "nav"
+
+/**
+ * 从播放/看图页"返回"到浏览页（**2026-10-03 用户要求**）。
+ *
+ * 三种来路，由 [BrowserRoutes.planReturnToBrowser] 按返回栈快照判断：
+ * - 栈里压着浏览页：弹回去（它保留自己所在的目录）；
+ * - **当前页已经是浏览页：什么都不做**（再 push 一条会叠出 home→browser→browser，
+ *   之后页签的 saveState/restoreState 会把两条一起恢复回来）；
+ * - 栈里没有浏览页（首页"最近播放/继续播放"点进来的）：**打开上次浏览的目录**，
+ *   而不是回首页（用户原话：「返回下方菜单栏中的首页，这样我还要重新选择文件夹」）。
+ *
+ * **2026-11-21**：两处不再依赖导航库的隐式语义 ——
+ * ① 旧实现把路由**模板串** `browser?path={path}&kind={kind}&startAtRoot={startAtRoot}`
+ * 直接交给 `popBackStack(route)` 去匹配返回栈里的 entry；现在改成按 destination 基名认页、按快照算层数，
+ * 参数名/顺序/编码怎么变都不影响"返回浏览页"。
+ * ② 旧实现拿 `popBackStack` 的返回值当"有没有命中"：它返回 false 还可能是"目标已经在栈顶"，
+ * 于是会再 push 一条浏览页。现在先决策、再执行，不会多压一条。
+ */
+private fun NavHostController.backToBrowser(lastPath: String?) {
+    // 快照只要到"当前页"和"上一层"就够：播放页/看图页永远压在来路那一页上面。
+    val routes = listOfNotNull(
+        previousBackStackEntry?.destination?.route,
+        currentBackStackEntry?.destination?.route,
+    )
+    val plan = BrowserRoutes.planReturnToBrowser(routes)
+    AppLog.d(NAV_TAG, "back-to-browser plan=$plan stack=$routes")
+    when (plan) {
+        BrowserRoutes.BrowserReturnPlan.AlreadyOnBrowser -> Unit
+        is BrowserRoutes.BrowserReturnPlan.PopToBrowser -> repeat(plan.steps) { popBackStack() }
+        BrowserRoutes.BrowserReturnPlan.OpenBrowser -> navigate(
+            BrowserRoutes.route(path = lastPath?.takeIf { it.isNotEmpty() }),
+        ) {
+            launchSingleTop = true
+        }
+    }
+}
+
 /**
  * 顶层底部导航的五个目标（M1：首页 / 浏览有真实实现，连接 / 任务 / 设置先放占位页）。
  *
@@ -109,21 +149,6 @@ import kotlinx.coroutines.launch
  * **2026-11-18**：「浏览」页签的 navRoute 现在带 `startAtRoot=true` —— 页签必须**从根目录开始**，
  * 而不是回到"上次那个文件夹"（否则和首页三个媒体入口渲染同一份列表）。
  */
-/**
- * 从播放/看图页"返回"到浏览页（**2026-10-03 用户要求**）。
- *
- * 两种来路：
- * - 从浏览页点进来的：回退栈里就有浏览页 ⇒ 直接 pop（它会保留自己所在的目录）；
- * - 从首页"最近播放/继续播放"点进来的：栈里没有浏览页 ⇒ **打开上次浏览的目录**，
- *   而不是回首页（用户原话：「返回下方菜单栏中的首页，这样我还要重新选择文件夹」）。
- */
-private fun NavHostController.backToBrowser(lastPath: String?) {
-    if (popBackStack(BrowserRoutes.ROUTE, inclusive = false)) return
-    navigate(BrowserRoutes.route(path = lastPath?.takeIf { it.isNotEmpty() })) {
-        launchSingleTop = true
-    }
-}
-
 private enum class TopLevelDestination(
     val navRoute: String,
     val matchRoute: String,
@@ -949,7 +974,19 @@ private fun SettingsRoute(
  * [BrowserRoutes.route] 的 `startAtRoot` 决定 = 连接根目录），其余三个页签行为不变。
  */
 private fun NavHostController.switchTopLevel(destination: TopLevelDestination) {
-    val flags = BrowserRoutes.topLevelNavFlags(reuseState = destination != TopLevelDestination.BROWSER)
+    // 起始页（首页，NavHost 的 startDestination）永远躺在栈底：给它 restoreState，
+    // Navigation 恢复的是「刚才压在它上面的那一页」（见 BrowserRoutes.topLevelNavFlags 的 2026-11-21 说明）。
+    val startRoute = graph.findStartDestination().route
+    val isStartDestination = startRoute != null && startRoute == destination.matchRoute
+    val flags = BrowserRoutes.topLevelNavFlags(
+        isStartDestination = isStartDestination,
+        reuseState = destination != TopLevelDestination.BROWSER,
+    )
+    AppLog.d(
+        NAV_TAG,
+        "switch-tab " + destination.name + " start=" + isStartDestination +
+            " restore=" + flags.restoreState + " from=" + currentDestination?.route,
+    )
     navigate(destination.navRoute) {
         popUpTo(graph.findStartDestination().id) { saveState = flags.saveState }
         launchSingleTop = true
