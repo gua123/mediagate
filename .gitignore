@@ -36,5 +36,9 @@ dist/
 *.aab
 tests/docker/*.jar
 
+# 真机调试报告（docs/debug/）：里面带真实内网地址 / 端口 / 测试账号与密码，
+# 仓库是公开的，调试产物一律不入库（本地保留可查阅，示例值化后再谈入库）。
+docs/debug/
+
 # Kotlin 编译缓存
 .kotlin/

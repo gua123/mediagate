@@ -518,6 +518,12 @@
 | 全量验收 | **1264 个 JVM 用例 0 失败**；release APK ≈74 MB、V2 签名、19 个 .so 全 16 KB 对齐；详见 docs/验收记录-M2-M8.md（含需真机验证清单与已知限制） | — |
 | **合计** | | **48–65 人日（约 9–13 周单人全职）** |
 
+### 11.1 当前进度（版本修复流水，最新在下）
+
+- **2026-11-21 · 进大目录闪退（0.1.113 真机 SIGABRT，随 0.1.114 一起发）**：根因是**无界线程池**——列几百个视频的目录时每行都排队抽缩略图/开远端读，线程与地址空间打满内核 `max_map_count`，bionic 新建线程时连 16 KB 的栈守卫页都 `mprotect` 不出来（`Out of memory`）→ `abort()`，与"播哪个文件"无关。修法：存储池**恢复 12/32 有界**（core 12 = OpenSSH 单会话 10 条通道 + 2 余量，max 32 = 真机实测上限）、池满时走**许可闸门挂起**而不是 `CallerRuns` 在提交线程内联跑阻塞读、修正 `withTimeout` 把超时误当成取消、缩略图改**有界排队 + 丢最老**、预读**去重**（同一段不重复取）。**真机验证：进同一个大目录连续滚动 60 秒进程稳定、崩溃 0 条（修前 3/3 进目录 4–40 秒内必崩）；顺带 `我和我的祖国.mkv`（2.8 GB）能正常硬解播放。** 依据 `docs/debug/*.md`（调试报告已加入 `.gitignore`，不入库）。
+
+- **2026-11-21 · 从播放页返回后点「首页」没反应（随 0.1.114 一起发）**：根因在**底部页签的 saveState/restoreState 闭环**——首页是 NavHost 的起始页，永远躺在栈底，本来没有"切走再切回"这回事；但 `switchTopLevel` 对**所有**页签都传了 `restoreState = true`，而 Navigation（2.10.2）的 `popUpTo(startId) { saveState = true }` 会把被保留的起始页也写进 `backStackMap`、映射到"刚被弹掉的那一堆"（浏览页 + 播放页）。于是回到首页时 `restoreState` 恢复的不是首页自己的状态，而是**刚弹掉的那条浏览页**——首页被顶掉、界面还停在浏览页，看起来就是"点了没反应"；每次点击又存一次、再恢复一次，这个环会一直转，只有重启进程（`backStackMap` 清空）才恢复。修法：`BrowserRoutes.topLevelNavFlags(isStartDestination, reuseState)` 让**起始页一律不带 restoreState**（`restoreState = reuseState && !isStartDestination`），`MediaGateApp.switchTopLevel` 用 `graph.findStartDestination()` 判定传入；顺带把"返回浏览页"从依赖导航库隐式语义改成**纯函数决策**——`baseNameOf`/`isBrowserDestination` 只比 destination 基名（不再拿路由模板串去 `popBackStack` 匹配），`planReturnToBrowser` 由返回栈快照算 `BrowserReturnPlan`（PopToBrowser(steps) / AlreadyOnBrowser / OpenBrowser：**当前页已是浏览页就什么都不做**，旧实现会再 push 一条，叠出 home→browser→browser 让 saveState/restoreState 把两条一起恢复），`backToBrowser` 真正变成"先决策、再执行"；另加 `MG/nav` 低噪日志（一行一个决策，真机 `adb logcat -s MG/nav` 可复盘栈变化）。新增 `BrowserRoutesTest`、扩充 `BrowserViewModelTest`。**真机验证：从播放页返回后点「首页」正常切换、反复切页签不再卡死，已通过。**
+
 ---
 
 ## 12. 决议状态与开工确认
@@ -526,6 +532,8 @@ v2 的 6 条待确认已全部落定（见第 0 章「用户第二轮答复」�
 
 **状态（2026-10-02）：M0–M8 全部完成，真机验收进行中（首轮反馈的 SFTP/FTP 接线缺口已修复，见 M9 与验收记录第 7 节）。** 本文档即本项目的计划权威（方案工作区的 mediagate.md 已冻结为只读存档），后续需求变更与实施都改这里。
 代码侧验收见 docs/验收记录-M0.md、验收记录-M1.md、验收记录-M2-M8.md；**尚需用户在真机上验证的清单与已知限制见 M2–M8 记录的第 4、5 节**。
+
+**状态（2026-11-21）：0.1.114 修两条并随该版发布——① 进大目录 SIGABRT（存储/并发批）；② 从播放页返回后点「首页」没反应（导航批）；根因、修法与真机验证见 §11.1。两批改动各自独立成提交，便于单独 revert。**
 
 > **一处口径待你点头**（我按此理解写进了方案）：「字幕全要，但只单个字幕文件」＝ 外挂字幕、样式、延迟微调、音转字幕功能都做，但每次只落**一个**字幕文件（默认 SRT），需要别的格式时另存，不并行生成多份；同时不做双字幕叠加。如与你的意思不符，说一声我改。
 

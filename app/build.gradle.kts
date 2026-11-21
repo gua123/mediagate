@@ -34,8 +34,9 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         // 0.1.109：恢复等待后端就绪；视频/音频 MediaSession 使用唯一 ID。
-        versionCode = 114
-        versionName = "0.1.113"
+        // 0.1.114：修「进大目录 SIGABRT」（存储池有界 + 许可闸门）与「返回后首页 Tab 点不动」（起始页不带 restoreState）。
+        versionCode = 115
+        versionName = "0.1.114"
         vectorDrawables { useSupportLibrary = true }
         // 自用 sideload，只打 64 位（native: libvlc / ffmpeg / whisper）
         ndk { abiFilters += listOf("arm64-v8a") }
