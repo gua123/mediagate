@@ -5,8 +5,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.core.common.redactForLog
@@ -29,8 +27,14 @@ import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
  *
  * 并发上限（plan 4.4）：默认 [DEFAULT_PARALLELISM] = 3；SFTP/FTP 这类单会话后端降到
  * [SLOW_PARALLELISM] = 2——判定依据是 [StorageBackend.caps] 的 `maxParallelReads <= 2`
- * 或后端 id 前缀（sftp/ftp/ftps）。限流用 [Semaphore] 实现，等待许可本身是可取消的，
- * 配合流水线里的 `ensureActive()`，离屏/回收时能立刻停下来（plan 4.4「离屏取消」）。
+ * 或后端 id 前缀（sftp/ftp/ftps）。限流用 [ThumbnailConcurrencyLimiter]（**有界排队 +
+ * 丢弃最旧**，2026-11-21）：并发与排队都有上限，超出直接跳过本次（返回 null、不写负缓存），
+ * 等待本身是可取消的，配合流水线里的 `ensureActive()`，离屏/回收时能立刻停下来
+ * （plan 4.4「离屏取消」）。
+ *
+ * 为什么要给排队也设上限：真机进数百个视频的目录时，每一行都会来要缩略图；纯 Semaphore
+ * 只限"同时抽几张"、不限排队人数，排到队尾的那些早滚出屏幕了还在等——它们下面各挂着一条
+ * 远端流和一次 openRead。现在排队满 [pendingCapacity] 条就丢最老的，让位给刚进可见区的行。
  *
  * 按媒体类型分三条流水线（**M1-F**，plan 4.4 三行策略，选择逻辑见 [ThumbnailPipeline.select]）：
  * - 视频 → [ThumbnailPipeline.FRAME]：主策略换位重试 + FFmpeg 兜底；
@@ -53,6 +57,7 @@ import io.github.gua123.mediagate.data.storage.api.asRandomAccessSource
  * @param targetWidth 目标宽度（像素），同时参与 key 的构成。
  * @param parallelism 普通后端并发上限。
  * @param slowParallelism SFTP/FTP 等单会话后端的并发上限。
+ * @param pendingCapacity 排队上限（超过就丢最旧的请求，见 [ThumbnailConcurrencyLimiter]）。
  * @param io 打开数据源等 IO 操作所在调度器。
  */
 class ThumbnailRepository(
@@ -63,6 +68,7 @@ class ThumbnailRepository(
     val targetWidth: Int = DEFAULT_TARGET_WIDTH,
     parallelism: Int = DEFAULT_PARALLELISM,
     slowParallelism: Int = SLOW_PARALLELISM,
+    pendingCapacity: Int = ThumbnailConcurrencyLimiter.DEFAULT_PENDING_CAPACITY,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** 音频内嵌封面提取器（M1-F，plan 4.4 音频行）；null = 未接线，音频退回抽帧分支。 */
     private val audioArtwork: FrameExtractor? = null,
@@ -70,8 +76,11 @@ class ThumbnailRepository(
     private val imagePreview: ImagePreviewPipeline? = null,
 ) {
 
-    /** 普通后端限流器（本地/WebDAV：多连接可并行）。 */
-    private val fastLimiter = Semaphore(parallelism.coerceAtLeast(1))
+    /** 普通后端限流器（本地/WebDAV：多连接可并行）：并发 + 排队都有上限。 */
+    private val fastLimiter = ThumbnailConcurrencyLimiter(
+        parallelism = parallelism.coerceAtLeast(1),
+        pendingCapacity = pendingCapacity,
+    )
 
     /** 最近出过的缩略图（LRU）：通知栏/锁屏封面用，见 [recentThumbnail]。 */
     private val recent = object : LinkedHashMap<String, ByteArray>(ARTWORK_CACHE_ENTRIES, 0.75f, true) {
@@ -80,7 +89,10 @@ class ThumbnailRepository(
     }
 
     /** 单会话后端限流器（SFTP/FTP：并发高了会互相拖慢甚至被服务端掐掉）。 */
-    private val slowLimiter = Semaphore(slowParallelism.coerceAtLeast(1))
+    private val slowLimiter = ThumbnailConcurrencyLimiter(
+        parallelism = slowParallelism.coerceAtLeast(1),
+        pendingCapacity = pendingCapacity,
+    )
 
     /**
      * 取本次请求的缓存 key（图片 / 音频路径也可以用它复用同一份缓存）。
@@ -153,13 +165,13 @@ class ThumbnailRepository(
         }
         if (cache.isNegative(key)) return null
 
-        return limiterFor(backend).withPermit {
+        return limiterFor(backend).withSlot {
             // 等许可期间可能已经有别的协程把同一个 key 填好了，拿许可后再确认一次
             cache.get(key)?.let {
                 remember(entry.path, it)
-                return@withPermit it
+                return@withSlot it
             }
-            if (cache.isNegative(key)) return@withPermit null
+            if (cache.isNegative(key)) return@withSlot null
 
             val bytes = runCatchingExtract(entry, backend, positionRatio)
             if (bytes == null || bytes.isEmpty()) {
@@ -372,8 +384,28 @@ class ThumbnailRepository(
      * 选限流器：SFTP/FTP 这类「单会话 + 通道少」的后端要给播放让路，降到 2；
      * 判定同时看能力声明与 id 前缀（plan 4.4）。
      */
-    private fun limiterFor(backend: StorageBackend): Semaphore =
+    private fun limiterFor(backend: StorageBackend): ThumbnailConcurrencyLimiter =
         if (isSlowBackend(backend)) slowLimiter else fastLimiter
+
+    /** 当前排队的缩略图请求数（诊断/单测：**永不超过 [pendingCapacity]**）。 */
+    fun pendingRequests(backend: StorageBackend): Int = limiterFor(backend).waitingCount()
+
+    /**
+     * 当前正在抽帧的请求数（诊断/单测）。
+     *
+     * 单测用它把"洪峰的结算条件"写成可判定的事实：**进 = 在跑 + 排队 + 跳过**，
+     * 于是不必再 `delay(200)` 赌调度器什么时候跑完（2026-11-21 去时序依赖）。
+     */
+    fun inFlightRequests(backend: StorageBackend): Int = limiterFor(backend).inFlightCount()
+
+    /** 被"排队满 → 丢最旧"跳过的请求数（诊断/单测）。 */
+    fun skippedRequests(backend: StorageBackend): Long = limiterFor(backend).skippedCount()
+
+    /** 该后端的并发上限（诊断/单测）。 */
+    fun parallelismFor(backend: StorageBackend): Int = limiterFor(backend).parallelism()
+
+    /** 该后端的排队上限（诊断/单测）。 */
+    fun pendingCapacityFor(backend: StorageBackend): Int = limiterFor(backend).pendingCapacity()
 
     /** 是否属于需要降并发的后端（能力声明 maxParallelReads <= 2，或 id 前缀是 sftp/ftp/ftps）。 */
     fun isSlowBackend(backend: StorageBackend): Boolean {

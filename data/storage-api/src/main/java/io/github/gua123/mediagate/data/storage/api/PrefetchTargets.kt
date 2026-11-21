@@ -57,6 +57,26 @@ object PrefetchTargets {
         return result
     }
 
+    /**
+     * **实际预读窗口**（并发段数 = 同时在飞的通道数）：把"用户设置"与"后端并行能力"合成一个值。
+     *
+     * 规则（2026-11-21 从 AppContainer 提到这里，好写单测）：
+     * - **用户设 0 = 真关**：`0` 在设置里就是"不预读"，这条以前被 `maxOf` 吃掉
+     *   （SFTP 上永远是 20 段），等于设置项对 SFTP 完全失效；而预读正是真机读风暴的放大器，
+     *   用户关不掉它是个实实在在的坑；
+     * - 其余情况：`max(用户设置, min(后端并行能力, [cap]))` —— 多连接 SFTP 靠这个从 4 段
+     *   提到 20 段吃满带宽（8676fcc 的用户诉求），单会话后端自然保持用户设置。
+     *
+     * 已知边界：用户把值调小（比如 1）在 SFTP 上仍会被抬到 min(并行能力, cap)，
+     * 也就是"用户设置是下限而不是精确值"。要改成"严格按用户值"会直接把多连接加速打回 4 段，
+     * 需产品口径确认（见本次修复报告的未解决项）。
+     */
+    fun readAheadWindow(configured: Int, maxParallelReads: Int, cap: Int): Int {
+        if (configured <= 0) return 0
+        val auto = maxParallelReads.coerceAtMost(cap.coerceAtLeast(0)).coerceAtLeast(0)
+        return maxOf(configured, auto)
+    }
+
     /** 尾段偏移；文件比 `headBytes + segment` 还小时返回 null（不值得预取）。 */
     fun tailOffset(size: Long, segmentBytes: Long, headBytes: Long): Long? {
         if (size <= 0L || segmentBytes <= 0L) return null

@@ -9,15 +9,14 @@ import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.Executors
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * **给任何后端套一层"超时保险"**（2026-10-03 真机反馈：「把软件放后台再返回时，整个软件好像未响应，
@@ -59,13 +58,20 @@ class TimeoutStorageBackend(
     /**
      * 独立线程池 + SupervisorJob：**不能用 Dispatchers.IO，也不能随 close() 取消**。
      * 2026-11-18 真机实证：close() 里 cancel 掉这个 scope 后，后续所有 guard 的 async 都不再执行，
-     * 每次调用只能等满硬超时（表现为「打开」15 秒超时、零字节，只有重启 App 才恢复）。
+     * 每次调用只能等满硬超时（表现为「打开」15 秒超时、零字节、只有重启 App 才恢复）。
+     *
+     * **2026-11-21 恢复上限**：这里曾是 `Executors.newCachedThreadPool()`（0.1.112 为修
+     * 「SFTP 大文件播不出」引入，上限 = Integer.MAX_VALUE）。每个存储操作 / **每一次读**都往这里
+     * 投一个任务，真机进 /home/nas/movie（数百个视频）时 MG/storage-timeout 打到 464 任务/秒，
+     * 线程数随之无上限增长 → bionic 建线程栈守卫页 mprotect 返回 ENOMEM → SIGABRT。
+     * 现在用 [StorageDispatchers.hardDeadline]：形状照抄历史有界池（12/32 + SynchronousQueue，
+     * 见 [StorageDispatchers]，历史实证线程数曾飙到 6287），**满员时在协程里挂起等许可**，
+     * 既不开新线程、也不在提交线程内联执行（详见 [StorageDispatchers] 的注释）。
+     *
+     * 为什么"不在提交线程内联"对这里尤其要命：见 [withHardDeadline] 的注释——内联会让
+     * `block()` 在 [withTimeout] 开始计时**之前**就跑起来，硬截止形同取消。
      */
-    private val hardDeadlineScope = CoroutineScope(
-        SupervisorJob() + Executors.newCachedThreadPool { r ->
-            Thread(r, "mg-storage-io").apply { isDaemon = true }
-        }.asCoroutineDispatcher(),
-    )
+    private val hardDeadlineScope = CoroutineScope(SupervisorJob() + StorageDispatchers.hardDeadline)
 
     override suspend fun list(dir: String, page: Page?): List<RemoteEntry> =
         guard("列目录 " + dir, "列目录 " + redactPath(dir)) { delegate.list(dir, page) }
@@ -153,26 +159,65 @@ internal suspend fun <T> withHardDeadline(
     logText: String = what,
     block: suspend () -> T,
 ): T {
-    // 日志只打脱敏文案（logText）；what 留给异常消息（界面文案），两者互不干扰
-    AppLog.d("storage-timeout", "worker 提交：" + logText)
-    val worker = scope.async {
-        AppLog.d("storage-timeout", "worker 启动：" + logText)
-        try {
-            block()
-        } finally {
-            AppLog.d("storage-timeout", "worker 结束：" + logText)
-        }
+    // 日志只打脱敏文案（logText）；what 留给异常消息（界面文案），两者互不干扰。
+    //
+    // **2026-11-21 采样**：真机进大目录时这里是每个**存储读**一条（提交 / 启动 / 结束 = 3 条），
+    // 实测 94–464 条/秒。后果有两层：① logcat 自己变成负载（每行都要格式化 + 写 ring）；
+    // ② AppLog 的环形缓冲只有 400 行，一秒就被冲干净——崩溃报告里本该说明"出事前在干什么"
+    // 的时间线因此全是 worker 噪音。现在只保留一条、且每 [StorageTimeoutLog.SAMPLE_EVERY] 次采 1 条；
+    // 超时（真正的异常）照旧全量 W 级打印。
+    if (StorageTimeoutLog.shouldLog()) {
+        AppLog.d(
+            "storage-timeout",
+            "worker 启动（每 " + StorageTimeoutLog.SAMPLE_EVERY + " 次采样 1 条）：" + logText,
+        )
     }
+    // **计时先开始、提交后发生**（2026-11-21 P0）：`scope.async` 必须在 [withTimeout] **之内**。
+    // 旧写法把 async 放在外面——只要 dispatch 退化成"提交线程内联执行"（上一版池子用
+    // CallerRunsPolicy 正是如此），block() 就在 async 调用里直接跑起来，而 withTimeout 还没开始计时，
+    // 于是 ① 永不超时 ② onHardTimeout() 永不触发 ③ SFTP 会话永不作废 ④ 池更满，正反馈。
+    // 现在两道保险：调度器满员只挂起不内联（见 StorageDispatchers）＋ async 建在超时作用域里面。
+    var pending: Deferred<T>? = null
     try {
-        return withTimeout(timeoutMs) { worker.await() }
+        return withTimeout(timeoutMs) {
+            val worker = scope.async { block() }
+            pending = worker
+            worker.await()
+        }
     } catch (e: TimeoutCancellationException) {
         // 顺序：TimeoutCancellationException 也是 CancellationException，先转成"超时"
-        worker.cancel()
+        pending?.cancel()
         AppLog.w("storage-timeout", "硬超时（" + timeoutMs + " ms）：" + logText)
         throw StorageException.Timeout("等待超过 " + (timeoutMs / 1000) + " 秒：" + what)
     } catch (e: CancellationException) {
         // 调用方自己取消（换目录/退出页面）：把后台任务也放掉
-        worker.cancel()
+        pending?.cancel()
         throw e
+    }
+}
+
+/**
+ * 存储层日志采样器（2026-11-21 真机 SIGABRT 之后）。
+ *
+ * 为什么要采样：`MG/storage-timeout` 是**每次存储读**都打点的地方，真机进大目录时
+ * 94 / 137 / 190 / 464 / 223 条/秒（20 秒 732 条）。日志本身要格式化、要进 logcat、
+ * 还要写 [io.github.gua123.mediagate.core.common.AppLog] 的 400 行环形缓冲——
+ * ① 它自己就是负载；② 把环形缓冲一秒冲干净，崩溃报告里的时间线反而没用了。
+ *
+ * 口径：**每 [SAMPLE_EVERY] 次打 1 条**（约 3% 的量），异常（硬超时）不受采样影响。
+ */
+internal object StorageTimeoutLog {
+
+    /** 采样间隔：每 32 次调用打 1 条。 */
+    const val SAMPLE_EVERY: Int = 32
+
+    private val counter = AtomicLong(0L)
+
+    /** 这一次该不该打（第 1 次就打，便于开局确认打点还活着）。 */
+    fun shouldLog(): Boolean = counter.incrementAndGet() % SAMPLE_EVERY == 1L
+
+    /** 单测用：把计数归零，好数采样条数。 */
+    fun reset() {
+        counter.set(0L)
     }
 }

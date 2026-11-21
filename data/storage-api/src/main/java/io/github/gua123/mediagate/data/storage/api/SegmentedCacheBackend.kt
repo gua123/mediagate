@@ -7,8 +7,6 @@ import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.asCoroutineDispatcher
-import java.util.concurrent.Executors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -16,6 +14,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -126,47 +127,47 @@ class SegmentedCacheBackend(
     @Volatile
     private var recentThroughputBytesPerSec: Long = 0L
 
-    /** 一段正在下载的临时文件；[tempFile] 里的字节对读者可见（[onBytes] 累计已写入量）。 */
+    /**
+     * 一段正在下载的临时文件；[tempFile] 里的字节对读者可见（[onBytes] 累计已写入量）。
+     *
+     * **2026-11-21：等待从 `Object.wait(50)` 阻塞轮询换成 [MutableStateFlow] 挂起等待。**
+     *
+     * 旧实现（`synchronized(lock) { while (...) lock.wait(50) }`）是**阻塞**的，所以调用方必须先
+     * `withContext(io)` 借一个存储线程去等——每段预读因此多吃一个 io 线程（段下载 1 个 + 等它的
+     * 读者 1 个），20 段 = 40 > 32；池一满就落到"在提交线程内联执行阻塞体"那条死路上
+     * （见 [StorageDispatchers] 的注释）。现在等待是真正的挂起：不占线程、可取消、`withTimeout` 照常生效。
+     */
     private class SegmentJob(val finalFile: File, val epoch: Long) {
         /** 每个代际用自己的临时文件，旧任务即使还在写也不会和新任务抢同一个 .tmp。 */
         val tempFile: File = File(finalFile.parentFile, finalFile.name + "." + epoch + TMP_SUFFIX)
 
-        private val lock = Object()
-        private var written: Long = 0L
-        private var finished: Boolean = false
-        private var failure: Throwable? = null
+        /** 进度 + 结束状态；写入方在下载线程上（任意线程安全），读者用 `first { ... }` 挂起等。 */
+        private val progress = MutableStateFlow(Progress())
 
         fun onBytes(total: Long) {
-            synchronized(lock) {
-                written = total
-                lock.notifyAll()
-            }
+            progress.update { it.copy(written = total) }
         }
 
         fun finish(error: Throwable?) {
-            synchronized(lock) {
-                failure = error
-                finished = true
-                lock.notifyAll()
-            }
+            progress.update { it.copy(finished = true, failure = error) }
         }
 
-        /** 等到至少 [target] 字节写好（或结束/出错）。 */
-        fun awaitBytes(target: Long) {
-            synchronized(lock) {
-                while (!finished && failure == null && written < target) lock.wait(50)
-            }
+        /** 等到至少 [target] 字节写好（或结束/出错）；**挂起等待，不占线程**。 */
+        suspend fun awaitBytes(target: Long) {
+            progress.first { it.finished || it.failure != null || it.written >= target }
         }
 
         /** 等整段下完；返回失败原因（成功为 null）。 */
-        fun awaitDone(): Throwable? {
-            synchronized(lock) {
-                while (!finished) lock.wait(50)
-                return failure
-            }
-        }
+        suspend fun awaitDone(): Throwable? = progress.first { it.finished }.failure
 
-        fun failureOrNull(): Throwable? = synchronized(lock) { failure }
+        fun failureOrNull(): Throwable? = progress.value.failure
+
+        /** 一次进度快照（StateFlow 会自动合并相同值，读侧只关心"够不够/结没结束"）。 */
+        private data class Progress(
+            val written: Long = 0L,
+            val finished: Boolean = false,
+            val failure: Throwable? = null,
+        )
     }
 
     /** 清空缓存时用来唤醒读者的内部失败（不是真的网络错误，调用方按"缓存已清空"处理）。 */
@@ -262,6 +263,16 @@ class SegmentedCacheBackend(
     /** 预读失败退避表：key = path#index，value = 失败时刻（2026-11-18 事故后加） */
     private val failedSegments = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val prefetchBackoffMs = 5_000L
+
+    /**
+     * **每个文件最近一次已经扇出过预读的段号**（2026-11-21 第三轮审计 P1：派发风暴）。
+     *
+     * 为什么需要它：[CachedStream.read] 每读一块就调一次 [scheduleReadAhead]，而"块"是
+     * 代理的 64 KiB 泵 / Media3 的 buffer——**4 MB 段按 64 KiB 读 = 同一段里会进来 64 次 read**，
+     * 每次都扇出 `readAheadWindow`（多连接 SFTP 是 20）个 `launch`：一个段 = 1280 次派发，
+     * 全是重复的（每个都只是去 `ensureSegment` 里撞单飞表）。按段号去重后同一段只扇出一次。
+     */
+    private val lastAheadIndex = ConcurrentHashMap<String, Long>()
 
     /**
      * 取文件指纹（带缓存）。
@@ -429,6 +440,7 @@ class SegmentedCacheBackend(
         // 目录留着（下次取段直接用），只清内容
         activePath = null
         accessTimes.clear()
+        lastAheadIndex.clear()
         statHits.set(0L)
         statMisses.set(0L)
         statDownloadRequests.set(0L)
@@ -610,7 +622,8 @@ class SegmentedCacheBackend(
         }
         val job = ensureJob(path, index) ?: return file
         statMisses.incrementAndGet()
-        val error = withContext(io) { job.awaitDone() }
+        // 挂起等（不再 withContext(io)：等待不需要线程，占了就是白吃一个许可）
+        val error = job.awaitDone()
         if (error != null) throw error
         return file
     }
@@ -662,7 +675,15 @@ class SegmentedCacheBackend(
         try {
             if (job.epoch != epoch) throw CacheClearedException()
             job.finalFile.parentFile?.mkdirs()
-            withContext(io) {
+            // **落盘循环不进许可闸门**（2026-11-21 第三轮审计修正理由）。
+            // 许可的语义是"一段不中断的执行片"，不是"被整个任务持有"（见 StorageDispatchers 的类注释）：
+            // 循环里的 `stream.read` 一挂起就还许可、醒来再要一格，所以这里**不是**"一次下载同时吃
+            // 2 个许可"，也不是"许可被下载任务长期占着"。
+            // 真正的收益是：**别让磁盘写（输出流 / flush / 改名 / 淘汰扫描）去占 32 格许可里的一格**。
+            // 一次下载的落盘要横跨整段传输（公网段几十秒），占着一格就等于把那段时间里网络读的
+            // 并发硬生生挤掉一格。文件落盘是本地 IO，放应用 IO 池即可（这一层不占存储闸门，
+            // 只有 `stream.read` 真正读远端时才占）。
+            withContext(downloadDispatcher) {
                 val start = index * segmentBytes
                 val length = segmentBytes.coerceAtLeast(1L)
                 delegate.openRead(path, start, length).use { stream ->
@@ -751,6 +772,8 @@ class SegmentedCacheBackend(
         val scope = readAheadScope ?: return
         val ahead = readAheadWindow
         if (ahead <= 0) return
+        // 段号去重：同一个段只扇出一次（否则 4 MB 段按 64 KiB 读会触发 64 次 × 20 段 = 1280 次派发）
+        if (!markAheadScheduled(path, index)) return
         for (step in 1..ahead) {
             val target = index + step
             val file = segmentFile(path, target)
@@ -769,8 +792,44 @@ class SegmentedCacheBackend(
         }
     }
 
+    /**
+     * [scheduleReadAhead] 的去重闸门：返回 true 表示"这个段号还没扇出过"，由它继续做预读。
+     *
+     * 用 `compute` 而不是 `put`：并发读同一个文件的两个协程会同时进来，`compute` 按 key 串行
+     * （同一段只会有**一个**调用拿到 true）。回退 seek 到别的段时"段号变了"就重新扇出一轮——
+     * 那一轮里已经下好的段会被 `isFile` 跳过、正在下的段会撞 `ensureJob` 的单飞表，不会重复过网。
+     */
+    private fun markAheadScheduled(path: String, index: Long): Boolean {
+        var fresh = false
+        lastAheadIndex.compute(path) { _, previous ->
+            if (previous != null && previous == index) {
+                previous
+            } else {
+                fresh = true
+                index
+            }
+        }
+        return fresh
+    }
+
     /** 段下载用的作用域（[readAheadScope] 没给就临时起一个，保证单飞 map 生命周期正确）。 */
     private fun scopeForDownload(): CoroutineScope = readAheadScope ?: fallbackScope
+
+    /**
+     * 段下载"落盘循环"的调度器（**故意不是 [io]，也故意不是裸 [Dispatchers.IO]**）。
+     *
+     * **为什么不是 [io]**：落盘要横跨整段传输，占着一格存储许可就等于把整段时间里网络读的并发
+     * 挤掉一格（许可语义见 [StorageDispatchers] 的类注释："一段不中断的执行片"，
+     * 不是"下载吃 2 个许可"）。
+     *
+     * **为什么还要在 IO 池里再收一层 [DOWNLOAD_PARALLELISM]**（2026-11-21 第三轮审计 P1）：
+     * 裸 `Dispatchers.IO` 是**进程级共享的 64 线程预算**——DataStore / Room / 缩略图 / 各后端的
+     * 阻塞调用全挤在里面。段下载是**长阻塞**（公网段几十秒占住一个线程），20 段预读一起上就能
+     * 吃掉 64 格里的三分之一，把别人的短任务挤到排队（表现为界面/设置页偶发卡顿）。
+     * `limitedParallelism(10)` 给它自己一道子闸门：最多 10 个落盘同时跑，其余在 IO 池里排队
+     * （排队是挂起，不占线程）。10 = 历史 IO_CORE_THREADS 的一半，够 20 段预读轮转。
+     */
+    private val downloadDispatcher = Dispatchers.IO.limitedParallelism(DOWNLOAD_PARALLELISM)
 
     /**
      * 把某个文件的缓存标记为**手动缓存**（用户"预约下载"的那些，2026-10-15 用户要求
@@ -956,7 +1015,8 @@ class SegmentedCacheBackend(
                 return readFrom(file, inSegment, chunk, buf, off)
             }
             statMisses.incrementAndGet()
-            withContext(io) { job.awaitBytes(inSegment.toLong() + chunk) }
+            // 挂起等字节（同上：等待不占 io 许可）
+            job.awaitBytes(inSegment.toLong() + chunk)
             job.failureOrNull()?.let { throw it }
             val readable = if (file.isFile && file.length() > 0L) file else job.tempFile
             if (readable === file) touch(file)
@@ -1022,35 +1082,18 @@ class SegmentedCacheBackend(
 
         private const val COPY_BUFFER_BYTES = 64 * 1024
 
+        /**
+         * 段下载落盘的最大并发（[downloadDispatcher] 的子闸门）。
+         *
+         * 与 [StorageDispatchers.IO_CORE_THREADS] 同量级：段下载是长阻塞，不能让它把
+         * 进程级 64 线程的 IO 预算吃完（见 [downloadDispatcher] 的注释）。
+         */
+        const val DOWNLOAD_PARALLELISM: Int = 10
+
         /** 等待"并发槽位"的轮询间隔（毫秒）；块下载是秒级，这点开销可忽略。 */
         private const val CHUNK_SLOT_POLL_MS = 10L
     }
 }
 
-/**
- * 存储层专用 IO 调度器：**独立的有界线程池**。
- *
- * 2026-11-18 真机实证：JSch 的阻塞读一旦卡住会**永久占用** Dispatchers.IO 的线程且无法中断；
- * 累积几次后系统 IO 池（默认 64）被占死，连"读一个本地边车文件"这种纯本地操作都会
- * 永远等不到线程 —— 表现为 openRead 15 秒超时、界面永远缓冲、重启 App 才恢复。
- *
- * 这里给存储层单独一个池：即使有调用卡住，也不会波及系统 IO 池，且容量可控。
- *
- * 线程数上界 =**同时在飞的存储操作数**：多连接 SFTP 一个文件预读 20 段就是 20 个并发段任务，
- * 每个段任务还要嵌套几次 withContext（同一个 dispatcher 也会重新派发），
- * 所以这里用**真正的缓存池**（0..无界、60 s 空闲回收）——线程数由 [Caps.maxParallelReads]
- * 与预读窗口决定，不由池子自己拍一个上限。
- *
- * 2026-11-20 之前是 12/32 + SynchronousQueue：20 段并发时很容易走到 "池满 → 直接抛
- * RejectedExecutionException"，那会把多连接加速变成随机崩溃。缓存池没有这个拒绝路径。
- * 代价是卡死线程不再被池容量兜住——它们由 [TimeoutStorageBackend] 的硬超时 +
- * `onHardTimeout()` 作废会话来收尾（2026-11-17/18 已有机制，见 SftpStorageBackend）。
- */
-object StorageDispatchers {
-    // 2026-11-18 真机实证：固定 12 线程会被卡死的 JSch 调用**永久占满**（线程全 S 状态卡在
-    // socket read 上、永不返回），于是后续 withContext 排队、连方法第一行都执行不到。
-    // 改用缓存池：卡住的线程随它去，至少不阻塞新请求（上界由并发请求数与超时作废机制限制）。
-    val io: CoroutineDispatcher = java.util.concurrent.Executors.newCachedThreadPool { r ->
-        Thread(r, "mg-storage-io").apply { isDaemon = true }
-    }.asCoroutineDispatcher()
-}
+// 存储层线程池已移到同包的 StorageDispatchers.kt（2026-11-21：恢复有上限，
+// 真机 SIGABRT 见那里的注释）。本文件只保留"用哪个调度器"的引用。

@@ -159,8 +159,18 @@ class AppContainer(context: Context) :
 
     private val appContext: Context = context.applicationContext
 
-    /** 应用级协程作用域：只做「订阅配置 → 换后端」这类长生命周期的小任务。 */
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /**
+     * 应用级协程作用域：只做「订阅配置 → 换后端」这类长生命周期的小任务。
+     *
+     * **不能用 [Dispatchers.Default]**（2026-11-21 P1）。这个 scope 同时是
+     * `SegmentedCacheBackend` 的 `readAheadScope`（见 [installRemoteRoot]）与
+     * `CacheQueueController` 的 scope：预读/段下载的编排、手动缓存队列都跑在它上面。
+     * Default 只有「CPU 核数」个线程（手机 8 个左右），一旦有阻塞调用漏进来（JSch / FTP / 文件落盘），
+     * 线程会被整片占死，Compose 与播放状态的协程调度跟着一起抖——那一夜真机上
+     * `DefaultDispatch` 就是崩溃线程名。IO 池按阻塞设计（默认 64 线程、空闲回收），
+     * 而真正吃线程的存储阻塞还有 StorageDispatchers 的许可闸门兜着（见那个文件的注释）。
+     */
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val settings = RootSettings(appContext)
 
@@ -971,7 +981,10 @@ class AppContainer(context: Context) :
      * 单会话后端（WebDAV / FTP 的 caps 是 2-4）保持用户设置不变。
      */
     private fun readAheadWindowFor(caps: Caps, configured: Int): Int =
-        maxOf(configured, minOf(caps.maxParallelReads, MAX_READ_AHEAD_WINDOW))
+        // 2026-11-21：逻辑挪进 PrefetchTargets.readAheadWindow（纯函数、有单测）。
+        // 顺手修一个设置失效：用户设 0（不预读）以前会被 maxOf 抬成 20 段，
+        // 对 SFTP 等于"这个设置项根本关不掉预读"——而预读正是真机读风暴的放大器。
+        PrefetchTargets.readAheadWindow(configured, caps.maxParallelReads, MAX_READ_AHEAD_WINDOW)
 
     /** 视频播放宿主能力（直接复用容器里的后端流、偏好、断点存储与回环代理）。 */
     private inner class VideoPlayerHost : VideoPlayerEnvironment {

@@ -4,13 +4,16 @@ import io.github.gua123.mediagate.core.model.Caps
 import io.github.gua123.mediagate.core.model.ProbeReport
 import io.github.gua123.mediagate.core.model.RemoteEntry
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -22,6 +25,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 
 /**
  * [SegmentedCacheBackend] 的 JVM 单测（**plan 4.1 降级链第二级**）。
@@ -484,6 +491,200 @@ class SegmentedCacheBackendTest {
             runCatching { cache.close() }
             scope.cancel()
         }
+    }
+
+    /**
+     * 只数"派发了多少次"的调度器：用来观察预读扇出的次数（不改变线程模型）。
+     *
+     * 为什么需要它：去重前后"过网次数"几乎一样（单飞表本来就会挡住重复下载），
+     * 有区别的是**派发次数**——那才是 1280 次 `launch` 的来源。
+     */
+    private class CountingDispatcher(private val delegate: CoroutineDispatcher) : CoroutineDispatcher() {
+        val dispatches = AtomicInteger()
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            dispatches.incrementAndGet()
+            delegate.dispatch(context, block)
+        }
+    }
+
+    /**
+     * **预读派发去重**（2026-11-21 第三轮审计 P1）。
+     *
+     * `read()` 每读一块就调一次 `scheduleReadAhead`：4 MB 段按 64 KiB 读 ⇒ 同一段里 64 次 read，
+     * 每次都扇出 `readAheadWindow`（多连接 SFTP = 20）个 `launch`，一个段就是 1280 次派发。
+     *
+     * **必须让预读段"还在下载"才能测出来**：段文件一落地，`scheduleReadAhead` 里的 `isFile`
+     * 检查就会把后续每一轮都跳过去（等于自然去重）。所以这里用闸门把 1/2/3 段卡在传输中——
+     * 那才是真机上的常态（4 MB 段要下几秒），去重前每块读都会再挂 3 个协程上去等同一个 job。
+     */
+    @Test
+    fun 同一个段里连续读只扇出一轮预读_不再按块重复派发() = runBlocking {
+        val segmentCount = 4
+        val segmentSize = 1_024
+        val body = ByteArray(segmentSize * segmentCount) { (it % 251).toByte() }
+        val gate = CountDownLatch(1)
+        val counting = CountingDispatcher(Dispatchers.IO)
+        val scope = CoroutineScope(SupervisorJob() + counting)
+        val backend = object : StorageBackend {
+            override val id: String = "fake-slow-ahead:/root"
+            override val caps: Caps = Caps(randomAccess = false, maxParallelReads = 1)
+            override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+            override suspend fun stat(path: String): RemoteEntry =
+                RemoteEntry(name = path.substringAfterLast('/'), path = path, size = body.size.toLong(), mtime = 1L)
+
+            override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+                var cursor = offset
+                return object : RangeStream {
+                    override val length: Long = body.size - offset
+                    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int {
+                        // 只卡预读段（offset > 0）：第 0 段照常返回，让读者能把扇出触发起来
+                        if (offset > 0L) gate.await(10, TimeUnit.SECONDS)
+                        if (cursor >= body.size) return -1
+                        val count = minOf(len.toLong(), body.size - cursor).toInt()
+                        if (count <= 0) return -1
+                        System.arraycopy(body, cursor.toInt(), buf, off, count)
+                        cursor += count
+                        return count
+                    }
+
+                    override suspend fun seek(position: Long) { cursor = offset + position }
+                    override fun position(): Long = cursor - offset
+                    override fun close() = Unit
+                }
+            }
+
+            override suspend fun write(path: String, data: InputStream) = Unit
+            override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+            override fun close() = Unit
+        }
+        val cache = SegmentedCacheBackend(
+            delegate = backend,
+            rootDir = tmp.newFolder(),
+            segmentBytes = segmentSize.toLong(),
+            maxBytes = 64L * 1024,
+            io = Dispatchers.IO,
+            // 用户设置关掉预读，多连接后端把窗口放大到 3 段（和真机上的组合一样）
+            readAheadSegments = 0,
+            readAheadWindow = 3,
+            readAheadScope = scope,
+        )
+        try {
+            // 40 次 8 字节的读全落在第 0 段里（8 × 40 = 320 < 1024）；预读的 1/2/3 段还卡在闸门上
+            val stream = cache.openRead("/m.bin", offset = 0L, length = 8L * 40)
+            val buffer = ByteArray(8)
+            repeat(40) { assertEquals("每块都该读到 8 字节", 8, stream.read(buffer, 0, 8)) }
+            stream.close()
+
+            val dispatched = counting.dispatches.get()
+            assertTrue(
+                "同一个段里 40 次读只该扇出一轮预读，实际派发 " + dispatched + " 次" +
+                    "（去重前是 40 × 3 = 120 次 launch，全都挂在同一个下载 job 上等）",
+                dispatched <= 24,
+            )
+        } finally {
+            gate.countDown()
+            runCatching { cache.close() }
+            scope.cancel()
+        }
+    }
+
+    /**
+     * **段下载的落盘并发被 `limitedParallelism(10)` 压住**（2026-11-21 第三轮审计 P1）。
+     *
+     * 裸 `Dispatchers.IO` 是进程级共享的 64 线程预算（DataStore / Room / 缩略图 / 各后端都在里面），
+     * 而段下载是**长阻塞**（公网段几十秒占住一个线程）：20 段预读一起上就能吃掉三分之一。
+     * 这里用"落盘体全部卡在闸门上"把并发数暴露出来：21 段一起请求，观察到的峰值必须是 10。
+     */
+    @Test
+    fun 段下载落盘并发最多10个_不跟DataStore与Room抢进程级IO预算() = runBlocking {
+        val segmentCount = 21
+        val segmentSize = 1_024
+        val body = ByteArray(segmentSize * segmentCount) { (it % 251).toByte() }
+        val gate = CountDownLatch(1)
+        val blockedNow = AtomicInteger()
+        val peak = AtomicInteger()
+        val backend = object : StorageBackend {
+            override val id: String = "fake-gated-download:/root"
+            override val caps: Caps = Caps(randomAccess = false, maxParallelReads = segmentCount)
+            override suspend fun list(dir: String, page: Page?): List<RemoteEntry> = emptyList()
+            override suspend fun stat(path: String): RemoteEntry =
+                RemoteEntry(name = path.substringAfterLast('/'), path = path, size = body.size.toLong(), mtime = 1L)
+
+            override suspend fun openRead(path: String, offset: Long, length: Long): RangeStream {
+                var cursor = offset
+                return object : RangeStream {
+                    override val length: Long = body.size - offset
+                    override suspend fun read(buf: ByteArray, off: Int, len: Int): Int {
+                        // 只有"预读段"（offset > 0）卡住：第 0 段照常返回，让读者先把扇出触发起来
+                        if (offset > 0L) {
+                            val now = blockedNow.incrementAndGet()
+                            peak.accumulateAndGet(now, ::maxOf)
+                            try {
+                                gate.await(10, TimeUnit.SECONDS)
+                            } finally {
+                                blockedNow.decrementAndGet()
+                            }
+                        }
+                        if (cursor >= body.size) return -1
+                        val count = minOf(len.toLong(), body.size - cursor).toInt()
+                        if (count <= 0) return -1
+                        System.arraycopy(body, cursor.toInt(), buf, off, count)
+                        cursor += count
+                        return count
+                    }
+
+                    override suspend fun seek(position: Long) { cursor = offset + position }
+                    override fun position(): Long = cursor - offset
+                    override fun close() = Unit
+                }
+            }
+
+            override suspend fun write(path: String, data: InputStream) = Unit
+            override suspend fun probe(): ProbeReport = ProbeReport(ok = true)
+            override fun close() = Unit
+        }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val cache = SegmentedCacheBackend(
+            delegate = backend,
+            rootDir = tmp.newFolder(),
+            segmentBytes = segmentSize.toLong(),
+            maxBytes = 64L * 1024,
+            io = Dispatchers.IO,
+            readAheadSegments = segmentCount - 1,
+            readAheadWindow = segmentCount - 1,
+            readAheadScope = scope,
+        )
+        try {
+            // 读第 0 段（不卡）→ 扇出后面 20 段（全卡在闸门上）
+            val reader: Job = scope.launch {
+                cache.openRead("/big.bin", offset = 0L, length = 8L).use { it.read(ByteArray(8), 0, 8) }
+            }
+            awaitPeak(peak, SegmentedCacheBackend.DOWNLOAD_PARALLELISM)
+            // 再给"多出来的那 11 个"一点时间去抢：抢得进去就说明闸门没起作用
+            Thread.sleep(300L)
+            assertEquals(
+                "段下载落盘并发必须被压到 " + SegmentedCacheBackend.DOWNLOAD_PARALLELISM +
+                    "，实际峰值 " + peak.get() + "（裸 Dispatchers.IO 会是 20）",
+                SegmentedCacheBackend.DOWNLOAD_PARALLELISM,
+                peak.get(),
+            )
+            gate.countDown()
+            withTimeout(10_000) { reader.join() }
+            assertEquals("放闸后峰值不许再涨", SegmentedCacheBackend.DOWNLOAD_PARALLELISM, peak.get())
+        } finally {
+            gate.countDown()
+            runCatching { cache.close() }
+            scope.cancel()
+        }
+    }
+
+    /** 轮询等到 [target]（不 sleep 赌时序）。 */
+    private fun awaitPeak(peak: AtomicInteger, target: Int) {
+        val deadline = System.currentTimeMillis() + 5_000L
+        while (System.currentTimeMillis() < deadline && peak.get() < target) {
+            Thread.sleep(5L)
+        }
+        assertTrue("5 s 内没等到 " + target + " 个落盘体同时在跑（实际 " + peak.get() + "）", peak.get() >= target)
     }
 
     /** 只会顺序读的假后端：`openRead` 记下每次请求的 (offset, length)。 */

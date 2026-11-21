@@ -95,4 +95,33 @@ class PrefetchTargetsTest {
     fun 位置超过时长时夹到文件末尾之前() {
         assertEquals(999L, PrefetchTargets.offsetForPosition(200L, 100L, 1000L))
     }
+
+    // ------------------------------------------------ 实际预读窗口（2026-11-21 设置失效修复）
+
+    @Test
+    fun `预读窗口：用户设 0 就是真关掉，多连接后端也不许偷偷预读 20 段`() {
+        assertEquals(
+            "0 = 不预读：以前被 maxOf 抬成 20 段，设置项对 SFTP 完全失效",
+            0,
+            PrefetchTargets.readAheadWindow(configured = 0, maxParallelReads = 200, cap = 20),
+        )
+        assertEquals(0, PrefetchTargets.readAheadWindow(configured = -1, maxParallelReads = 200, cap = 20))
+    }
+
+    @Test
+    fun `预读窗口：单会话后端保持用户设置`() {
+        assertEquals(4, PrefetchTargets.readAheadWindow(configured = 4, maxParallelReads = 2, cap = 20))
+        assertEquals(6, PrefetchTargets.readAheadWindow(configured = 6, maxParallelReads = 4, cap = 20))
+    }
+
+    @Test
+    fun `预读窗口：多连接后端按并行能力放大但不越过上限`() {
+        assertEquals(
+            "SFTP 多连接（20 会话 × 10 通道）放到上限 20 段",
+            20,
+            PrefetchTargets.readAheadWindow(configured = 4, maxParallelReads = 200, cap = 20),
+        )
+        assertEquals(8, PrefetchTargets.readAheadWindow(configured = 4, maxParallelReads = 8, cap = 20))
+        assertEquals("并行能力低于用户设置时以用户设置为准", 4, PrefetchTargets.readAheadWindow(4, 1, 20))
+    }
 }

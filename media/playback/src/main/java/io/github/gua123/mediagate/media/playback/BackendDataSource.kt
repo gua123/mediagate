@@ -10,6 +10,7 @@ import androidx.media3.datasource.DataSpec
 import kotlinx.coroutines.runBlocking
 import io.github.gua123.mediagate.data.storage.api.RangeStream
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
+import io.github.gua123.mediagate.data.storage.api.StorageDispatchers
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import java.io.IOException
 
@@ -32,6 +33,10 @@ import java.io.IOException
  * 线程模型：Media3 的 [read] 是阻塞 API，而数据层是挂起 API，这里用 runBlocking 桥接。
  * 调用方是 Media3 自己的加载线程（不是协程），且后端内部会切到 Dispatchers.IO，因此不会死锁。
  * 一个实例同一时刻只被一条加载线程使用（Media3 的约定），本类不做额外加锁。
+ *
+ * **两个桥接点都先调 [StorageDispatchers.assertNotOnStorageThread]**：加载线程一旦是
+ * mg-storage-io（池满时退化到内联执行就会这样），桥接里的 `withContext(io)` 就是自己等自己——
+ * 32 格许可全被占死、闸门死锁。见 `StorageDispatchers` 的类注释（许可语义 + 两条铁律）。
  */
 @UnstableApi
 class BackendDataSource(
@@ -121,6 +126,9 @@ class BackendDataSource(
         }
         releaseStream()
         val openStart = System.nanoTime()
+        // 放在 try 之外：这里的 catch 会把 RuntimeException 包成 DataSourceException（播放错误），
+        // 那样断言就被洗成"一次普通的读失败"了——铁律违规必须原样抛出去。
+        StorageDispatchers.assertNotOnStorageThread("BackendDataSource.openRange")
         val opened = try {
             runBlocking { backend.openRead(path, position, length) }
         } catch (e: StorageException) {
@@ -158,6 +166,7 @@ class BackendDataSource(
             minOf(bytesRemaining, length.toLong()).toInt()
         }
         val readStart = System.nanoTime()
+        StorageDispatchers.assertNotOnStorageThread("BackendDataSource.read") // 同上：必须在 try 之外
         val read = try {
             runBlocking { current.read(buffer, offset, toRead) }
         } catch (e: StorageException) {

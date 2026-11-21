@@ -5,6 +5,7 @@ import io.github.gua123.mediagate.core.common.AppLog
 import io.github.gua123.mediagate.data.storage.api.RangeStream
 import io.github.gua123.mediagate.data.storage.api.SegmentedCacheBackend
 import io.github.gua123.mediagate.data.storage.api.StorageBackend
+import io.github.gua123.mediagate.data.storage.api.StorageDispatchers
 import io.github.gua123.mediagate.data.storage.api.StorageException
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -43,6 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * 线程模型：本类是阻塞式 socket 服务；数据层是挂起 API，用 [runBlocking] 桥接（与
  * [io.github.gua123.mediagate.media.playback.BackendDataSource] 同一套做法），后端内部会切 Dispatchers.IO。
+ *
+ * **每个桥接点先调 [StorageDispatchers.assertNotOnStorageThread]**：本方法所在的线程必须是
+ * "代理自己的 socket 线程"。若它变成了 mg-storage-io / mg-storage-deadline 线程（例如池满时又一次
+ * 退化到内联执行），这里再 `withContext(io)` 就是自己等自己——32 格许可全被占死，播放卡死且无流量。
  *
  * @param backendProvider 现取当前后端；返回 null 表示尚未选择根目录（R12），此时代理回 503。
  */
@@ -199,6 +204,7 @@ class LoopbackHttpProxy(
         val cachedSize = backend.cachedSize(target.path)
         val entry = if (cachedSize == null) {
             try {
+                StorageDispatchers.assertNotOnStorageThread("LoopbackHttpProxy.stat")
                 runBlocking { backend.stat(target.path) }
             } catch (e: StorageException) {
                 writeSimple(out, statusOf(e), "Storage Error", describe(e))
@@ -223,6 +229,7 @@ class LoopbackHttpProxy(
         val start = if (spec is HttpRanges.RangeSpec.Partial) spec.start else 0L
         val length = if (spec is HttpRanges.RangeSpec.Partial) spec.length else -1L
         val stream = try {
+            StorageDispatchers.assertNotOnStorageThread("LoopbackHttpProxy.openRead")
             runBlocking {
                 // 局域网直读：绕过分段缓存，避免冷缓存/后台任务把 SFTP 通道占死；
                 // VLC 自己的 Range 请求已经足够精确。公网仍走缓存吸收高延迟。
@@ -265,6 +272,7 @@ class LoopbackHttpProxy(
             if (limit in 0..written) return
             val want = if (limit < 0) buffer.size else minOf(buffer.size.toLong(), limit - written).toInt()
             if (want <= 0) return
+            StorageDispatchers.assertNotOnStorageThread("LoopbackHttpProxy.pump")
             val read = runBlocking { stream.read(buffer, 0, want) }
             if (read < 0) return
             if (read == 0) continue
